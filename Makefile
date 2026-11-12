@@ -19,9 +19,10 @@ WEB_PORT := $(shell echo $$((5173 + 10 * $(PORT_OFFSET))))
 API_PORT := $(shell echo $$((8000 + 10 * $(PORT_OFFSET))))
 DB_PORT := $(shell echo $$((55432 + 10 * $(PORT_OFFSET))))
 export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
+export PATH := $(CURDIR)/.tools/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend private-words
+.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend private-words tools public-check
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-14s %s\n", $$1, $$2}'
@@ -74,3 +75,9 @@ spend: ## Show the AI mode and monthly cap
 # Interactive: the words are typed at a hidden prompt, so don't pipe it.
 private-words: ## Add private words to the hashed word list (hidden prompt)
 	@uv run python scripts/privacy_words.py
+
+tools: ## Install the pinned gitleaks into .tools/bin
+	@scripts/install-tools.sh
+
+public-check: ## Scan the whole git history for secrets, stray paths and private words
+	@uv run python scripts/public_check.py
