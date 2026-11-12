@@ -27,7 +27,8 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "ASYNC", "PT"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
-include = ["core", "api", "mcp", "evals", "tests", "conftest.py"]
+extraPaths = ["scripts"]
+include = ["core", "api", "mcp", "evals", "scripts", "tests", "conftest.py"]
 exclude = ["**/.claude", "**/node_modules", "web", ".tools", "**/.venv"]
 
 [tool.pytest.ini_options]
@@ -39,7 +40,8 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-source = ["core", "api", "mcp", "evals"]
+source_pkgs = ["nursing_core", "nursing_api", "nursing_mcp", "nursing_evals"]
+source = ["scripts"]
 
 [tool.coverage.report]
 fail_under = 80

@@ -21,10 +21,10 @@ DB_PORT := $(shell echo $$((55432 + 10 * $(PORT_OFFSET))))
 export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend
+.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend private-words
 
 help: ## List the targets
-	@grep -E '^[a-z-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-10s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-14s %s\n", $$1, $$2}'
 
 ports: ## Print the project name and ports for PORT_OFFSET
 	@echo COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME)
@@ -70,3 +70,7 @@ spend: ## Show the AI mode and monthly cap
 	@echo "AI_MODE=$(or $(AI_MODE),mock)"
 	@echo "AI_MONTHLY_CAP_USD=$(or $(AI_MONTHLY_CAP_USD),not set)"
 	@echo "no AI usage recorded yet (no provider before P1)"
+
+# Interactive: the words are typed at a hidden prompt, so don't pipe it.
+private-words: ## Add private words to the hashed word list (hidden prompt)
+	@uv run python scripts/privacy_words.py
