@@ -1,0 +1,45 @@
+[tool.uv.workspace]
+members = ["core", "api", "mcp", "evals"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "testcontainers[postgres]",
+    "httpx",
+    "pyyaml",
+    "ruff",
+    "pyright[nodejs]",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = [".claude", "web", ".tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "ASYNC", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]
+"conftest.py" = ["S101"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+include = ["core", "api", "mcp", "evals", "tests", "conftest.py"]
+exclude = ["**/.claude", "**/node_modules", "web", ".tools", "**/.venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["core", "api", "mcp", "evals", "tests"]
+norecursedirs = [".claude", ".git", ".tools", "node_modules", "web"]
+pythonpath = ["scripts"]
+addopts = "--import-mode=importlib"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+source = ["core", "api", "mcp", "evals"]
+
+[tool.coverage.report]
+fail_under = 80

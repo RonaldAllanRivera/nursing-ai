@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+.coverage
+.coverage.*
+htmlcov/
+
+# Node
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+web/playwright-report/
+web/test-results/
+
+# Downloaded tools (actionlint, gitleaks)
+.tools/
+
+# Secrets: every .env file except the committed template
+.env*
+!.env.example
+
+# Machine-local Claude Code settings and parallel-chat worktrees
+.claude/settings.local.json
+.claude/worktrees/
