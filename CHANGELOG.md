@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
   planned glossary lookup for ward shorthand and Taglish terms (hybrid search with pgvector).
 - README: the gold set is described as synthetic and AI-reviewed, with nurse review pending, and the
   missing-items checklist and its example follow the planned checklist rules.
+- README: the project is now called Sourceline, with "Nursing Documentation AI" as the subtitle
+  and the tagline "Every line has a source". The repository and package names don't change.
 
 <!--
 Template for each release (newest on top):

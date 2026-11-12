@@ -1,4 +1,6 @@
-# Nursing Documentation AI
+# Sourceline
+
+**Nursing Documentation AI** · *Every line has a source.*
 
 **Turn a nurse's rough shift notes into structured, source-checked SOAPIE/FDAR notes and SBAR handoffs.
 The model writes, code checks, the nurse signs.**
