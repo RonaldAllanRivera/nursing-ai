@@ -1,10 +1,16 @@
 # Nursing Documentation AI. Run `make help` for the targets.
 # .env may hold secrets: it is only read for the values below, and only
 # COMPOSE_PROJECT_NAME and the three ports are exported to child processes.
+# Precedence: command line > environment > .env > default (same as the app).
+# A makefile assignment beats an environment variable, so keep the environment's
+# value of these three across the include and put it back afterwards.
+ENV_SETTINGS := PORT_OFFSET AI_MODE AI_MONTHLY_CAP_USD
+$(foreach v,$(ENV_SETTINGS),$(if $(filter environment,$(origin $v)),$(eval saved_$v := $($v))))
 -include .env
+$(foreach v,$(ENV_SETTINGS),$(if $(filter-out undefined,$(origin saved_$v)),$(eval $v := $(saved_$v))))
 
 PORT_OFFSET ?= 0
-ifeq ($(filter 0 1 2 3 4 5 6 7 8 9,$(PORT_OFFSET)),)
+ifneq ($(filter-out 0 1 2 3 4 5 6 7 8 9,$(PORT_OFFSET))$(words $(PORT_OFFSET)),1)
 $(error PORT_OFFSET must be a whole number from 0 to 9)
 endif
 
