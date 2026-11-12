@@ -3,7 +3,12 @@ name = "nursing-api"
 version = "0.1.0"
 description = "FastAPI backend for Nursing Documentation AI."
 requires-python = ">=3.13"
-dependencies = ["nursing-core"]
+dependencies = [
+    "fastapi>=0.162.5",
+    "nursing-core",
+    "pydantic-settings>=2.16.2",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [tool.uv.sources]
 nursing-core = { workspace = true }
