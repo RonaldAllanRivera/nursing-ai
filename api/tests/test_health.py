@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import time
 
@@ -37,3 +38,30 @@ async def test_health_503_when_database_down() -> None:
     assert response.status_code == 503
     assert response.json() == {"status": "unhealthy", "database": "unreachable"}
     assert elapsed < 3
+
+
+@pytest.mark.asyncio
+async def test_health_503_when_database_never_answers() -> None:
+    release = asyncio.Event()
+
+    async def silent(_reader: asyncio.StreamReader, _writer: asyncio.StreamWriter) -> None:
+        await release.wait()
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
+    port: int = server.sockets[0].getsockname()[1]
+    url = f"postgresql+asyncpg://app:x@127.0.0.1:{port}/app"
+    app = create_app(Settings(database_url=url, db_ping_timeout_s=0.5))
+    try:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                start = time.monotonic()
+                response = await client.get("/api/v1/health")
+                elapsed = time.monotonic() - start
+    finally:
+        release.set()
+        server.close()
+        await server.wait_closed()
+    assert response.status_code == 503
+    assert response.json() == {"status": "unhealthy", "database": "unreachable"}
+    assert elapsed < 1.5
