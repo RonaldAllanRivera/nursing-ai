@@ -17,7 +17,8 @@ FAKE_ENV = (
 def run_make(
     *args: str, cwd: Path = ROOT, extra_env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MAKELEVEL")}
+    dropped = ("MAKEFLAGS", "MAKELEVEL", "PORT_OFFSET", "AI_MODE", "AI_MONTHLY_CAP_USD")
+    env = {k: v for k, v in os.environ.items() if k not in dropped}
     env.update(extra_env or {})
     return subprocess.run(  # noqa: S603
         ["make", "-s", *args],  # noqa: S607
