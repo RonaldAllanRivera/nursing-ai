@@ -21,7 +21,7 @@ DB_PORT := $(shell echo $$((55432 + 10 * $(PORT_OFFSET))))
 export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev check-py check-web check gen-api openapi spend
+.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-10s %s\n", $$1, $$2}'
@@ -40,6 +40,10 @@ down: ## Stop Postgres and the API (keeps the data volume)
 
 dev: up ## Start Postgres and the API, then the web app (Ctrl+C stops the web app)
 	pnpm -C web dev
+
+# The stack stays up afterwards: the caller runs `make down`.
+e2e: up ## Start the stack, then run the Playwright tests
+	pnpm -C web e2e
 
 check-py: ## Python checks: ruff, pyright, pytest with coverage
 	uv run ruff check
