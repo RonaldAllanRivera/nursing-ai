@@ -1,0 +1,12 @@
+# Allowlist: nothing enters the build context unless listed here.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!core/pyproject.toml
+!core/src/
+!api/pyproject.toml
+!api/src/
+!mcp/pyproject.toml
+!evals/pyproject.toml
+**/__pycache__
