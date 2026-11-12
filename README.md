@@ -39,7 +39,7 @@ Draft FDAR note with its checks:
 | **D** | Reports dizziness since 2 AM. BP 90/60 mmHg, HR 112 bpm. IVF D5LR 1 L at 30 gtts/min, left arm, infusing well. | "c/o hilo since 2am", "BP 90/60 HR 112", "IVF D5LR 1L @ 30gtts/min infusing well L arm" | Source found, numbers match · glossary: c/o, hilo, IVF, gtts |
 | **A** | Given 200 mL water orally. | "pinainom ng water 200ml" | Source found · glossary: pinainom |
 | **R** | Still weak. | "still weak" | Source found |
-| | *Missing items:* allergies not documented, fall risk not documented | (checklist, plain code) | Needs nurse |
+| | *Missing items:* no allergies recorded for this patient; dizzy, with no fall-safety measure in the note | (checklist, plain code) | Needs nurse |
 
 *Glossary* lists the reviewed entries that explained a term in the line's source words (for example
 *hilo* = dizziness, *pinainom* = given to drink). An entry explains a word only: the quote, number and
@@ -55,11 +55,11 @@ Empty sections stay empty and are flagged for the nurse.
 - [ ] **Rough note → FDAR or SOAPIE note**, with the format set per facility
 - [ ] **Source-linked lines:** every line carries its source quotes; code verifies the quotes and the numbers
 - [ ] **De-identification before any AI call:** names and identifiers become tokens; the AI provider never sees who the patient is
-- [ ] **Missing-items checklist** (plain code, no AI): allergies, code status, pending labs, IV lines, fall risk, medications due
+- [ ] **Missing-items checklist** (plain code, no AI), checked against the patient's record: no allergies recorded, lines and tubes or pending tests not mentioned, medicines due but not recorded as given, held or refused, and fall risk with no safety measure written
 - [ ] **Review and sign:** signed notes are immutable and hashed
 - [ ] **Sign in with Google** (OpenID Connect, invite-only, no account passwords stored), with demo personas for visitors
 - [ ] **Built for shared ward PCs:** idle lock, and a personal signing PIN for unlocking and for every signature, so the next nurse can't act as the last one
-- [ ] **Eval harness** with a nurse-written gold set and a CI quality gate
+- [ ] **Eval harness** with a synthetic gold set (AI-reviewed; nurse review pending) and a CI quality gate
 - [ ] **Glossary lookup for ward shorthand and Taglish:** retrieval-augmented generation (RAG) with hybrid search (exact, fuzzy and semantic) in PostgreSQL with pgvector; it explains words and never suggests care, and a term with more than one meaning is flagged, never guessed
 - [ ] **Append-only, hash-chained audit log** of every view, edit, signature and agent tool call
 - [ ] **MCP server** with read-only patient and glossary tools, and an agent mode that chooses its own tools
@@ -146,12 +146,12 @@ after an idle lock and is required for every signature.
 
 ## Evaluation
 
-Every prompt or model change is measured against a gold set of synthetic cases written by a
-registered nurse before it ships.
+Every prompt or model change is measured against a gold set before it ships. The cases are
+synthetic and AI-reviewed; review by a registered nurse is pending.
 
 | Metric | How it is checked |
 |---|---|
-| Fact recall | Share of required facts present (code match + LLM judge, judge checked against nurse ratings) |
+| Fact recall | Share of required facts present (code match + LLM judge; the judge is checked against a nurse's ratings once the nurse review is done) |
 | Unsupported lines | Lines whose source quote is not in the input (code only) |
 | Number mismatches | Numbers in a line that don't appear in its source (code only) |
 | Critical items missed | Gold-set critical items missing from the output (code only) |

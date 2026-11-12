@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 - README roadmap: the MCP server and tool-using agent, with the hash-chained audit log and a draft
   SBAR handoff, now come before the full ward app, as v0.5; the full ward moves to v0.6; v0.4 adds a
   planned glossary lookup for ward shorthand and Taglish terms (hybrid search with pgvector).
+- README: the gold set is described as synthetic and AI-reviewed, with nurse review pending, and the
+  missing-items checklist and its example follow the planned checklist rules.
 
 <!--
 Template for each release (newest on top):
