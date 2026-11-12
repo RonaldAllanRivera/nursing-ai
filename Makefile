@@ -21,7 +21,7 @@ DB_PORT := $(shell echo $$((55432 + 10 * $(PORT_OFFSET))))
 export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down check-py check openapi spend
+.PHONY: help ports up down dev check-py check-web check gen-api openapi spend
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-10s %s\n", $$1, $$2}'
@@ -38,13 +38,26 @@ up: ## Start Postgres and the API in Docker Compose
 down: ## Stop Postgres and the API (keeps the data volume)
 	docker compose down
 
+dev: up ## Start Postgres and the API, then the web app (Ctrl+C stops the web app)
+	pnpm -C web dev
+
 check-py: ## Python checks: ruff, pyright, pytest with coverage
 	uv run ruff check
 	uv run ruff format --check
 	uv run pyright
 	uv run pytest --cov --cov-report=term-missing
 
-check: check-py ## Every check
+check-web: ## Web checks: eslint, tsc, vitest, build, prettier
+	pnpm -C web lint
+	pnpm -C web typecheck
+	pnpm -C web test
+	pnpm -C web build
+	pnpm -C web format:check
+
+check: check-py check-web ## Every check
+
+gen-api: ## Rewrite web/src/api/schema.d.ts from api/openapi.json
+	pnpm -C web gen:api
 
 openapi: ## Rewrite api/openapi.json from the app
 	uv run python -m nursing_api.openapi_export
