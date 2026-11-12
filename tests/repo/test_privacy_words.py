@@ -131,3 +131,69 @@ def test_cli_allows_a_file_outside_the_repo(
     assert privacy_words.main(["--repo", str(repo)]) == 0
     assert "1 hash in the private word list" in capsys.readouterr().out
     assert outside.exists()
+
+
+def test_cli_error_never_shows_the_setting_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    repo = make_repo(tmp_path, "PRIVATE_WORDS_FILE=hiddenfolder/asfolder", ignore="hiddenfolder/\n")
+    (repo / "hiddenfolder" / "asfolder").mkdir(parents=True)
+    type_answers(monkeypatch, "Alpha", "")
+    assert privacy_words.main(["--repo", str(repo)]) == 2
+    out = capsys.readouterr()
+    text = (out.out + out.err).lower()
+    assert "cannot use private_words_file" in text
+    assert "hiddenfolder" not in text
+    assert "asfolder" not in text
+    assert str(tmp_path).lower() not in text
+
+
+def test_cli_malformed_file_names_the_line_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    repo = make_repo(tmp_path, "PRIVATE_WORDS_FILE=words.sha256", ignore="words.sha256\n")
+    (repo / "words.sha256").write_text(f"{privacy_words.hash_word('x')}\nbadlinetext\n")
+    type_answers(monkeypatch, "Alpha", "")
+    assert privacy_words.main(["--repo", str(repo)]) == 2
+    out = capsys.readouterr()
+    text = (out.out + out.err).lower()
+    assert "line 2" in text
+    assert "badlinetext" not in text
+    assert "words.sha256" not in text
+
+
+def test_add_words_dedupes_lines_already_in_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "w"
+    h = privacy_words.hash_word("alpha")
+    path.write_text(f"{h}\n{h}\n")
+    assert privacy_words.add_words(path, ["Beta"]) == 2
+    assert path.read_text().splitlines() == [h, privacy_words.hash_word("beta")]
+
+
+def test_add_words_refuses_blank_and_multi_word_entries(tmp_path: Path) -> None:
+    path = tmp_path / "w"
+    for bad in ("", "   ", "Two Words"):
+        with pytest.raises(ValueError, match="one word") as info:
+            privacy_words.add_words(path, [bad])
+        assert "words" not in str(info.value).lower().replace("one word", "")
+    assert not path.exists()
+
+
+def test_cli_refuses_an_entry_with_spaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    repo = make_repo(tmp_path, "PRIVATE_WORDS_FILE=words.sha256", ignore="words.sha256\n")
+    type_answers(monkeypatch, "Two Words", "Zebracanary", "")
+    assert privacy_words.main(["--repo", str(repo)]) == 0
+    out = capsys.readouterr()
+    assert out.out.count("One word per entry: that entry was not saved.") == 1
+    assert "1 hash" in out.out
+    text = (out.out + out.err).lower()
+    assert "two" not in text
+    assert "words" not in text.replace("private word list", "").replace("one word per", "")
+    assert privacy_words.load_hashes(repo / "words.sha256") == [
+        privacy_words.hash_word("zebracanary")
+    ]

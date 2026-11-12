@@ -44,9 +44,11 @@ def load_hashes(path: Path) -> list[str]:
 
 def add_words(path: Path, words: Iterable[str]) -> int:
     """Merge the words' hashes into the file (no duplicates, first order kept); return the total."""
-    merged = load_hashes(path) if path.exists() else []
+    merged = list(dict.fromkeys(load_hashes(path))) if path.exists() else []
     seen = set(merged)
     for word in words:
+        if not word.strip() or word.strip().split() != [word.strip()]:
+            raise ValueError("one word per entry, and not blank")
         digest = hash_word(word)
         if digest not in seen:
             seen.add(digest)
@@ -112,9 +114,21 @@ def main(argv: list[str] | None = None) -> int:
 
     words: list[str] = []
     while answer := getpass("Private word (Enter to finish): "):
-        if answer.strip():
-            words.append(answer)
-    total = add_words(path, words)
+        entry = answer.strip()
+        if not entry:
+            continue
+        if entry.split() != [entry]:
+            print("One word per entry: that entry was not saved.")
+            continue
+        words.append(entry)
+    try:
+        total = add_words(path, words)
+    except OSError as exc:
+        print(f"cannot use {SETTING}: {exc.strerror}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"cannot use {SETTING}: {exc}", file=sys.stderr)
+        return 2
     print(f"{total} {'hash' if total == 1 else 'hashes'} in the private word list")
     return 0
 
