@@ -1,0 +1,52 @@
+# Every hook is local and runs the tools this repo already pins (uv.lock, pnpm-lock.yaml,
+# .tools/bin), so pre-commit itself never downloads anything.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --force-exclude
+        language: system
+        types: [python]
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+      # ESLint and Prettier run on the whole web project: pre-commit passes paths that start
+      # with web/, but they run inside web/, and a type-aware ESLint wants the whole project.
+      - id: eslint
+        name: eslint
+        entry: pnpm -C web lint
+        language: system
+        files: ^web/
+        pass_filenames: false
+      - id: prettier
+        name: prettier check
+        entry: pnpm -C web format:check
+        language: system
+        files: ^web/
+        pass_filenames: false
+      - id: gitleaks
+        name: gitleaks
+        entry: .tools/bin/gitleaks git --pre-commit --staged --redact --no-banner
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: actionlint
+        name: actionlint
+        entry: uv run actionlint
+        language: system
+        files: ^\.github/workflows/
+      - id: staged-check
+        name: staged check (private words, markers, paths)
+        entry: uv run python scripts/staged_check.py
+        language: system
+        always_run: true
+        pass_filenames: false

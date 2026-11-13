@@ -81,3 +81,17 @@ def test_environment_port_offset_beats_env_file(fake_repo: Path) -> None:
 def test_environment_ai_mode_beats_env_file(fake_repo: Path) -> None:
     result = run_make("spend", cwd=fake_repo, extra_env={"AI_MODE": "mock"})
     assert "AI_MODE=mock" in result.stdout.splitlines()
+
+
+def test_help_lists_hooks_and_setup() -> None:
+    lines = run_make("help").stdout.splitlines()
+    assert any(line.startswith("hooks ") for line in lines)
+    assert any(line.startswith("setup ") for line in lines)
+
+
+def test_setup_installs_python_web_tools_and_hooks_in_order() -> None:
+    steps = run_make("-n", "setup").stdout.splitlines()
+    assert steps[0] == "uv sync --all-packages"
+    assert steps[1] == "pnpm -C web install --frozen-lockfile"
+    assert any("install-tools" in step for step in steps[2:])
+    assert steps[-1].endswith("pre-commit install")

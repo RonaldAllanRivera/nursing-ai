@@ -258,7 +258,13 @@ def run_gitleaks(repo: Path) -> list[Finding]:
     ]
 
 
-def _read_markers(repo: Path) -> list[str]:
+def read_allowlist() -> frozenset[str]:
+    """The top-level entries a public repo may hold (scripts/public_paths.txt)."""
+    lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
+    return frozenset(line.strip() for line in lines if line.strip())
+
+
+def read_markers(repo: Path) -> list[str]:
     exclude = Path(_git(repo, "rev-parse", "--git-path", "info/exclude").strip())
     exclude = exclude if exclude.is_absolute() else repo / exclude
     exclude_text = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
@@ -271,7 +277,7 @@ def _fail(check: Check, where: str, detail: str) -> list[Finding]:
     return [Finding(check, where, detail)]
 
 
-def _load_hashes(repo: Path) -> tuple[list[str], list[Finding]]:
+def load_private_hashes(repo: Path) -> tuple[list[str], list[Finding]]:
     """The private hashes, or the one finding that says why they can't be used."""
     try:
         path = words_file(repo)
@@ -295,16 +301,16 @@ def _load_hashes(repo: Path) -> tuple[list[str], list[Finding]]:
     return hashes, []
 
 
-def _hide_if_private(name: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
+def hide_if_private(name: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
     """Hide a file name that holds a private word or marker."""
     return HIDDEN if check_text("", name, hashes, markers) else name
 
 
-def _scrub(where: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
+def scrub(where: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
     head, sep, name = where.partition(" · ")
     if not sep or name in {"message", "author", "committer"}:
         return where
-    return f"{head}{sep}{_hide_if_private(name, hashes, markers)}"
+    return f"{head}{sep}{hide_if_private(name, hashes, markers)}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -320,9 +326,9 @@ def main(argv: list[str] | None = None) -> int:
     word_problem: list[Finding] = []
     marker_problem: list[Finding] = []
     if local:
-        hashes, word_problem = _load_hashes(repo)
+        hashes, word_problem = load_private_hashes(repo)
         try:
-            markers = _read_markers(repo)
+            markers = read_markers(repo)
         except UnicodeDecodeError:
             marker_problem = _fail(
                 "markers", "private markers", "cannot read the exclude file: not UTF-8 text"
@@ -338,25 +344,23 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         print("public-check: cannot read the history")
         return 1
-    allowed = frozenset(
-        line.strip() for line in ALLOWLIST.read_text(encoding="utf-8").splitlines() if line.strip()
-    )
+    allowed = read_allowlist()
 
     secrets_found = [
-        Finding(f.check, _scrub(f.where, hashes, markers), f.detail) for f in run_gitleaks(repo)
+        Finding(f.check, scrub(f.where, hashes, markers), f.detail) for f in run_gitleaks(repo)
     ]
     paths_found = check_paths(history.paths, allowed, markers)
     paths_found = [
-        Finding(f.check, _hide_if_private(f.where, hashes, markers), f.detail) for f in paths_found
+        Finding(f.check, hide_if_private(f.where, hashes, markers), f.detail) for f in paths_found
     ]
     words_found: list[Finding] = list(word_problem) + list(marker_problem)
     if local:
         words_found += [
-            Finding("words", _scrub(where, hashes, markers), "binary file not scanned")
+            Finding("words", scrub(where, hashes, markers), "binary file not scanned")
             for where in history.binaries
         ]
         for where, text in history.chunks:
-            found = check_text(_scrub(where, hashes, markers), text, hashes, markers)
+            found = check_text(scrub(where, hashes, markers), text, hashes, markers)
             words_found += found
 
     sections: list[tuple[str, list[Finding]]] = [

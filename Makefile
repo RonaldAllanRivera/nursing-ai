@@ -22,7 +22,7 @@ export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 export PATH := $(CURDIR)/.tools/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend private-words tools public-check
+.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend private-words tools public-check hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-14s %s\n", $$1, $$2}'
@@ -81,3 +81,13 @@ tools: ## Install the pinned gitleaks into .tools/bin
 
 public-check: ## Scan the whole git history for secrets, stray paths and private words
 	@uv run python scripts/public_check.py
+
+hooks: ## Install the git pre-commit hook
+	@uv run pre-commit install
+
+# Some PCs need a pnpm store flag of their own for the install (see your notes); it is not set here.
+setup: ## Install everything: Python and web dependencies, tools, git hooks
+	uv sync --all-packages
+	pnpm -C web install --frozen-lockfile
+	$(MAKE) tools
+	$(MAKE) hooks
