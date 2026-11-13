@@ -85,9 +85,10 @@ public-check: ## Scan the whole git history for secrets, stray paths and private
 hooks: ## Install the git pre-commit hook
 	@uv run pre-commit install
 
-setup: ## Install everything (some PCs need their own pnpm store flag)
+setup: ## Install everything, including the test browser (some PCs need their own pnpm store flag)
 	uv sync --all-packages
 	pnpm -C web install --frozen-lockfile
+	pnpm -C web exec playwright install chromium
 	$(MAKE) tools
 	$(MAKE) hooks
 

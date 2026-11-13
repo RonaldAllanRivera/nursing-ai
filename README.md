@@ -208,11 +208,11 @@ tests/    repository-level tests
 
 ## Getting started
 
-**Prerequisites:** Docker with Compose, [uv](https://docs.astral.sh/uv/), Node 22 and
+**Prerequisites:** Linux x64 or WSL 2, Docker with Compose, [uv](https://docs.astral.sh/uv/), Node 22 and
 [pnpm](https://pnpm.io/).
 
 ```bash
-make setup    # install the Python and web dependencies, the pinned tools and the git hooks
+make setup    # install the Python and web dependencies, the test browser, the pinned tools and the git hooks
 make dev      # Postgres + API + web; open http://localhost:5173, it shows "API: healthy"
 make check    # lint, type-check and test everything
 make e2e      # Playwright end-to-end tests

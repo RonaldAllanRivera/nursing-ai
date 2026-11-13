@@ -94,5 +94,6 @@ def test_setup_installs_python_web_tools_and_hooks_in_order() -> None:
     steps = run_make("-n", "setup").stdout.splitlines()
     assert steps[0] == "uv sync --all-packages"
     assert steps[1] == "pnpm -C web install --frozen-lockfile"
-    assert any("install-tools" in step for step in steps[2:])
+    assert steps[2] == "pnpm -C web exec playwright install chromium"
+    assert any("install-tools" in step for step in steps[3:])
     assert steps[-1].endswith("pre-commit install")
