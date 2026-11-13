@@ -9,12 +9,12 @@ from nursing_core.pipeline.text import find_span, prepare
 
 def test_span_after_emoji_counts_code_points() -> None:
     plain = prepare("pt had chest pain")
-    with_emoji = prepare("\U0001f642 pt had chest pain")
+    with_emoji = prepare("\U0001f642pt had chest pain")
     base = find_span(plain, "chest pain")
     shifted = find_span(with_emoji, "chest pain")
     assert base is not None
     assert shifted is not None
-    assert shifted == Span(start=base.start + 2, end=base.end + 2)
+    assert shifted == Span(start=base.start + 1, end=base.end + 1)
     assert with_emoji.raw[shifted.start : shifted.end] == "chest pain"
 
 
@@ -62,3 +62,34 @@ def test_demo_quotes_found_at_their_expected_spans() -> None:
                 assert find_span(note, quote.text) == quote.span
                 checked += 1
     assert checked > 0
+
+
+def test_quote_inside_a_longer_word_is_not_found() -> None:
+    assert find_span(prepare("pt unresponsive to voice"), "responsive") is None
+    assert find_span(prepare("pt afebrile"), "febrile") is None
+    assert find_span(prepare("no painkillers given"), "no pain") is None
+    assert find_span(prepare("hypo"), "hypo") == Span(start=0, end=4)
+
+
+def test_number_inside_a_longer_number_is_not_found() -> None:
+    assert find_span(prepare("HR 120"), "HR 12") is None
+    assert find_span(prepare("T 37.8"), "7.8") is None
+
+
+def test_letters_next_to_digits_still_match() -> None:
+    assert find_span(prepare("BP120/80 calm"), "120/80") == Span(start=2, end=8)
+    assert find_span(prepare("D5LR 1L"), "D5") == Span(start=0, end=2)
+
+
+def test_later_whole_occurrence_is_found_after_a_rejected_one() -> None:
+    raw = "afebrile at 2am, febrile at 4am"
+    span = find_span(prepare(raw), "febrile")
+    assert span == Span(start=17, end=24)
+
+
+def test_first_occurrence_wins() -> None:
+    assert find_span(prepare("pain now, pain later"), "pain") == Span(start=0, end=4)
+
+
+def test_quote_whitespace_is_stripped() -> None:
+    assert find_span(prepare("has chest pain."), " chest pain\n") == Span(start=4, end=14)

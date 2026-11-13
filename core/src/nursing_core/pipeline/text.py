@@ -27,7 +27,11 @@ class MatchText:
 
 
 def prepare(raw: str) -> MatchText:
-    """Normalise one code point at a time so each result character has one raw origin."""
+    """Normalise one code point at a time so each result character has one raw origin.
+
+    Known limit: a precomposed letter ("\u00f1") and its decomposed form don't match each other.
+    That errs towards "not found", which is safe.
+    """
     chars: list[str] = []
     origin: list[int] = []
     in_space_run = False
@@ -52,6 +56,16 @@ def find_span(note: MatchText, quote: str) -> Span | None:
     if not needle:
         return None
     start = note.text.find(needle)
-    if start < 0:
-        return None
-    return Span(start=note.origin[start], end=note.origin[start + len(needle) - 1] + 1)
+    while start >= 0:
+        end = start + len(needle)
+        before = note.text[start - 1] if start > 0 else ""
+        after = note.text[end] if end < len(note.text) else ""
+        if not (_run_on(before, needle[0]) or _run_on(needle[-1], after)):
+            return Span(start=note.origin[start], end=note.origin[end - 1] + 1)
+        start = note.text.find(needle, start + 1)
+    return None
+
+
+def _run_on(left: str, right: str) -> bool:
+    """True when two neighbouring characters are both letters or both digits (one word/number)."""
+    return (left.isalpha() and right.isalpha()) or (left.isdigit() and right.isdigit())
