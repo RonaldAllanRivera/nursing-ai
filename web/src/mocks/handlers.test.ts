@@ -101,4 +101,10 @@ describe("demo API mocks", () => {
       "us-demo",
     ]);
   });
+
+  it("reports the mock API as healthy", async () => {
+    server.use(...createHandlers());
+    const { data } = await api.GET("/api/v1/health");
+    expect(data).toEqual({ status: "healthy", database: "ok" });
+  });
 });

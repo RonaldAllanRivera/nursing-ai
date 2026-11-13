@@ -38,6 +38,8 @@ export function createHandlers(data: DemoApi = demoApi): HttpHandler[] {
   const session = () => (personaId === null ? undefined : data.sessions[personaId]);
 
   return [
+    http.get("*/api/v1/health", () => HttpResponse.json({ status: "healthy", database: "ok" })),
+
     http.get("*/api/v1/personas", () => HttpResponse.json(data.personas)),
 
     http.post("*/api/v1/session", async ({ request }) => {

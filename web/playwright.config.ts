@@ -10,6 +10,7 @@ const widths = [
 
 export default defineConfig({
   testDir: "e2e",
+  testIgnore: ["mock/**"],
   forbidOnly: !!process.env["CI"],
   reporter: process.env["CI"] ? [["html", { open: "never" }], ["list"]] : "list",
   use: { baseURL },

@@ -15,6 +15,7 @@ export default defineConfig(
       "test-results",
       "src/api/schema.d.ts",
       "src/mocks/demo-api.ts",
+      "public/mockServiceWorker.js",
     ],
   },
   js.configs.recommended,
