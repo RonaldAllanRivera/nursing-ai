@@ -85,8 +85,7 @@ public-check: ## Scan the whole git history for secrets, stray paths and private
 hooks: ## Install the git pre-commit hook
 	@uv run pre-commit install
 
-# Some PCs need a pnpm store flag of their own for the install (see your notes); it is not set here.
-setup: ## Install everything: Python and web dependencies, tools, git hooks
+setup: ## Install everything (some PCs need their own pnpm store flag)
 	uv sync --all-packages
 	pnpm -C web install --frozen-lockfile
 	$(MAKE) tools

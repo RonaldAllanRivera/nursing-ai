@@ -80,7 +80,10 @@ def staged_findings(repo: Path, hashes: Sequence[str], markers: Sequence[str]) -
         for f in check_paths(_staged_paths(repo), read_allowlist(), markers)
     ]
     for path, text in _added_text(repo):
-        findings += check_text(hide_if_private(path, hashes, markers), text, hashes, markers)
+        where = hide_if_private(path, hashes, markers)
+        findings += check_text(where, text, hashes, markers)
+        # A word in the file name itself (public-check sees it in the diff header).
+        findings += [f for f in check_text(where, path, hashes, markers) if f.check == "words"]
     ident = _git(repo, "var", "GIT_AUTHOR_IDENT")
     findings += check_text("author", ident, hashes, markers)
     return findings

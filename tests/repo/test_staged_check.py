@@ -197,5 +197,18 @@ def test_every_hook_is_local_and_system() -> None:
     assert {h["language"] for h in hooks} == {"system"}
     assert {h["id"] for h in hooks} >= {"ruff-format", "ruff-check", "pyright", "eslint"}
     assert {h["id"] for h in hooks} >= {"prettier", "gitleaks", "actionlint", "staged-check"}
+    staged = next(h for h in hooks if h["id"] == "staged-check")
+    assert staged.get("verbose") is True
     always = {h["id"] for h in hooks if h.get("always_run")}
     assert always == {"gitleaks", "staged-check"}
+
+
+def test_staged_path_with_a_word_refused(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    stage(repo, {f"core/{CANARY.upper()}.py": "x = 1\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "(path hidden): private word #1" in out
+    assert CANARY not in out.casefold()
