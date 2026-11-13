@@ -47,3 +47,13 @@ def test_public_check_job_runs_the_ci_mode() -> None:
     runs = [step["run"] for step in job["steps"] if "run" in step]
     assert "make public-check-ci" in runs
     assert "make public-check" not in runs
+
+
+def test_dependabot_keeps_pgvector_at_a_version_aurora_offers() -> None:
+    config = _load(ROOT / ".github" / "dependabot.yml")
+    compose = next(u for u in config["updates"] if u["package-ecosystem"] == "docker-compose")
+    ignored = {rule["dependency-name"]: set(rule["update-types"]) for rule in compose["ignore"]}
+    assert ignored["pgvector/pgvector"] == {
+        "version-update:semver-minor",
+        "version-update:semver-patch",
+    }
