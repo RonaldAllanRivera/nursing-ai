@@ -26,7 +26,7 @@ DAY = timedelta(days=1)
 
 
 class NoteFormat(StrEnum):
-    """Only what P1 builds. A US DAR note is this format, labelled "DAR" in en-US."""
+    """Only the formats built so far. A US DAR note is this format, labelled "DAR" in en-US."""
 
     FDAR = "fdar"
 
