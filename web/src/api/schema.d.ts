@@ -4,6 +4,64 @@
  */
 
 export interface paths {
+    "/api/v1/draft-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Job */
+        get: operations["get_job_api_v1_draft_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/facilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Facilities
+         * @description A nurse's own facility, or every facility for the admin.
+         */
+        get: operations["list_facilities_api_v1_facilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/facilities/{facility_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Facility */
+        get: operations["get_facility_api_v1_facilities__facility_key__get"];
+        /**
+         * Update Facility
+         * @description The admin edits a facility's settings. Notes already written keep their shift.
+         */
+        put: operations["update_facility_api_v1_facilities__facility_key__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -21,10 +79,391 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Note */
+        get: operations["get_note_api_v1_notes__note_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notes/{note_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discard Note
+         * @description Discards the draft; it never enters the record.
+         */
+        post: operations["discard_note_api_v1_notes__note_id__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notes/{note_id}/lines/{line_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Act On Line
+         * @description Confirm, edit, remove or restore one draft line.
+         */
+        patch: operations["act_on_line_api_v1_notes__note_id__lines__line_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/notes/{note_id}/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign Note
+         * @description Signs the draft: 409 review_incomplete lists the lines that still need the nurse.
+         */
+        post: operations["sign_note_api_v1_notes__note_id__sign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/patients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Patients
+         * @description The patients of the nurse's facility (403 for the admin, who doesn't chart).
+         */
+        get: operations["list_patients_api_v1_patients_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/patients/{patient_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Patient
+         * @description The patient and this shift's notes.
+         */
+        get: operations["get_patient_api_v1_patients__patient_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/patients/{patient_id}/rough-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Rough Note
+         * @description Saves the rough note in the session's shift and starts a draft job.
+         */
+        post: operations["add_rough_note_api_v1_patients__patient_id__rough_notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/personas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Personas
+         * @description The demo people a visitor can sign in as, each with their role.
+         */
+        get: operations["list_personas_api_v1_personas_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: operations["get_session_api_v1_session_get"];
+        put?: never;
+        /**
+         * Start Session
+         * @description Signs in as a demo persona and sets the session cookie.
+         */
+        post: operations["start_session_api_v1_session_post"];
+        /** End Session */
+        delete: operations["end_session_api_v1_session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/session/shift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change Shift
+         * @description A nurse switches her session to the previous, current or next shift.
+         */
+        put: operations["change_shift_api_v1_session_shift_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ChecklistItem */
+        ChecklistItem: {
+            /** Missing */
+            missing: boolean;
+            note_span: components["schemas"]["Span"] | null;
+            rule: components["schemas"]["ChecklistRule"];
+            /** Subject */
+            subject: string;
+        };
+        /**
+         * ChecklistRule
+         * @description The missing-items rules. Code status is never one of them.
+         * @enum {string}
+         */
+        ChecklistRule: "allergies" | "line_or_tube" | "medicine_due" | "pending_test" | "fall_risk";
+        /** ConfirmLine */
+        ConfirmLine: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "confirm";
+        };
+        /** Discard */
+        Discard: {
+            /**
+             * Discarded At
+             * Format: date-time
+             */
+            discarded_at: string;
+            /**
+             * Discarded By
+             * Format: uuid
+             */
+            discarded_by: string;
+        };
+        /** DraftJobOut */
+        DraftJobOut: {
+            failure: components["schemas"]["JobFailure"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Note Id */
+            note_id: string | null;
+            /**
+             * Rough Note Id
+             * Format: uuid
+             */
+            rough_note_id: string;
+            status: components["schemas"]["JobStatus"];
+        };
+        /** DraftLine */
+        DraftLine: {
+            /** Ai Text */
+            ai_text: string;
+            /** Id */
+            id: string;
+            /** Number Mismatches */
+            number_mismatches: components["schemas"]["NumberMismatch"][];
+            review: components["schemas"]["LineReview"];
+            section: components["schemas"]["FdarSection"];
+            /** Source Quotes */
+            source_quotes: components["schemas"]["SourceQuote"][];
+            status: components["schemas"]["LineStatus"];
+            /** Text */
+            text: string;
+        };
+        /** EditLine */
+        EditLine: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "edit";
+            /** Text */
+            text: string;
+        };
+        /** FacilityOut */
+        FacilityOut: {
+            profile: components["schemas"]["FacilityProfile"];
+            /** Shift Choices */
+            shift_choices: components["schemas"]["ShiftRef"][];
+            /** Version */
+            version: number;
+        };
+        /** FacilityProfile */
+        FacilityProfile: {
+            /**
+             * Clock
+             * @default 24h
+             * @enum {string}
+             */
+            clock: "24h" | "12h";
+            /**
+             * Day Starts At
+             * Format: time
+             */
+            day_starts_at: string;
+            default_note_format: components["schemas"]["NoteFormat"];
+            /** Key */
+            key: string;
+            locale: components["schemas"]["Locale"];
+            /** Name */
+            name: string;
+            /** Note Formats */
+            note_formats: components["schemas"]["NoteFormat"][];
+            /** Shifts */
+            shifts: components["schemas"]["ShiftDefinition"][];
+            /** Timezone */
+            timezone: string;
+            units: components["schemas"]["UnitDefaults"];
+        };
+        /**
+         * FacilitySettings
+         * @description Everything the admin edits. The key is not here: it never changes.
+         */
+        FacilitySettings: {
+            /**
+             * Clock
+             * @default 24h
+             * @enum {string}
+             */
+            clock: "24h" | "12h";
+            /**
+             * Day Starts At
+             * Format: time
+             */
+            day_starts_at: string;
+            default_note_format: components["schemas"]["NoteFormat"];
+            locale: components["schemas"]["Locale"];
+            /** Name */
+            name: string;
+            /** Note Formats */
+            note_formats: components["schemas"]["NoteFormat"][];
+            /** Shifts */
+            shifts: components["schemas"]["ShiftDefinition"][];
+            /** Timezone */
+            timezone: string;
+            units: components["schemas"]["UnitDefaults"];
+        };
+        /** FdarDraft */
+        FdarDraft: {
+            /** Entries */
+            entries: components["schemas"]["FdarEntry"][];
+        };
+        /** FdarEntry */
+        FdarEntry: {
+            /** Action */
+            action: components["schemas"]["DraftLine"][];
+            /** Data */
+            data: components["schemas"]["DraftLine"][];
+            focus: components["schemas"]["DraftLine"];
+            /** Response */
+            response: components["schemas"]["DraftLine"][];
+        };
+        /**
+         * FdarSection
+         * @enum {string}
+         */
+        FdarSection: "focus" | "data" | "action" | "response";
+        /** GenerationInfo */
+        GenerationInfo: {
+            /** Cost Usd */
+            cost_usd: number | string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Model */
+            model: string;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Prompt Version */
+            prompt_version: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "fake" | "replay" | "anthropic";
+        };
         /** HealthResponse */
         HealthResponse: {
             /**
@@ -38,6 +477,337 @@ export interface components {
              */
             status: "healthy" | "unhealthy";
         };
+        /**
+         * JobFailure
+         * @enum {string}
+         */
+        JobFailure: "ai_budget_reached" | "model_refused" | "invalid_output" | "provider_error" | "replay_missing";
+        /**
+         * JobStatus
+         * @enum {string}
+         */
+        JobStatus: "queued" | "running" | "succeeded" | "failed";
+        /**
+         * LineReview
+         * @enum {string}
+         */
+        LineReview: "pending" | "confirmed" | "edited" | "removed";
+        /**
+         * LineStatus
+         * @enum {string}
+         */
+        LineStatus: "source_found" | "summary" | "number_mismatch" | "no_source";
+        /**
+         * Locale
+         * @enum {string}
+         */
+        Locale: "en-PH" | "en-US";
+        /**
+         * MismatchKind
+         * @enum {string}
+         */
+        MismatchKind: "value" | "unit";
+        /**
+         * NoteFormat
+         * @description Only the formats built so far. A US DAR note is this format, labelled "DAR" in en-US.
+         * @enum {string}
+         */
+        NoteFormat: "fdar";
+        /** NoteOut */
+        NoteOut: {
+            /** Checklist */
+            checklist: components["schemas"]["ChecklistItem"][];
+            discard: components["schemas"]["Discard"] | null;
+            draft: components["schemas"]["FdarDraft"];
+            /**
+             * Encounter Id
+             * Format: uuid
+             */
+            encounter_id: string;
+            generation: components["schemas"]["GenerationInfo"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            patient: components["schemas"]["PatientSummary"];
+            rough_note: components["schemas"]["RoughNoteOut"];
+            /**
+             * Rough Note Id
+             * Format: uuid
+             */
+            rough_note_id: string;
+            signature: components["schemas"]["Signature"] | null;
+            status: components["schemas"]["NoteStatus"];
+            /** Version */
+            version: number;
+        };
+        /**
+         * NoteStatus
+         * @enum {string}
+         */
+        NoteStatus: "draft" | "signed" | "discarded";
+        /** NumberMismatch */
+        NumberMismatch: {
+            draft_span: components["schemas"]["Span"];
+            /** Draft Text */
+            draft_text: string;
+            kind: components["schemas"]["MismatchKind"];
+            note_span: components["schemas"]["Span"] | null;
+            /** Note Text */
+            note_text: string | null;
+        };
+        /** PatientDetail */
+        PatientDetail: {
+            /** Notes */
+            notes: components["schemas"]["ShiftNoteOut"][];
+            shift: components["schemas"]["ShiftRef"];
+            summary: components["schemas"]["PatientSummary"];
+        };
+        /** PatientSummary */
+        PatientSummary: {
+            /** Age */
+            age: number;
+            /** Bed Label */
+            bed_label: string;
+            /** Display Name */
+            display_name: string;
+            /** Facility Key */
+            facility_key: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Sex */
+            sex: string;
+            /** Ward */
+            ward: string;
+        };
+        /** PersonaOut */
+        PersonaOut: {
+            /** Display Name */
+            display_name: string;
+            /** Facility Key */
+            facility_key: string | null;
+            /** Facility Name */
+            facility_name: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Initials */
+            initials: string;
+            role: components["schemas"]["Role"];
+        };
+        /** Problem */
+        Problem: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "not_signed_in" | "forbidden" | "not_found" | "note_locked" | "review_incomplete" | "stale_version" | "precondition_required" | "idempotency_key_reused" | "invalid_request" | "not_implemented";
+            /** Detail */
+            detail?: string | null;
+            /** Line Ids */
+            line_ids?: string[] | null;
+            /** Status */
+            status: number;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @default about:blank
+             */
+            type: string;
+        };
+        /** RemoveLine */
+        RemoveLine: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "remove";
+        };
+        /** RestoreLine */
+        RestoreLine: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "restore";
+        };
+        /**
+         * Role
+         * @enum {string}
+         */
+        Role: "staff_nurse" | "head_nurse" | "admin";
+        /** RoughNoteIn */
+        RoughNoteIn: {
+            /** Text */
+            text: string;
+        };
+        /** RoughNoteOut */
+        RoughNoteOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            note_format: components["schemas"]["NoteFormat"];
+            shift: components["schemas"]["ShiftRef"];
+            /** Text */
+            text: string;
+            /**
+             * Written At
+             * Format: date-time
+             */
+            written_at: string;
+        };
+        /** SessionIn */
+        SessionIn: {
+            /**
+             * Persona Id
+             * Format: uuid
+             */
+            persona_id: string;
+        };
+        /** SessionOut */
+        SessionOut: {
+            /** Display Name */
+            display_name: string;
+            /** Facility Key */
+            facility_key: string | null;
+            /** Initials */
+            initials: string;
+            role: components["schemas"]["Role"];
+            shift: components["schemas"]["ShiftRef"] | null;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
+        /** ShiftChoiceIn */
+        ShiftChoiceIn: {
+            /**
+             * Starts At
+             * Format: date-time
+             */
+            starts_at: string;
+        };
+        /** ShiftDefinition */
+        ShiftDefinition: {
+            /** Code */
+            code: string;
+            /**
+             * Ends Local
+             * Format: time
+             */
+            ends_local: string;
+            ink: components["schemas"]["ShiftInk"];
+            /** Label */
+            label: string;
+            /**
+             * Starts Local
+             * Format: time
+             */
+            starts_local: string;
+        };
+        /**
+         * ShiftInk
+         * @description Named by the ink paper charts use, never by role or clock label.
+         * @enum {string}
+         */
+        ShiftInk: "blue" | "black" | "red";
+        /** ShiftNoteOut */
+        ShiftNoteOut: {
+            job: components["schemas"]["DraftJobOut"];
+            note_status: components["schemas"]["NoteStatus"] | null;
+            /**
+             * Rough Note Id
+             * Format: uuid
+             */
+            rough_note_id: string;
+            /**
+             * Written At
+             * Format: date-time
+             */
+            written_at: string;
+        };
+        /**
+         * ShiftRef
+         * @description A shift as worked: the snapshot a note keeps. Later profile edits never change it.
+         */
+        ShiftRef: {
+            /** Code */
+            code: string;
+            /**
+             * Ends At
+             * Format: date-time
+             */
+            ends_at: string;
+            /** Label */
+            label: string;
+            /**
+             * Shift Date
+             * Format: date
+             */
+            shift_date: string;
+            /**
+             * Starts At
+             * Format: date-time
+             */
+            starts_at: string;
+            /** Timezone */
+            timezone: string;
+        };
+        /** Signature */
+        Signature: {
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Signed At
+             * Format: date-time
+             */
+            signed_at: string;
+            /**
+             * Signed By
+             * Format: uuid
+             */
+            signed_by: string;
+        };
+        /** SourceQuote */
+        SourceQuote: {
+            span: components["schemas"]["Span"] | null;
+            /** Text */
+            text: string;
+        };
+        /**
+         * Span
+         * @description [start, end) in code points of the text the nurse typed; the web slices with Array.from.
+         */
+        Span: {
+            /** End */
+            end: number;
+            /** Start */
+            start: number;
+        };
+        /**
+         * Ucum
+         * @enum {string}
+         */
+        Ucum: "Cel" | "[degF]" | "kg" | "[lb_av]" | "mL" | "mm[Hg]" | "/min" | "%";
+        /**
+         * UnitDefaults
+         * @description The unit a number has when the nurse wrote none. A weight may have no default.
+         */
+        UnitDefaults: {
+            temperature: components["schemas"]["Ucum"];
+            volume: components["schemas"]["Ucum"];
+            weight: components["schemas"]["Ucum"] | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -47,6 +817,238 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_job_api_v1_draft_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftJobOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_facilities_api_v1_facilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FacilityOut"][];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_facility_api_v1_facilities__facility_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                facility_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FacilityOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_facility_api_v1_facilities__facility_key__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required: 428 without it */
+                "If-Match"?: string | null;
+            };
+            path: {
+                facility_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FacilitySettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FacilityOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The note or setting has changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A required header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     health_api_v1_health_get: {
         parameters: {
             query?: never;
@@ -71,7 +1073,674 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResponse"];
+                    "application/problem+json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    get_note_api_v1_notes__note_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    discard_note_api_v1_notes__note_id__discard_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required: 428 without it, 412 when stale */
+                "If-Match"?: string | null;
+            };
+            path: {
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The note or setting has changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A required header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    act_on_line_api_v1_notes__note_id__lines__line_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required: 428 without it, 412 when stale */
+                "If-Match"?: string | null;
+            };
+            path: {
+                note_id: string;
+                line_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmLine"] | components["schemas"]["EditLine"] | components["schemas"]["RemoveLine"] | components["schemas"]["RestoreLine"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The note or setting has changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A required header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sign_note_api_v1_notes__note_id__sign_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required: 428 without it, 412 when stale */
+                "If-Match"?: string | null;
+            };
+            path: {
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The note or setting has changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A required header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_patients_api_v1_patients_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PatientSummary"][];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_patient_api_v1_patients__patient_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                patient_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PatientDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    add_rough_note_api_v1_patients__patient_id__rough_notes_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required: 428 without it. The same key and text return the first job. */
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                patient_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoughNoteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    /** @description The draft job to poll */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftJobOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A required header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_personas_api_v1_personas_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaOut"][];
+                };
+            };
+        };
+    };
+    get_session_api_v1_session_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_session_api_v1_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    end_session_api_v1_session_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    change_shift_api_v1_session_shift_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShiftChoiceIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

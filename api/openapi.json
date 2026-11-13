@@ -1,6 +1,499 @@
 {
   "components": {
     "schemas": {
+      "ChecklistItem": {
+        "additionalProperties": false,
+        "properties": {
+          "missing": {
+            "title": "Missing",
+            "type": "boolean"
+          },
+          "note_span": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Span"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rule": {
+            "$ref": "#/components/schemas/ChecklistRule"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "subject",
+          "missing",
+          "note_span"
+        ],
+        "title": "ChecklistItem",
+        "type": "object"
+      },
+      "ChecklistRule": {
+        "description": "The missing-items rules. Code status is never one of them.",
+        "enum": [
+          "allergies",
+          "line_or_tube",
+          "medicine_due",
+          "pending_test",
+          "fall_risk"
+        ],
+        "title": "ChecklistRule",
+        "type": "string"
+      },
+      "ConfirmLine": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "confirm",
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ConfirmLine",
+        "type": "object"
+      },
+      "Discard": {
+        "additionalProperties": false,
+        "properties": {
+          "discarded_at": {
+            "format": "date-time",
+            "title": "Discarded At",
+            "type": "string"
+          },
+          "discarded_by": {
+            "format": "uuid",
+            "title": "Discarded By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "discarded_by",
+          "discarded_at"
+        ],
+        "title": "Discard",
+        "type": "object"
+      },
+      "DraftJobOut": {
+        "properties": {
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Id"
+          },
+          "rough_note_id": {
+            "format": "uuid",
+            "title": "Rough Note Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "rough_note_id",
+          "status",
+          "failure",
+          "note_id"
+        ],
+        "title": "DraftJobOut",
+        "type": "object"
+      },
+      "DraftLine": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_text": {
+            "title": "Ai Text",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "number_mismatches": {
+            "items": {
+              "$ref": "#/components/schemas/NumberMismatch"
+            },
+            "title": "Number Mismatches",
+            "type": "array"
+          },
+          "review": {
+            "$ref": "#/components/schemas/LineReview"
+          },
+          "section": {
+            "$ref": "#/components/schemas/FdarSection"
+          },
+          "source_quotes": {
+            "items": {
+              "$ref": "#/components/schemas/SourceQuote"
+            },
+            "title": "Source Quotes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LineStatus"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "section",
+          "text",
+          "ai_text",
+          "status",
+          "review",
+          "source_quotes",
+          "number_mismatches"
+        ],
+        "title": "DraftLine",
+        "type": "object"
+      },
+      "EditLine": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "edit",
+            "title": "Action",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "text"
+        ],
+        "title": "EditLine",
+        "type": "object"
+      },
+      "FacilityOut": {
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/FacilityProfile"
+          },
+          "shift_choices": {
+            "items": {
+              "$ref": "#/components/schemas/ShiftRef"
+            },
+            "title": "Shift Choices",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "profile",
+          "version",
+          "shift_choices"
+        ],
+        "title": "FacilityOut",
+        "type": "object"
+      },
+      "FacilityProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "clock": {
+            "default": "24h",
+            "enum": [
+              "24h",
+              "12h"
+            ],
+            "title": "Clock",
+            "type": "string"
+          },
+          "day_starts_at": {
+            "format": "time",
+            "title": "Day Starts At",
+            "type": "string"
+          },
+          "default_note_format": {
+            "$ref": "#/components/schemas/NoteFormat"
+          },
+          "key": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "locale": {
+            "$ref": "#/components/schemas/Locale"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "note_formats": {
+            "items": {
+              "$ref": "#/components/schemas/NoteFormat"
+            },
+            "minItems": 1,
+            "title": "Note Formats",
+            "type": "array"
+          },
+          "shifts": {
+            "items": {
+              "$ref": "#/components/schemas/ShiftDefinition"
+            },
+            "minItems": 1,
+            "title": "Shifts",
+            "type": "array"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "units": {
+            "$ref": "#/components/schemas/UnitDefaults"
+          }
+        },
+        "required": [
+          "name",
+          "timezone",
+          "locale",
+          "day_starts_at",
+          "shifts",
+          "note_formats",
+          "default_note_format",
+          "units",
+          "key"
+        ],
+        "title": "FacilityProfile",
+        "type": "object"
+      },
+      "FacilitySettings": {
+        "additionalProperties": false,
+        "description": "Everything the admin edits. The key is not here: it never changes.",
+        "properties": {
+          "clock": {
+            "default": "24h",
+            "enum": [
+              "24h",
+              "12h"
+            ],
+            "title": "Clock",
+            "type": "string"
+          },
+          "day_starts_at": {
+            "format": "time",
+            "title": "Day Starts At",
+            "type": "string"
+          },
+          "default_note_format": {
+            "$ref": "#/components/schemas/NoteFormat"
+          },
+          "locale": {
+            "$ref": "#/components/schemas/Locale"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "note_formats": {
+            "items": {
+              "$ref": "#/components/schemas/NoteFormat"
+            },
+            "minItems": 1,
+            "title": "Note Formats",
+            "type": "array"
+          },
+          "shifts": {
+            "items": {
+              "$ref": "#/components/schemas/ShiftDefinition"
+            },
+            "minItems": 1,
+            "title": "Shifts",
+            "type": "array"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "units": {
+            "$ref": "#/components/schemas/UnitDefaults"
+          }
+        },
+        "required": [
+          "name",
+          "timezone",
+          "locale",
+          "day_starts_at",
+          "shifts",
+          "note_formats",
+          "default_note_format",
+          "units"
+        ],
+        "title": "FacilitySettings",
+        "type": "object"
+      },
+      "FdarDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/FdarEntry"
+            },
+            "minItems": 1,
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "FdarDraft",
+        "type": "object"
+      },
+      "FdarEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "items": {
+              "$ref": "#/components/schemas/DraftLine"
+            },
+            "title": "Action",
+            "type": "array"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DraftLine"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/DraftLine"
+          },
+          "response": {
+            "items": {
+              "$ref": "#/components/schemas/DraftLine"
+            },
+            "title": "Response",
+            "type": "array"
+          }
+        },
+        "required": [
+          "focus",
+          "data",
+          "action",
+          "response"
+        ],
+        "title": "FdarEntry",
+        "type": "object"
+      },
+      "FdarSection": {
+        "enum": [
+          "focus",
+          "data",
+          "action",
+          "response"
+        ],
+        "title": "FdarSection",
+        "type": "string"
+      },
+      "GenerationInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "input_tokens": {
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "fake",
+              "replay",
+              "anthropic"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "prompt_version",
+          "input_tokens",
+          "output_tokens",
+          "cost_usd",
+          "latency_ms"
+        ],
+        "title": "GenerationInfo",
+        "type": "object"
+      },
       "HealthResponse": {
         "properties": {
           "database": {
@@ -26,6 +519,806 @@
         ],
         "title": "HealthResponse",
         "type": "object"
+      },
+      "JobFailure": {
+        "enum": [
+          "ai_budget_reached",
+          "model_refused",
+          "invalid_output",
+          "provider_error",
+          "replay_missing"
+        ],
+        "title": "JobFailure",
+        "type": "string"
+      },
+      "JobStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "JobStatus",
+        "type": "string"
+      },
+      "LineReview": {
+        "enum": [
+          "pending",
+          "confirmed",
+          "edited",
+          "removed"
+        ],
+        "title": "LineReview",
+        "type": "string"
+      },
+      "LineStatus": {
+        "enum": [
+          "source_found",
+          "summary",
+          "number_mismatch",
+          "no_source"
+        ],
+        "title": "LineStatus",
+        "type": "string"
+      },
+      "Locale": {
+        "enum": [
+          "en-PH",
+          "en-US"
+        ],
+        "title": "Locale",
+        "type": "string"
+      },
+      "MismatchKind": {
+        "enum": [
+          "value",
+          "unit"
+        ],
+        "title": "MismatchKind",
+        "type": "string"
+      },
+      "NoteFormat": {
+        "description": "Only the formats built so far. A US DAR note is this format, labelled \"DAR\" in en-US.",
+        "enum": [
+          "fdar"
+        ],
+        "title": "NoteFormat",
+        "type": "string"
+      },
+      "NoteOut": {
+        "properties": {
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/ChecklistItem"
+            },
+            "title": "Checklist",
+            "type": "array"
+          },
+          "discard": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Discard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "$ref": "#/components/schemas/FdarDraft"
+          },
+          "encounter_id": {
+            "format": "uuid",
+            "title": "Encounter Id",
+            "type": "string"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/GenerationInfo"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "patient": {
+            "$ref": "#/components/schemas/PatientSummary"
+          },
+          "rough_note": {
+            "$ref": "#/components/schemas/RoughNoteOut"
+          },
+          "rough_note_id": {
+            "format": "uuid",
+            "title": "Rough Note Id",
+            "type": "string"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Signature"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/NoteStatus"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "rough_note_id",
+          "encounter_id",
+          "status",
+          "version",
+          "draft",
+          "checklist",
+          "generation",
+          "signature",
+          "discard",
+          "rough_note",
+          "patient"
+        ],
+        "title": "NoteOut",
+        "type": "object"
+      },
+      "NoteStatus": {
+        "enum": [
+          "draft",
+          "signed",
+          "discarded"
+        ],
+        "title": "NoteStatus",
+        "type": "string"
+      },
+      "NumberMismatch": {
+        "additionalProperties": false,
+        "properties": {
+          "draft_span": {
+            "$ref": "#/components/schemas/Span"
+          },
+          "draft_text": {
+            "title": "Draft Text",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MismatchKind"
+          },
+          "note_span": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Span"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Text"
+          }
+        },
+        "required": [
+          "kind",
+          "draft_text",
+          "draft_span",
+          "note_text",
+          "note_span"
+        ],
+        "title": "NumberMismatch",
+        "type": "object"
+      },
+      "PatientDetail": {
+        "properties": {
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/ShiftNoteOut"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "shift": {
+            "$ref": "#/components/schemas/ShiftRef"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PatientSummary"
+          }
+        },
+        "required": [
+          "summary",
+          "shift",
+          "notes"
+        ],
+        "title": "PatientDetail",
+        "type": "object"
+      },
+      "PatientSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "age": {
+            "minimum": 0.0,
+            "title": "Age",
+            "type": "integer"
+          },
+          "bed_label": {
+            "title": "Bed Label",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "facility_key": {
+            "title": "Facility Key",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "sex": {
+            "title": "Sex",
+            "type": "string"
+          },
+          "ward": {
+            "title": "Ward",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "age",
+          "sex",
+          "ward",
+          "bed_label",
+          "facility_key"
+        ],
+        "title": "PatientSummary",
+        "type": "object"
+      },
+      "PersonaOut": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "facility_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Key"
+          },
+          "facility_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Name"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "initials": {
+            "title": "Initials",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "initials",
+          "role",
+          "facility_key",
+          "facility_name"
+        ],
+        "title": "PersonaOut",
+        "type": "object"
+      },
+      "Problem": {
+        "properties": {
+          "code": {
+            "enum": [
+              "not_signed_in",
+              "forbidden",
+              "not_found",
+              "note_locked",
+              "review_incomplete",
+              "stale_version",
+              "precondition_required",
+              "idempotency_key_reused",
+              "invalid_request",
+              "not_implemented"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "line_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Ids"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "code"
+        ],
+        "title": "Problem",
+        "type": "object"
+      },
+      "RemoveLine": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "remove",
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "RemoveLine",
+        "type": "object"
+      },
+      "RestoreLine": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "restore",
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "RestoreLine",
+        "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "staff_nurse",
+          "head_nurse",
+          "admin"
+        ],
+        "title": "Role",
+        "type": "string"
+      },
+      "RoughNoteIn": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "RoughNoteIn",
+        "type": "object"
+      },
+      "RoughNoteOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note_format": {
+            "$ref": "#/components/schemas/NoteFormat"
+          },
+          "shift": {
+            "$ref": "#/components/schemas/ShiftRef"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "written_at": {
+            "format": "date-time",
+            "title": "Written At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "written_at",
+          "shift",
+          "note_format"
+        ],
+        "title": "RoughNoteOut",
+        "type": "object"
+      },
+      "SessionIn": {
+        "additionalProperties": false,
+        "properties": {
+          "persona_id": {
+            "format": "uuid",
+            "title": "Persona Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "persona_id"
+        ],
+        "title": "SessionIn",
+        "type": "object"
+      },
+      "SessionOut": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "facility_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Key"
+          },
+          "initials": {
+            "title": "Initials",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "shift": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShiftRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "initials",
+          "role",
+          "facility_key",
+          "shift"
+        ],
+        "title": "SessionOut",
+        "type": "object"
+      },
+      "ShiftChoiceIn": {
+        "additionalProperties": false,
+        "properties": {
+          "starts_at": {
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "starts_at"
+        ],
+        "title": "ShiftChoiceIn",
+        "type": "object"
+      },
+      "ShiftDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "ends_local": {
+            "format": "time",
+            "title": "Ends Local",
+            "type": "string"
+          },
+          "ink": {
+            "$ref": "#/components/schemas/ShiftInk"
+          },
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "starts_local": {
+            "format": "time",
+            "title": "Starts Local",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "starts_local",
+          "ends_local",
+          "ink"
+        ],
+        "title": "ShiftDefinition",
+        "type": "object"
+      },
+      "ShiftInk": {
+        "description": "Named by the ink paper charts use, never by role or clock label.",
+        "enum": [
+          "blue",
+          "black",
+          "red"
+        ],
+        "title": "ShiftInk",
+        "type": "string"
+      },
+      "ShiftNoteOut": {
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/DraftJobOut"
+          },
+          "note_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rough_note_id": {
+            "format": "uuid",
+            "title": "Rough Note Id",
+            "type": "string"
+          },
+          "written_at": {
+            "format": "date-time",
+            "title": "Written At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rough_note_id",
+          "written_at",
+          "job",
+          "note_status"
+        ],
+        "title": "ShiftNoteOut",
+        "type": "object"
+      },
+      "ShiftRef": {
+        "additionalProperties": false,
+        "description": "A shift as worked: the snapshot a note keeps. Later profile edits never change it.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "ends_at": {
+            "format": "date-time",
+            "title": "Ends At",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "shift_date": {
+            "format": "date",
+            "title": "Shift Date",
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "starts_at",
+          "ends_at",
+          "shift_date",
+          "timezone"
+        ],
+        "title": "ShiftRef",
+        "type": "object"
+      },
+      "Signature": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "signed_at": {
+            "format": "date-time",
+            "title": "Signed At",
+            "type": "string"
+          },
+          "signed_by": {
+            "format": "uuid",
+            "title": "Signed By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signed_by",
+          "signed_at",
+          "content_hash"
+        ],
+        "title": "Signature",
+        "type": "object"
+      },
+      "SourceQuote": {
+        "additionalProperties": false,
+        "properties": {
+          "span": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Span"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "span"
+        ],
+        "title": "SourceQuote",
+        "type": "object"
+      },
+      "Span": {
+        "additionalProperties": false,
+        "description": "[start, end) in code points of the text the nurse typed; the web slices with Array.from.",
+        "properties": {
+          "end": {
+            "exclusiveMinimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      },
+      "Ucum": {
+        "enum": [
+          "Cel",
+          "[degF]",
+          "kg",
+          "[lb_av]",
+          "mL",
+          "mm[Hg]",
+          "/min",
+          "%"
+        ],
+        "title": "Ucum",
+        "type": "string"
+      },
+      "UnitDefaults": {
+        "additionalProperties": false,
+        "description": "The unit a number has when the nurse wrote none. A weight may have no default.",
+        "properties": {
+          "temperature": {
+            "$ref": "#/components/schemas/Ucum"
+          },
+          "volume": {
+            "$ref": "#/components/schemas/Ucum"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ucum"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "temperature",
+          "weight",
+          "volume"
+        ],
+        "title": "UnitDefaults",
+        "type": "object"
       }
     }
   },
@@ -35,6 +1328,322 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/draft-jobs/{job_id}": {
+      "get": {
+        "operationId": "get_job_api_v1_draft_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "summary": "Get Job",
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/v1/facilities": {
+      "get": {
+        "description": "A nurse's own facility, or every facility for the admin.",
+        "operationId": "list_facilities_api_v1_facilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FacilityOut"
+                  },
+                  "title": "Response List Facilities Api V1 Facilities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          }
+        },
+        "summary": "List Facilities",
+        "tags": [
+          "facilities"
+        ]
+      }
+    },
+    "/api/v1/facilities/{facility_key}": {
+      "get": {
+        "operationId": "get_facility_api_v1_facilities__facility_key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "facility_key",
+            "required": true,
+            "schema": {
+              "title": "Facility Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacilityOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "summary": "Get Facility",
+        "tags": [
+          "facilities"
+        ]
+      },
+      "put": {
+        "description": "The admin edits a facility's settings. Notes already written keep their shift.",
+        "operationId": "update_facility_api_v1_facilities__facility_key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "facility_key",
+            "required": true,
+            "schema": {
+              "title": "Facility Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required: 428 without it",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required: 428 without it",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FacilitySettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacilityOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The note or setting has changed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A required header is missing"
+          }
+        },
+        "summary": "Update Facility",
+        "tags": [
+          "facilities"
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "health_api_v1_health_get",
@@ -51,7 +1660,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
                 }
@@ -61,6 +1670,940 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/api/v1/notes/{note_id}": {
+      "get": {
+        "operationId": "get_note_api_v1_notes__note_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "summary": "Get Note",
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/v1/notes/{note_id}/discard": {
+      "post": {
+        "description": "Discards the draft; it never enters the record.",
+        "operationId": "discard_note_api_v1_notes__note_id__discard_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required: 428 without it, 412 when stale",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required: 428 without it, 412 when stale",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The note or setting has changed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A required header is missing"
+          }
+        },
+        "summary": "Discard Note",
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/v1/notes/{note_id}/lines/{line_id}": {
+      "patch": {
+        "description": "Confirm, edit, remove or restore one draft line.",
+        "operationId": "act_on_line_api_v1_notes__note_id__lines__line_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required: 428 without it, 412 when stale",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required: 428 without it, 412 when stale",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "confirm": "#/components/schemas/ConfirmLine",
+                    "edit": "#/components/schemas/EditLine",
+                    "remove": "#/components/schemas/RemoveLine",
+                    "restore": "#/components/schemas/RestoreLine"
+                  },
+                  "propertyName": "action"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConfirmLine"
+                  },
+                  {
+                    "$ref": "#/components/schemas/EditLine"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RemoveLine"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RestoreLine"
+                  }
+                ],
+                "title": "Action"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The note or setting has changed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A required header is missing"
+          }
+        },
+        "summary": "Act On Line",
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/v1/notes/{note_id}/sign": {
+      "post": {
+        "description": "Signs the draft: 409 review_incomplete lists the lines that still need the nurse.",
+        "operationId": "sign_note_api_v1_notes__note_id__sign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required: 428 without it, 412 when stale",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required: 428 without it, 412 when stale",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The note or setting has changed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A required header is missing"
+          }
+        },
+        "summary": "Sign Note",
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/v1/patients": {
+      "get": {
+        "description": "The patients of the nurse's facility (403 for the admin, who doesn't chart).",
+        "operationId": "list_patients_api_v1_patients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PatientSummary"
+                  },
+                  "title": "Response List Patients Api V1 Patients Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          }
+        },
+        "summary": "List Patients",
+        "tags": [
+          "patients"
+        ]
+      }
+    },
+    "/api/v1/patients/{patient_id}": {
+      "get": {
+        "description": "The patient and this shift's notes.",
+        "operationId": "get_patient_api_v1_patients__patient_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patient_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Patient Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatientDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "summary": "Get Patient",
+        "tags": [
+          "patients"
+        ]
+      }
+    },
+    "/api/v1/patients/{patient_id}/rough-notes": {
+      "post": {
+        "description": "Saves the rough note in the session's shift and starts a draft job.",
+        "operationId": "add_rough_note_api_v1_patients__patient_id__rough_notes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patient_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Patient Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required: 428 without it. The same key and text return the first job.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required: 428 without it. The same key and text return the first job.",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoughNoteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftJobOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "description": "The draft job to poll",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A required header is missing"
+          }
+        },
+        "summary": "Add Rough Note",
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/v1/personas": {
+      "get": {
+        "description": "The demo people a visitor can sign in as, each with their role.",
+        "operationId": "list_personas_api_v1_personas_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PersonaOut"
+                  },
+                  "title": "Response List Personas Api V1 Personas Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Personas",
+        "tags": [
+          "session"
+        ]
+      }
+    },
+    "/api/v1/session": {
+      "delete": {
+        "operationId": "end_session_api_v1_session_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "End Session",
+        "tags": [
+          "session"
+        ]
+      },
+      "get": {
+        "operationId": "get_session_api_v1_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          }
+        },
+        "summary": "Get Session",
+        "tags": [
+          "session"
+        ]
+      },
+      "post": {
+        "description": "Signs in as a demo persona and sets the session cookie.",
+        "operationId": "start_session_api_v1_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "summary": "Start Session",
+        "tags": [
+          "session"
+        ]
+      }
+    },
+    "/api/v1/session/shift": {
+      "put": {
+        "description": "A nurse switches her session to the previous, current or next shift.",
+        "operationId": "change_shift_api_v1_session_shift_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShiftChoiceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "summary": "Change Shift",
+        "tags": [
+          "session"
+        ]
       }
     }
   }
