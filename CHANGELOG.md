@@ -18,9 +18,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 - Postgres and the API in Docker Compose, with make targets.
 - End-to-end tests at three screen widths.
 - CI on GitHub Actions, with Dependabot.
-- Pre-commit hooks.
-- The public-history check, which scans the whole git history for secrets, stray paths and private
-  words.
+- Pre-commit hooks, and a pre-push hook that runs the public-history check.
+- The public-history check, which scans the whole git history (file changes, commit and tag
+  messages, authors, file and tag names) for secrets, stray paths and private words.
 - The first architecture decision records.
 - README with the problem, the safety approach (the model writes, code checks, the nurse signs),
   a planned architecture, the evaluation metrics and the roadmap.

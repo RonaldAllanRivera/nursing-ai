@@ -214,9 +214,13 @@ tests/    repository-level tests
 ```bash
 make setup    # install the Python and web dependencies, the test browser, the pinned tools and the git hooks
 make dev      # Postgres + API + web; open http://localhost:5173, it shows "API: healthy"
+make down     # stop Postgres and the API (Ctrl+C in make dev stops only the web app)
 make check    # lint, type-check and test everything
 make e2e      # Playwright end-to-end tests
 ```
+
+On a fresh Ubuntu or WSL machine, install the test browser's system libraries once:
+`sudo pnpm -C web exec playwright install-deps chromium`.
 
 If a port is already taken, add `PORT_OFFSET=1` to the command (every port moves up by 10), for
 example `make dev PORT_OFFSET=1`. `make help` lists every target.

@@ -23,8 +23,8 @@ imported as `mcp`.
 
 We use one Git repository with a uv workspace.
 
-- `core/` holds the domain model, the draft pipeline, de-identification, providers and the database
-  layer. It is the only place with business logic.
+- `core/` is the only place with business logic. Today it holds the database layer; the domain
+  model, the draft pipeline, de-identification and the providers land there as they are built.
 - `api/`, `mcp/` and `evals/` are thin entry points that depend on `core` and add only
   transport, wiring and reporting.
 - `web/` (React + TypeScript), `infra/` (Terraform) and `docs/` (architecture notes and ADRs) sit
@@ -46,7 +46,7 @@ We use one Git repository with a uv workspace.
 - The repository grows over time and every contributor gets all of it. This is acceptable for a
   project of this size.
 
-### Alternatives considered
+## Alternatives considered
 
 - **Separate repositories** for the API, the MCP server, the evaluations and the web app. This gives
   independent release cycles, which we do not need, at the cost of publishing `core` as a package
