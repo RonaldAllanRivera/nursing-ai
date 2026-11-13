@@ -12,6 +12,8 @@ dev = [
     "ruff",
     "pyright[nodejs]",
     "pre-commit>=4.7.0",
+    "actionlint-py>=1.7.12.25",
+    "shellcheck-py>=0.11.0.1",
 ]
 
 [tool.ruff]

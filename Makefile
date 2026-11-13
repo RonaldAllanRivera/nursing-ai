@@ -22,7 +22,7 @@ export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 export PATH := $(CURDIR)/.tools/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e check-py check-web check gen-api openapi spend private-words tools public-check hooks setup
+.PHONY: help ports up down dev e2e check-py check-web check actionlint gen-api openapi spend private-words tools public-check hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-14s %s\n", $$1, $$2}'
@@ -59,7 +59,7 @@ check-web: ## Web checks: eslint, tsc, vitest, build, prettier
 	pnpm -C web build
 	pnpm -C web format:check
 
-check: check-py check-web ## Every check
+check: check-py check-web actionlint ## Every check
 
 gen-api: ## Rewrite web/src/api/schema.d.ts from api/openapi.json
 	pnpm -C web gen:api
@@ -90,3 +90,6 @@ setup: ## Install everything (some PCs need their own pnpm store flag)
 	pnpm -C web install --frozen-lockfile
 	$(MAKE) tools
 	$(MAKE) hooks
+
+actionlint: ## Lint the GitHub Actions workflows
+	uv run actionlint
