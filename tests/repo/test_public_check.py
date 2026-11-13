@@ -62,6 +62,17 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
+def head(repo: Path) -> str:
+    done = subprocess.run(
+        ["git", "rev-parse", "--short=7", "HEAD"],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
 def word_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *words: str) -> None:
     path = tmp_path / "words.sha256"
     path.write_text("".join(f"{hash_word(w)}\n" for w in words))
@@ -371,6 +382,22 @@ def test_file_git_calls_binary_is_scanned_and_listed(
     assert code == 1
     assert "private word #1" in out
     assert "core/data.txt: binary file not scanned" in out
+    assert f"commit {head(repo)} · core/data.txt: binary file not scanned" in out
+    assert CANARY not in out.casefold()
+
+
+def test_binary_with_a_tab_and_a_word_in_its_path_is_hidden(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    target = repo / "core" / f"\t{CANARY}.bin"
+    target.parent.mkdir()
+    target.write_bytes(b"\x00\x01")
+    git(repo, "add", "--force", "core")
+    git(repo, "commit", "-q", "-m", "binary with a tab in its name")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "binary file not scanned" in out
     assert CANARY not in out.casefold()
 
 

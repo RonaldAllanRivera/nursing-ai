@@ -143,6 +143,7 @@ def _binary_files(repo: Path) -> list[str]:
         "log",
         "--all",
         "--numstat",
+        "-z",
         "--no-renames",
         "--no-ext-diff",
         "--no-textconv",
@@ -151,7 +152,9 @@ def _binary_files(repo: Path) -> list[str]:
     )
     found: list[str] = []
     short = ""
-    for line in log.splitlines():
+    # With -z, entries end in NUL and paths are not quoted; never splitlines() (it breaks on \x1e).
+    for entry in log.split("\0"):
+        line = entry.removeprefix("\n")
         if line.startswith("\x1e"):
             short = line[1:8]
         elif line.startswith("-\t-\t"):
