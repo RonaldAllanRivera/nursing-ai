@@ -64,8 +64,9 @@ check: check-py check-web actionlint ## Every check
 gen-api: ## Rewrite web/src/api/schema.d.ts from api/openapi.json
 	pnpm -C web gen:api
 
-openapi: ## Rewrite api/openapi.json from the app
+openapi: ## Rewrite api/openapi.json and the web app's demo mock data
 	uv run python -m nursing_api.openapi_export
+	uv run python -m nursing_api.demo_export
 
 spend: ## Show the AI mode and monthly cap
 	@echo "AI_MODE=$(or $(AI_MODE),mock)"

@@ -3,5 +3,6 @@ dist
 .claude
 pnpm-lock.yaml
 src/api/schema.d.ts
+src/mocks/demo-api.ts
 playwright-report
 test-results
