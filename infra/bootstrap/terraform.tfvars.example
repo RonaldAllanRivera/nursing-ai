@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) and fill in your own values.
+alert_email = "you@example.com"
+
+# Turn these on once the account can create OIDC providers.
+enable_github_oidc = false
+github_repository  = "your-github-user/nursing-ai"
