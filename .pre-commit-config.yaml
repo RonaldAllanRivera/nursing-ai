@@ -1,5 +1,9 @@
 # Every hook is local and runs the tools this repo already pins (uv.lock, pnpm-lock.yaml,
 # .tools/bin), so pre-commit itself never downloads anything.
+# `make hooks` installs both git hooks. The commit hooks run on commit only; the whole-history
+# public check (private words in every message and identity) runs before every push.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 repos:
   - repo: local
     hooks:
@@ -51,3 +55,11 @@ repos:
         verbose: true
         always_run: true
         pass_filenames: false
+      - id: public-check
+        name: public check (whole history, before a push)
+        entry: uv run python scripts/public_check.py
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+        verbose: true

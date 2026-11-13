@@ -82,7 +82,7 @@ tools: ## Install the pinned gitleaks into .tools/bin
 public-check: ## Scan the whole git history for secrets, stray paths and private words
 	@uv run python scripts/public_check.py
 
-hooks: ## Install the git pre-commit hook
+hooks: ## Install the git pre-commit and pre-push hooks
 	@uv run pre-commit install
 
 setup: ## Install everything, including the test browser (some PCs need their own pnpm store flag)

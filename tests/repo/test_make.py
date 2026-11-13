@@ -85,7 +85,8 @@ def test_environment_ai_mode_beats_env_file(fake_repo: Path) -> None:
 
 def test_help_lists_hooks_and_setup() -> None:
     lines = run_make("help").stdout.splitlines()
-    assert any(line.startswith("hooks ") for line in lines)
+    hooks = next(line for line in lines if line.startswith("hooks "))
+    assert "pre-commit and pre-push" in hooks
     setup = next(line for line in lines if line.startswith("setup "))
     assert "pnpm store flag" in setup
 

@@ -188,10 +188,16 @@ def test_default_repo_is_the_current_folder(
     capsys.readouterr()
 
 
-def test_every_hook_is_local_and_system() -> None:
+def hook_config() -> dict[str, Any]:
     root = Path(__file__).resolve().parents[2]
-    config = yaml.safe_load((root / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
-    repos: list[dict[str, Any]] = config["repos"]
+    config: dict[str, Any] = yaml.safe_load(
+        (root / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    )
+    return config
+
+
+def test_every_hook_is_local_and_system() -> None:
+    repos: list[dict[str, Any]] = hook_config()["repos"]
     assert [r["repo"] for r in repos] == ["local"]
     hooks: list[dict[str, Any]] = repos[0]["hooks"]
     assert {h["language"] for h in hooks} == {"system"}
@@ -200,7 +206,20 @@ def test_every_hook_is_local_and_system() -> None:
     staged = next(h for h in hooks if h["id"] == "staged-check")
     assert staged.get("verbose") is True
     always = {h["id"] for h in hooks if h.get("always_run")}
-    assert always == {"gitleaks", "staged-check"}
+    assert always == {"gitleaks", "staged-check", "public-check"}
+
+
+def test_public_check_runs_before_every_push() -> None:
+    config = hook_config()
+    assert config["default_install_hook_types"] == ["pre-commit", "pre-push"]
+    assert config["default_stages"] == ["pre-commit"]
+    hooks: list[dict[str, Any]] = config["repos"][0]["hooks"]
+    check = next(h for h in hooks if h["id"] == "public-check")
+    assert check["stages"] == ["pre-push"]
+    assert check["entry"] == "uv run python scripts/public_check.py"
+    assert check["pass_filenames"] is False
+    assert check["verbose"] is True
+    assert [h["id"] for h in hooks if "pre-push" in h.get("stages", [])] == ["public-check"]
 
 
 def test_staged_path_with_a_word_refused(
