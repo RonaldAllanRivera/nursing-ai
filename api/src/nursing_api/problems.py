@@ -1,7 +1,7 @@
 """RFC 9457 problem responses: one shape for every error, documented as application/problem+json.
 
-Errors never echo the request: a validation error says which field, not what was typed, because
-a request body can hold note text.
+Errors never echo the request: a validation error names the field and the rule, never what was
+typed or an unknown key, because a request body can hold note text or a name.
 """
 
 from typing import Any, Literal
@@ -38,6 +38,11 @@ TITLES: dict[int, str] = {
 }
 
 
+class FieldError(BaseModel):
+    field: str  # a dotted path such as "body.text"; "body" for a rule about the whole form
+    message: str
+
+
 class Problem(BaseModel):
     type: str = "about:blank"
     title: str
@@ -45,6 +50,39 @@ class Problem(BaseModel):
     detail: str | None = None
     code: ProblemCode
     line_ids: list[str] | None = None
+    errors: list[FieldError] | None = None
+
+
+# Pydantic error types whose messages describe the rule, never the input. Every other type gets
+# a plain "invalid value" (some messages quote part of the input, such as a bad UUID's character).
+_SAFE_MESSAGES = frozenset(
+    {
+        "value_error",
+        "missing",
+        "string_too_long",
+        "string_too_short",
+        "string_type",
+        "literal_error",
+        "enum",
+        "too_short",
+        "too_long",
+        "greater_than",
+        "greater_than_equal",
+        "less_than",
+        "less_than_equal",
+        "int_type",
+        "bool_type",
+        "list_type",
+        "dict_type",
+        "model_type",
+        "model_attributes_type",
+        "union_tag_invalid",
+        "union_tag_not_found",
+        "timezone_aware",
+        "time_type",
+        "datetime_type",
+    }
+)
 
 
 class NotImplementedRoute(Exception):
@@ -52,7 +90,11 @@ class NotImplementedRoute(Exception):
 
 
 def problem_response(
-    status: int, code: ProblemCode, detail: str | None = None, line_ids: list[str] | None = None
+    status: int,
+    code: ProblemCode,
+    detail: str | None = None,
+    line_ids: list[str] | None = None,
+    errors: list[FieldError] | None = None,
 ) -> JSONResponse:
     body = Problem(
         title=TITLES.get(status, "Error"),
@@ -60,6 +102,7 @@ def problem_response(
         detail=detail,
         code=code,
         line_ids=line_ids,
+        errors=errors,
     )
     return JSONResponse(
         body.model_dump(mode="json", exclude_none=True), status_code=status, media_type=PROBLEM_JSON
@@ -75,15 +118,27 @@ async def _not_implemented(_request: Request, _exc: Exception) -> JSONResponse:
     return problem_response(501, "not_implemented")
 
 
+def field_errors(exc: RequestValidationError) -> list[FieldError]:
+    found: list[FieldError] = []
+    for error in exc.errors():
+        kind = str(error.get("type", ""))
+        location = [str(part) for part in error.get("loc", ())]
+        if kind == "extra_forbidden":
+            # The last part is the unknown key itself, which could be anything the caller typed.
+            location, message = location[:-1], "unknown field"
+        elif kind in _SAFE_MESSAGES:
+            message = str(error.get("msg", "invalid value")).removeprefix("Value error, ")
+        else:
+            message = "invalid value"
+        item = FieldError(field=".".join(location) or "body", message=message)
+        if item not in found:
+            found.append(item)
+    return found
+
+
 async def _invalid(_request: Request, exc: Exception) -> JSONResponse:
-    fields: list[str] = []
-    if isinstance(exc, RequestValidationError):
-        for error in exc.errors():
-            location = ".".join(str(part) for part in error.get("loc", ()))
-            if location and location not in fields:
-                fields.append(location)
-    detail = f"check: {', '.join(fields)}" if fields else None
-    return problem_response(422, "invalid_request", detail)
+    errors = field_errors(exc) if isinstance(exc, RequestValidationError) else []
+    return problem_response(422, "invalid_request", "see errors", errors=errors or None)
 
 
 def install_problems(app: FastAPI) -> None:

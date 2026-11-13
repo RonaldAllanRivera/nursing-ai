@@ -40,8 +40,9 @@ clock (24-hour by default).
   `day_starts_at`; a ward that dates its night shift by the next day sets it to the night shift's
   start, and any time from noon on names the next calendar day.
 - **The session picks the shift, not the clock.** At 14:10 the nurse finishing the 6-2 and the
-  nurse starting the 2-10 share a clock time, so sign-in only suggests the shift whose start is
-  nearest; the nurse can switch to the previous, current or next shift.
+  nurse starting the 2-10 share a clock time, so sign-in only suggests a shift: the one in progress,
+  or the next one when it starts within 30 minutes. The nurse can switch to the previous, current
+  or next shift.
 - **Each note keeps a snapshot of its shift**: code, label, start and end in UTC, the nursing date
   and the timezone. Editing the profile never rewrites a written note.
 - **The code never converts units.** A number in a draft must match its source, and a unit next to
@@ -52,8 +53,10 @@ clock (24-hour by default).
   values, region-neutral identity fields). Settings that only affect display or sessions can be
   added later as additive changes.
 
-`tzdata` is a pinned dependency, so the time zone rules don't depend on the operating system's copy
-(slim and Lambda images have none) and update through Dependabot.
+`tzdata` is a locked dependency, so the zones exist where the operating system has no copy (slim
+and Lambda images) and update through Dependabot. Where the system does have a copy, Python reads
+it first, so a developer PC can run newer or older rules than the Lambda image; the DST tests pin
+the dates that matter.
 
 ## Consequences
 

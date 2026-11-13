@@ -4,10 +4,10 @@ from fastapi import APIRouter
 from nursing_core.domain.patient import PatientSummary
 
 from nursing_api.problems import problems
-from nursing_api.routes import not_built
+from nursing_api.routes import SIGNED_IN, not_built
 from nursing_api.schemas import PatientDetail
 
-router = APIRouter(prefix="/api/v1/patients", tags=["patients"])
+router = APIRouter(prefix="/api/v1/patients", tags=["patients"], dependencies=SIGNED_IN)
 
 
 @router.get("", response_model=list[PatientSummary], responses=problems(401, 403))

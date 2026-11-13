@@ -249,7 +249,7 @@ def test_type_change_with_a_word_refused(
     assert CANARY not in out.casefold()
 
 
-# Reviewed binary files (carry-over 1).
+# Reviewed binary files.
 
 FONT = "web/public/fonts/a.woff2"
 

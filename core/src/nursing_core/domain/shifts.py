@@ -16,6 +16,8 @@ from nursing_core.domain.facility import DAY, FacilitySettings
 
 # Local dates either side of the instant: enough for the previous and next shift of any tiling.
 _SPAN = range(-2, 3)
+# A nurse who signs in this close to a shift's start is taken to be starting that shift.
+EARLY_START = timedelta(minutes=30)
 
 
 class ShiftRef(DomainModel):
@@ -83,13 +85,18 @@ def shift_containing(instant: datetime, facility: FacilitySettings) -> ShiftRef:
 
 
 def default_shift(instant: datetime, facility: FacilitySettings) -> ShiftRef:
-    """The shift whose start is nearest: a nurse signing in at 13:50 or 14:10 gets the 2-10."""
+    """The shift a nurse signing in now is most likely working.
+
+    The shift that contains the instant, unless the next one starts within 30 minutes: the
+    incoming 2-10 nurse signing in at 13:50 gets the 2-10, and a night nurse at 05:10 keeps her
+    10-6. The outgoing nurse charting late at 14:10 gets the 2-10 and switches back to the 6-2.
+    """
     shifts = _shifts_around(instant, facility)
-    # Nearest start first; on a tie the later shift wins (shifts are in time order).
-    _, nearest = min(
-        enumerate(shifts), key=lambda pair: (abs(pair[1].starts_at - instant), -pair[0])
-    )
-    return nearest
+    index = _index_containing(instant, shifts)
+    following = shifts[index + 1]
+    if following.starts_at - instant <= EARLY_START:
+        return following
+    return shifts[index]
 
 
 def shift_choices(instant: datetime, facility: FacilitySettings) -> list[ShiftRef]:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from nursing_api.problems import problems
-from nursing_api.routes import not_built
+from nursing_api.routes import SIGNED_IN, not_built
 from nursing_api.schemas import PersonaOut, SessionIn, SessionOut, ShiftChoiceIn
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
@@ -19,17 +19,22 @@ async def start_session(body: SessionIn) -> SessionOut:
     not_built()
 
 
-@router.get("/session", response_model=SessionOut, responses=problems(401))
+@router.get("/session", response_model=SessionOut, responses=problems(401), dependencies=SIGNED_IN)
 async def get_session() -> SessionOut:
     not_built()
 
 
-@router.delete("/session", status_code=204)
+@router.delete("/session", status_code=204, dependencies=SIGNED_IN)
 async def end_session() -> None:
     not_built()
 
 
-@router.put("/session/shift", response_model=SessionOut, responses=problems(401, 403, 422))
+@router.put(
+    "/session/shift",
+    response_model=SessionOut,
+    responses=problems(401, 403, 422),
+    dependencies=SIGNED_IN,
+)
 async def change_shift(body: ShiftChoiceIn) -> SessionOut:
     """A nurse switches her session to the previous, current or next shift."""
     not_built()

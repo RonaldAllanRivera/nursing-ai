@@ -4,10 +4,10 @@ from uuid import UUID
 from fastapi import APIRouter, Header
 
 from nursing_api.problems import problems
-from nursing_api.routes import etag_header, not_built
+from nursing_api.routes import SIGNED_IN, etag_header, not_built
 from nursing_api.schemas import LineAction, NoteOut
 
-router = APIRouter(prefix="/api/v1/notes", tags=["notes"])
+router = APIRouter(prefix="/api/v1/notes", tags=["notes"], dependencies=SIGNED_IN)
 
 IfMatch = Annotated[
     str | None, Header(alias="If-Match", description="Required: 428 without it, 412 when stale")

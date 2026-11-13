@@ -23,6 +23,15 @@ from nursing_core.domain.shifts import ShiftRef
 MAX_NOTE_CHARS = 4000
 
 
+def check_note_text(value: str) -> str:
+    """Refuse a blank note, and the NUL character, which Postgres text can't store."""
+    if not value.strip():
+        raise ValueError("a rough note can't be blank")
+    if "\x00" in value:
+        raise ValueError("a rough note can't contain a NUL character")
+    return value
+
+
 class Span(DomainModel):
     """[start, end) in code points of the text the nurse typed; the web slices with Array.from."""
 
@@ -165,9 +174,7 @@ class RoughNote(DomainModel):
     @field_validator("text")
     @classmethod
     def _not_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("a rough note can't be blank")
-        return value
+        return check_note_text(value)
 
 
 class NoteStatus(StrEnum):

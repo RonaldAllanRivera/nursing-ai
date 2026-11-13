@@ -49,12 +49,22 @@ def test_mismatch_spans_point_at_their_numbers() -> None:
                 assert note == mismatch.note_text, (case.key, line.id)
 
 
-def test_checklist_spans_point_into_the_note() -> None:
+def test_checklist_spans_point_at_the_words_that_cleared_the_item() -> None:
+    expected = {("demo-1", "line_or_tube"): "IVF", ("demo-3", "fall_risk"): "bed alarm on"}
+    found: dict[tuple[str, str], str] = {}
     for case in load_demo_cases():
         for item in case.expected_checklist:
             if item.note_span is not None:
                 assert not item.missing
-                assert case.rough_note.text[item.note_span.start : item.note_span.end].strip()
+                span = item.note_span
+                found[(case.key, item.rule.value)] = case.rough_note.text[span.start : span.end]
+    assert found == expected
+
+
+def test_ph_cases_share_one_night_shift() -> None:
+    cases = {case.key: case for case in load_demo_cases()}
+    assert cases["demo-1"].rough_note.shift == cases["demo-2"].rough_note.shift
+    assert cases["demo-1"].rough_note.shift.code == "10-6"
 
 
 def test_cases_cover_all_four_statuses_and_both_mismatch_kinds() -> None:
@@ -85,7 +95,8 @@ def test_no_case_flags_code_status() -> None:
     cases = load_demo_cases()
     assert any(case.context.code_status == "DNR" for case in cases)
     for case in cases:
-        assert all("code" not in item.subject.casefold() for item in case.expected_checklist)
+        subjects = {item.subject for item in case.expected_checklist}
+        assert case.context.code_status not in subjects
 
 
 def test_each_case_shift_matches_its_facility() -> None:

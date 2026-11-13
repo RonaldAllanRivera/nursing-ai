@@ -873,7 +873,7 @@ def test_missing_repo_path_is_never_printed(
     assert str(tmp_path) not in out
 
 
-# Reviewed binary files and Git LFS (carry-over 1).
+# Reviewed binary files and Git LFS.
 
 FONT = "web/public/fonts/a.woff2"
 

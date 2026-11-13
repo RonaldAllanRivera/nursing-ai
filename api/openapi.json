@@ -434,6 +434,24 @@
         "title": "FdarSection",
         "type": "string"
       },
+      "FieldError": {
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
       "GenerationInfo": {
         "additionalProperties": false,
         "properties": {
@@ -870,6 +888,20 @@
               }
             ],
             "title": "Detail"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FieldError"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
           },
           "line_ids": {
             "anyOf": [
@@ -1320,6 +1352,14 @@
         "title": "UnitDefaults",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "session": {
+        "description": "The session cookie set by POST /api/v1/session",
+        "in": "cookie",
+        "name": "sl_session",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -1395,6 +1435,11 @@
             "description": "The request isn't valid"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Get Job",
         "tags": [
           "notes"
@@ -1431,6 +1476,11 @@
             "description": "Not signed in"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "List Facilities",
         "tags": [
           "facilities"
@@ -1511,6 +1561,11 @@
             "description": "The request isn't valid"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Get Facility",
         "tags": [
           "facilities"
@@ -1638,6 +1693,11 @@
             "description": "A required header is missing"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Update Facility",
         "tags": [
           "facilities"
@@ -1747,6 +1807,11 @@
             "description": "The request isn't valid"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Get Note",
         "tags": [
           "notes"
@@ -1877,6 +1942,11 @@
             "description": "A required header is missing"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Discard Note",
         "tags": [
           "notes"
@@ -2049,6 +2119,11 @@
             "description": "A required header is missing"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Act On Line",
         "tags": [
           "notes"
@@ -2179,6 +2254,11 @@
             "description": "A required header is missing"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Sign Note",
         "tags": [
           "notes"
@@ -2225,6 +2305,11 @@
             "description": "Not allowed"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "List Patients",
         "tags": [
           "patients"
@@ -2299,6 +2384,11 @@
             "description": "The request isn't valid"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Get Patient",
         "tags": [
           "patients"
@@ -2419,6 +2509,11 @@
             "description": "A required header is missing"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Add Rough Note",
         "tags": [
           "notes"
@@ -2459,6 +2554,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "End Session",
         "tags": [
           "session"
@@ -2488,6 +2588,11 @@
             "description": "Not signed in"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Get Session",
         "tags": [
           "session"
@@ -2600,6 +2705,11 @@
             "description": "The request isn't valid"
           }
         },
+        "security": [
+          {
+            "session": []
+          }
+        ],
         "summary": "Change Shift",
         "tags": [
           "session"

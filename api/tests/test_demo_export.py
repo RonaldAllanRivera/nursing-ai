@@ -49,3 +49,17 @@ def test_patients_are_listed_by_facility() -> None:
     assert sorted(patients) == ["ph-demo", "us-demo"]
     assert [p.display_name for p in patients["ph-demo"]] == ["Demo patient A", "Demo patient B"]
     assert [p.display_name for p in patients["us-demo"]] == ["Demo patient C"]
+
+
+def test_each_facilitys_nurses_and_cases_share_one_shift() -> None:
+    data = build()
+    for case in load_demo_cases():
+        nurses = [
+            session
+            for session in data.sessions.values()
+            if session.facility_key == case.facility_key
+        ]
+        assert nurses
+        assert all(session.shift == case.rough_note.shift for session in nurses)
+        assert data.patient_details[str(case.patient_id)].shift == case.rough_note.shift
+        assert case.rough_note.shift in data.facilities[case.facility_key].shift_choices

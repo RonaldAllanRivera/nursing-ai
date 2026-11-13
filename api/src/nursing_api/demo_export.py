@@ -81,7 +81,8 @@ def _summary(case: DemoCase) -> PatientSummary:
 def build() -> DemoApiData:
     cases = load_demo_cases()
     facilities = {facility.key: facility for facility in DEMO_FACILITIES}
-    # Each facility's "now" is its first case's note time, so the shift choices are stable.
+    # Each facility's "now" is its first case's note time, so the sessions, the patients and
+    # the shift choices all name the shift the cases were written in, and the file is stable.
     now: dict[str, datetime] = {}
     for case in cases:
         now.setdefault(case.facility_key, case.rough_note.written_at)
@@ -122,8 +123,9 @@ def build() -> DemoApiData:
     for case in cases:
         summary = _summary(case)
         patients[case.facility_key].append(summary)
+        facility = facilities[case.facility_key]
         details[str(case.patient_id)] = PatientDetail(
-            summary=summary, shift=case.rough_note.shift, notes=[]
+            summary=summary, shift=default_shift(now[case.facility_key], facility), notes=[]
         )
         job_for_patient[str(case.patient_id)] = _job_id(case)
         jobs[str(_job_id(case))] = DraftJobOut(

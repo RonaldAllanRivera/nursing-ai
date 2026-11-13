@@ -52,11 +52,11 @@ export const demoApi: DemoApi = {
       "role": "staff_nurse",
       "facility_key": "ph-demo",
       "shift": {
-        "code": "6-2",
-        "label": "6-2",
-        "starts_at": "2026-11-11T22:00:00Z",
-        "ends_at": "2026-11-12T06:00:00Z",
-        "shift_date": "2026-11-12",
+        "code": "10-6",
+        "label": "10-6",
+        "starts_at": "2026-11-11T14:00:00Z",
+        "ends_at": "2026-11-11T22:00:00Z",
+        "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
       }
     },
@@ -67,11 +67,11 @@ export const demoApi: DemoApi = {
       "role": "head_nurse",
       "facility_key": "ph-demo",
       "shift": {
-        "code": "6-2",
-        "label": "6-2",
-        "starts_at": "2026-11-11T22:00:00Z",
-        "ends_at": "2026-11-12T06:00:00Z",
-        "shift_date": "2026-11-12",
+        "code": "10-6",
+        "label": "10-6",
+        "starts_at": "2026-11-11T14:00:00Z",
+        "ends_at": "2026-11-11T22:00:00Z",
+        "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
       }
     },
@@ -312,11 +312,11 @@ export const demoApi: DemoApi = {
         "facility_key": "ph-demo"
       },
       "shift": {
-        "code": "2-10",
-        "label": "2-10",
-        "starts_at": "2026-11-12T06:00:00Z",
-        "ends_at": "2026-11-12T14:00:00Z",
-        "shift_date": "2026-11-12",
+        "code": "10-6",
+        "label": "10-6",
+        "starts_at": "2026-11-11T14:00:00Z",
+        "ends_at": "2026-11-11T22:00:00Z",
+        "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
       },
       "notes": []
@@ -629,16 +629,16 @@ export const demoApi: DemoApi = {
             "focus": {
               "id": "e1-F",
               "section": "focus",
-              "text": "Fever",
-              "ai_text": "Fever",
+              "text": "Disturbed sleep",
+              "ai_text": "Disturbed sleep",
               "status": "summary",
               "review": "pending",
               "source_quotes": [
                 {
-                  "text": "febrile, T 37.8",
+                  "text": "hindi makatulog since 11pm",
                   "span": {
-                    "start": 15,
-                    "end": 30
+                    "start": 0,
+                    "end": 26
                   }
                 }
               ],
@@ -648,16 +648,96 @@ export const demoApi: DemoApi = {
               {
                 "id": "e1-D1",
                 "section": "data",
-                "text": "At 1530, febrile with chills, temperature 37.8 °F.",
-                "ai_text": "At 1530, febrile with chills, temperature 37.8 °F.",
+                "text": "Unable to sleep since 11 PM; restless.",
+                "ai_text": "Unable to sleep since 11 PM; restless.",
+                "status": "source_found",
+                "review": "pending",
+                "source_quotes": [
+                  {
+                    "text": "hindi makatulog since 11pm, restless",
+                    "span": {
+                      "start": 0,
+                      "end": 36
+                    }
+                  }
+                ],
+                "number_mismatches": []
+              }
+            ],
+            "action": [
+              {
+                "id": "e1-A1",
+                "section": "action",
+                "text": "Repositioned and lights dimmed.",
+                "ai_text": "Repositioned and lights dimmed.",
+                "status": "source_found",
+                "review": "pending",
+                "source_quotes": [
+                  {
+                    "text": "repositioned, lights dimmed",
+                    "span": {
+                      "start": 38,
+                      "end": 65
+                    }
+                  }
+                ],
+                "number_mismatches": []
+              }
+            ],
+            "response": [
+              {
+                "id": "e1-R1",
+                "section": "response",
+                "text": "Fell asleep at 0100.",
+                "ai_text": "Fell asleep at 0100.",
+                "status": "source_found",
+                "review": "pending",
+                "source_quotes": [
+                  {
+                    "text": "nakatulog ng 0100",
+                    "span": {
+                      "start": 67,
+                      "end": 84
+                    }
+                  }
+                ],
+                "number_mismatches": []
+              }
+            ]
+          },
+          {
+            "focus": {
+              "id": "e2-F",
+              "section": "focus",
+              "text": "Fever",
+              "ai_text": "Fever",
+              "status": "summary",
+              "review": "pending",
+              "source_quotes": [
+                {
+                  "text": "febrile, T 37.8",
+                  "span": {
+                    "start": 101,
+                    "end": 116
+                  }
+                }
+              ],
+              "number_mismatches": []
+            },
+            "data": [
+              {
+                "id": "e2-D1",
+                "section": "data",
+                "text": "At 0330, febrile with chills, temperature 37.8 °F.",
+                "ai_text": "At 0330, febrile with chills, temperature 37.8 °F.",
                 "status": "number_mismatch",
                 "review": "pending",
                 "source_quotes": [
                   {
-                    "text": "1530 Lola Dora febrile, T 37.8, chilling",
+                    "text": "0330 Lola Dora febrile, T 37.8, chilling",
                     "span": {
-                      "start": 0,
-                      "end": 40
+                      "start": 86,
+                      "end": 126
                     }
                   }
                 ],
@@ -671,8 +751,8 @@ export const demoApi: DemoApi = {
                     },
                     "note_text": "37.8",
                     "note_span": {
-                      "start": 26,
-                      "end": 30
+                      "start": 112,
+                      "end": 116
                     }
                   }
                 ]
@@ -680,7 +760,7 @@ export const demoApi: DemoApi = {
             ],
             "action": [
               {
-                "id": "e1-A1",
+                "id": "e2-A1",
                 "section": "action",
                 "text": "Tepid sponge bath done; paracetamol 500 mg given per order.",
                 "ai_text": "Tepid sponge bath done; paracetamol 500 mg given per order.",
@@ -690,15 +770,15 @@ export const demoApi: DemoApi = {
                   {
                     "text": "TSB done, paracetamol 500mg given per order",
                     "span": {
-                      "start": 42,
-                      "end": 85
+                      "start": 128,
+                      "end": 171
                     }
                   }
                 ],
                 "number_mismatches": []
               },
               {
-                "id": "e1-A2",
+                "id": "e2-A2",
                 "section": "action",
                 "text": "Son at the bedside and informed.",
                 "ai_text": "Son at the bedside and informed.",
@@ -708,8 +788,8 @@ export const demoApi: DemoApi = {
                   {
                     "text": "anak na si Ramil at bedside, informed",
                     "span": {
-                      "start": 87,
-                      "end": 124
+                      "start": 173,
+                      "end": 210
                     }
                   }
                 ],
@@ -717,86 +797,6 @@ export const demoApi: DemoApi = {
               }
             ],
             "response": []
-          },
-          {
-            "focus": {
-              "id": "e2-F",
-              "section": "focus",
-              "text": "Poor appetite",
-              "ai_text": "Poor appetite",
-              "status": "summary",
-              "review": "pending",
-              "source_quotes": [
-                {
-                  "text": "hindi kumain ng lunch",
-                  "span": {
-                    "start": 126,
-                    "end": 147
-                  }
-                }
-              ],
-              "number_mismatches": []
-            },
-            "data": [
-              {
-                "id": "e2-D1",
-                "section": "data",
-                "text": "Did not eat lunch; ate only 2 spoonfuls.",
-                "ai_text": "Did not eat lunch; ate only 2 spoonfuls.",
-                "status": "source_found",
-                "review": "pending",
-                "source_quotes": [
-                  {
-                    "text": "hindi kumain ng lunch, ate only 2 spoonfuls",
-                    "span": {
-                      "start": 126,
-                      "end": 169
-                    }
-                  }
-                ],
-                "number_mismatches": []
-              }
-            ],
-            "action": [
-              {
-                "id": "e2-A1",
-                "section": "action",
-                "text": "Encouraged to eat and offered crackers.",
-                "ai_text": "Encouraged to eat and offered crackers.",
-                "status": "source_found",
-                "review": "pending",
-                "source_quotes": [
-                  {
-                    "text": "encouraged to eat, offered crackers",
-                    "span": {
-                      "start": 171,
-                      "end": 206
-                    }
-                  }
-                ],
-                "number_mismatches": []
-              }
-            ],
-            "response": [
-              {
-                "id": "e2-R1",
-                "section": "response",
-                "text": "Ate 3 crackers.",
-                "ai_text": "Ate 3 crackers.",
-                "status": "source_found",
-                "review": "pending",
-                "source_quotes": [
-                  {
-                    "text": "kumain ng 3 crackers",
-                    "span": {
-                      "start": 208,
-                      "end": 228
-                    }
-                  }
-                ],
-                "number_mismatches": []
-              }
-            ]
           }
         ]
       },
@@ -833,14 +833,14 @@ export const demoApi: DemoApi = {
       "discard": null,
       "rough_note": {
         "id": "00000000-0000-4000-8000-000000000023",
-        "text": "1530 Lola Dora febrile, T 37.8, chilling. TSB done, paracetamol 500mg given per order. anak na si Ramil at bedside, informed.\nhindi kumain ng lunch, ate only 2 spoonfuls. encouraged to eat, offered crackers. kumain ng 3 crackers.",
-        "written_at": "2026-11-12T15:40:00+08:00",
+        "text": "hindi makatulog since 11pm, restless. repositioned, lights dimmed. nakatulog ng 0100.\n0330 Lola Dora febrile, T 37.8, chilling. TSB done, paracetamol 500mg given per order. anak na si Ramil at bedside, informed.",
+        "written_at": "2026-11-12T03:40:00+08:00",
         "shift": {
-          "code": "2-10",
-          "label": "2-10",
-          "starts_at": "2026-11-12T06:00:00Z",
-          "ends_at": "2026-11-12T14:00:00Z",
-          "shift_date": "2026-11-12",
+          "code": "10-6",
+          "label": "10-6",
+          "starts_at": "2026-11-11T14:00:00Z",
+          "ends_at": "2026-11-11T22:00:00Z",
+          "shift_date": "2026-11-11",
           "timezone": "Asia/Manila"
         },
         "note_format": "fdar"

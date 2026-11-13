@@ -13,6 +13,7 @@ from nursing_core.domain.notes import (
     GenerationInfo,
     NoteStatus,
     Signature,
+    check_note_text,
 )
 from nursing_core.domain.patient import PatientSummary
 from nursing_core.domain.shifts import ShiftRef
@@ -23,9 +24,9 @@ FacilitySettingsIn = FacilitySettings
 
 
 class In(BaseModel):
-    """A request body: unknown fields are refused."""
+    """A request body: unknown fields are refused, and errors never show the input."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
 
 class FacilityOut(BaseModel):
@@ -87,9 +88,7 @@ class RoughNoteIn(In):
     @field_validator("text")
     @classmethod
     def _not_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("a rough note can't be blank")
-        return value
+        return check_note_text(value)
 
 
 class RoughNoteOut(BaseModel):
@@ -122,6 +121,13 @@ class ConfirmLine(In):
 class EditLine(In):
     action: Literal["edit"]
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+    @field_validator("text")
+    @classmethod
+    def _no_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("a line can't contain a NUL character")
+        return value
 
 
 class RemoveLine(In):

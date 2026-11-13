@@ -10,7 +10,7 @@ from uuid import UUID
 
 from nursing_core.domain.facility import FacilitySettings, StoredFacility
 from nursing_core.domain.hashing import SignedNote
-from nursing_core.domain.jobs import DraftJob, JobFailure
+from nursing_core.domain.jobs import DraftJob, JobFailure, ShiftEntry
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.notes import Discard, Note, RoughNote
 from nursing_core.domain.patient import PatientRecord, PatientSummary
@@ -55,6 +55,10 @@ class PatientRepository(Protocol):
         """Raises NotFound."""
         ...
 
+    async def get_patient_by_encounter(self, encounter_id: UUID) -> PatientRecord:
+        """The patient a rough note, job or note belongs to. Raises NotFound."""
+        ...
+
 
 class NoteRepository(Protocol):
     async def add_rough_note(
@@ -77,7 +81,11 @@ class NoteRepository(Protocol):
     async def fail_job(self, job_id: UUID, failure: JobFailure) -> None: ...
 
     async def shift_rough_notes(self, encounter_id: UUID, shift: ShiftRef) -> list[RoughNote]:
-        """This shift's rough notes for the encounter, oldest first."""
+        """This shift's rough notes for the encounter, oldest first (the checklist reads them)."""
+        ...
+
+    async def shift_entries(self, encounter_id: UUID, shift: ShiftRef) -> list[ShiftEntry]:
+        """This shift's rough notes with their jobs and note statuses, oldest first."""
         ...
 
     async def get_note(self, note_id: UUID) -> Note: ...

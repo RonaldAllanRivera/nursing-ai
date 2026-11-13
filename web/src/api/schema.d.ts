@@ -444,6 +444,13 @@ export interface components {
          * @enum {string}
          */
         FdarSection: "focus" | "data" | "action" | "response";
+        /** FieldError */
+        FieldError: {
+            /** Field */
+            field: string;
+            /** Message */
+            message: string;
+        };
         /** GenerationInfo */
         GenerationInfo: {
             /** Cost Usd */
@@ -610,6 +617,8 @@ export interface components {
             code: "not_signed_in" | "forbidden" | "not_found" | "note_locked" | "review_incomplete" | "stale_version" | "precondition_required" | "idempotency_key_reused" | "invalid_request" | "not_implemented";
             /** Detail */
             detail?: string | null;
+            /** Errors */
+            errors?: components["schemas"]["FieldError"][] | null;
             /** Line Ids */
             line_ids?: string[] | null;
             /** Status */

@@ -7,7 +7,7 @@ import pytest
 from nursing_core.clock import FixedClock, SystemClock
 from nursing_core.domain.facility import FacilitySettings, StoredFacility, preset
 from nursing_core.domain.hashing import SignedNote
-from nursing_core.domain.jobs import DraftJob, JobFailure
+from nursing_core.domain.jobs import DraftJob, JobFailure, ShiftEntry
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.notes import Discard, Note, RoughNote
 from nursing_core.domain.patient import PatientRecord, PatientSummary
@@ -55,6 +55,9 @@ class FakePatients:
     async def get_patient(self, patient_id: UUID) -> PatientRecord:
         raise NotImplementedError
 
+    async def get_patient_by_encounter(self, encounter_id: UUID) -> PatientRecord:
+        raise NotImplementedError
+
 
 class FakeNotes:
     async def add_rough_note(
@@ -78,6 +81,9 @@ class FakeNotes:
         raise NotImplementedError
 
     async def shift_rough_notes(self, encounter_id: UUID, shift: ShiftRef) -> list[RoughNote]:
+        return []
+
+    async def shift_entries(self, encounter_id: UUID, shift: ShiftRef) -> list[ShiftEntry]:
         return []
 
     async def get_note(self, note_id: UUID) -> Note:

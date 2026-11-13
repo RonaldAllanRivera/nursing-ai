@@ -3,10 +3,10 @@ from typing import Annotated
 from fastapi import APIRouter, Header
 
 from nursing_api.problems import problems
-from nursing_api.routes import etag_header, not_built
+from nursing_api.routes import SIGNED_IN, etag_header, not_built
 from nursing_api.schemas import FacilityOut, FacilitySettingsIn
 
-router = APIRouter(prefix="/api/v1/facilities", tags=["facilities"])
+router = APIRouter(prefix="/api/v1/facilities", tags=["facilities"], dependencies=SIGNED_IN)
 
 
 @router.get("", response_model=list[FacilityOut], responses=problems(401))

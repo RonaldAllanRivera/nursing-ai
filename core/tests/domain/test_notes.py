@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from nursing_core.domain.errors import ReviewIncomplete
 from nursing_core.domain.facility import Locale, NoteFormat, preset
-from nursing_core.domain.jobs import DraftJob, JobFailure, JobStatus
+from nursing_core.domain.jobs import DraftJob, JobFailure, JobStatus, ShiftEntry
 from nursing_core.domain.model_output import DraftRequest, ModelFdarDraft
 from nursing_core.domain.notes import (
     ChecklistItem,
@@ -301,3 +301,34 @@ def test_review_incomplete_keeps_the_line_ids_and_only_counts_them() -> None:
     error = ReviewIncomplete(["e1-D2", "e1-A2"])
     assert error.line_ids == ["e1-D2", "e1-A2"]
     assert str(error) == "2 line(s) need review"
+
+
+def test_validation_errors_never_show_the_input() -> None:
+    with pytest.raises(ValidationError) as caught:
+        RoughNote.model_validate(
+            rough_note().model_dump() | {"written_at": "Teodora was febrile at 0330"}
+        )
+    assert "Teodora" not in str(caught.value)
+
+
+def test_rough_note_refuses_a_nul_character() -> None:
+    with pytest.raises(ValidationError):
+        rough_note("pt still\x00 weak")
+
+
+def test_shift_entry_pairs_a_rough_note_with_its_job() -> None:
+    note = rough_note()
+    now = datetime(2026, 11, 12, tzinfo=UTC)
+    job = DraftJob(
+        id=uuid4(),
+        rough_note_id=note.id,
+        status=JobStatus.QUEUED,
+        failure=None,
+        note_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+    entry = ShiftEntry(rough_note=note, job=job, note_status=None)
+    assert entry.job.rough_note_id == entry.rough_note.id
+    with pytest.raises(ValidationError):
+        ShiftEntry(rough_note=rough_note(), job=job, note_status=None)

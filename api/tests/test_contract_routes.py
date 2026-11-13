@@ -196,3 +196,89 @@ async def test_unknown_line_action_is_invalid(client: httpx.AsyncClient) -> None
         f"/api/v1/notes/{NOTE}/lines/e1-D2", json={"action": "approve"}, headers=IF_MATCH
     )
     assert response.status_code == 422
+
+
+SIGNED_IN = {
+    (method, TEMPLATES.get(path, path))
+    for method, path, *_ in ROUTES
+    if (method, path) not in {("GET", "/api/v1/personas"), ("POST", "/api/v1/session")}
+}
+
+
+def test_session_cookie_is_declared_where_a_session_is_needed() -> None:
+    spec = app().openapi()
+    scheme = spec["components"]["securitySchemes"]["session"]
+    assert scheme == {"type": "apiKey", "in": "cookie", "name": "sl_session"} | {
+        k: v for k, v in scheme.items() if k == "description"
+    }
+    for path, item in spec["paths"].items():
+        for method, op in item.items():
+            needs = (method.upper(), path) in SIGNED_IN
+            assert (op.get("security") == [{"session": []}]) is needs, (method, path)
+
+
+@pytest.mark.asyncio
+async def test_invalid_request_lists_the_fields_without_the_input(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        f"/api/v1/patients/{PATIENT}/rough-notes",
+        json={"text": "x" * 4001},
+        headers={"Idempotency-Key": "k-3"},
+    )
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {"field": "body.text", "message": "String should have at most 4000 characters"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unknown_field_is_never_echoed(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/session",
+        json={"persona_id": PATIENT, "Juan dela Cruz fever 39": 1},
+    )
+    assert response.status_code == 422
+    assert "Juan" not in response.text
+    assert response.json()["errors"] == [{"field": "body", "message": "unknown field"}]
+
+
+@pytest.mark.asyncio
+async def test_whole_form_rule_reports_its_own_message(client: httpx.AsyncClient) -> None:
+    gap = dict(SETTINGS_BODY)
+    gap["shifts"] = [dict(shift) for shift in SETTINGS_BODY["shifts"]]
+    gap["shifts"][1]["ends_local"] = "21:00:00"
+    response = await client.put(
+        "/api/v1/facilities/ph-demo", json=gap, headers={"If-Match": '"f1"'}
+    )
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {"field": "body", "message": "shifts must cover 24 hours with no gap or overlap"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_oversized_timezone_is_invalid_not_a_crash(client: httpx.AsyncClient) -> None:
+    body = dict(SETTINGS_BODY) | {"timezone": "A" * 300}
+    response = await client.put(
+        "/api/v1/facilities/ph-demo", json=body, headers={"If-Match": '"f1"'}
+    )
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["field"] == "body.timezone"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (f"/api/v1/patients/{PATIENT}/rough-notes", {"text": "pt still\u0000 weak"}),
+        (f"/api/v1/notes/{NOTE}/lines/e1-D2", {"action": "edit", "text": "HR\u0000 112"}),
+    ],
+)
+async def test_nul_character_is_invalid(
+    client: httpx.AsyncClient, path: str, body: dict[str, str]
+) -> None:
+    method = "POST" if path.endswith("rough-notes") else "PATCH"
+    headers = {"Idempotency-Key": "k-4"} | IF_MATCH
+    response = await client.request(method, path, json=body, headers=headers)
+    assert response.status_code == 422

@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, model_validator
 
 from nursing_core.domain import DomainModel
+from nursing_core.domain.notes import NoteStatus, RoughNote
 
 
 class JobStatus(StrEnum):
@@ -39,4 +40,18 @@ class DraftJob(DomainModel):
             raise ValueError("a failed job, and only a failed job, has a failure")
         if (self.status is JobStatus.SUCCEEDED) != (self.note_id is not None):
             raise ValueError("a succeeded job, and only a succeeded job, has a note")
+        return self
+
+
+class ShiftEntry(DomainModel):
+    """A rough note written this shift, with its draft job and, once drafted, the note's status."""
+
+    rough_note: RoughNote
+    job: DraftJob
+    note_status: NoteStatus | None
+
+    @model_validator(mode="after")
+    def _job_is_the_notes_own(self) -> Self:
+        if self.job.rough_note_id != self.rough_note.id:
+            raise ValueError("the job must be the rough note's own")
         return self

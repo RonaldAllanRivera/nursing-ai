@@ -7,8 +7,9 @@ passes the same rules as the presets.
 
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
+from functools import cache
 from typing import Annotated, Literal, Self
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, available_timezones
 
 from pydantic import (
     AfterValidator,
@@ -23,6 +24,13 @@ from nursing_core.domain import DomainModel
 from nursing_core.domain.units import Ucum, UnitDefaults
 
 DAY = timedelta(days=1)
+# Names whose meaning depends on the host's own files, which a Lambda image doesn't have.
+_HOST_ZONES = frozenset({"localtime", "posixrules", "Factory"})
+
+
+@cache
+def _known_zones() -> frozenset[str]:
+    return frozenset(available_timezones()) - _HOST_ZONES
 
 
 class NoteFormat(StrEnum):
@@ -90,10 +98,8 @@ class FacilitySettings(DomainModel):
     @field_validator("timezone")
     @classmethod
     def _real_iana_zone(cls, value: str) -> str:
-        try:
-            ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError):
-            raise ValueError("timezone must be an IANA zone such as Asia/Manila") from None
+        if value not in _known_zones():
+            raise ValueError("timezone must be an IANA zone such as Asia/Manila")
         return value
 
     @model_validator(mode="after")
@@ -145,7 +151,7 @@ def _shift(code: str, start: int, end: int, ink: ShiftInk) -> ShiftDefinition:
 
 
 def preset(region: Literal["PH", "US"], key: str, name: str) -> FacilityProfile:
-    """A template for a new facility row (side chat H's region table)."""
+    """A template for a new facility row: the Philippine or the US defaults."""
     if region == "PH":
         return FacilityProfile(
             key=key,

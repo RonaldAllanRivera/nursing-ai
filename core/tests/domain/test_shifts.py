@@ -55,17 +55,21 @@ def test_dst_start_night_is_11_hours() -> None:
     assert found.ends_at - found.starts_at == timedelta(hours=11)
 
 
-def test_default_shift_is_the_nearest_start() -> None:
+def test_default_shift_is_the_containing_shift() -> None:
+    night = default_shift(at(MANILA, 2026, 11, 12, 5, 10), PH)
+    assert night.code == "10-6"
+    assert night.starts_at == at(MANILA, 2026, 11, 11, 22)
     assert default_shift(at(MANILA, 2026, 11, 12, 14, 10), PH).code == "2-10"
+    assert default_shift(at(LA, 2026, 11, 12, 10, 15), US).code == "7a-7p"
+
+
+def test_default_shift_is_the_next_one_within_30_minutes_of_its_start() -> None:
     assert default_shift(at(MANILA, 2026, 11, 12, 13, 50), PH).code == "2-10"
+    assert default_shift(at(MANILA, 2026, 11, 12, 13, 30), PH).code == "2-10"
+    assert default_shift(at(MANILA, 2026, 11, 12, 13, 29), PH).code == "6-2"
     morning = default_shift(at(LA, 2026, 11, 12, 6, 50), US)
     assert morning.code == "7a-7p"
     assert morning.shift_date == date(2026, 11, 12)
-
-
-def test_default_shift_tie_goes_to_the_later_shift() -> None:
-    # 18:00 is 4 hours after the 2-10 start and 4 hours before the 10-6 start.
-    assert default_shift(at(MANILA, 2026, 11, 12, 18), PH).code == "10-6"
 
 
 def test_shift_choices_are_previous_containing_next() -> None:

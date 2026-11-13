@@ -86,7 +86,7 @@ def test_day_must_start_at_a_shift_start() -> None:
 
 
 def test_timezone_must_be_a_real_iana_zone() -> None:
-    for bad in ("Mars/Olympus_Mons", "../etc/passwd", ""):
+    for bad in ("Mars/Olympus_Mons", "../etc/passwd", "", "localtime", "posixrules", "A" * 300):
         with pytest.raises(ValidationError, match="timezone"):
             FacilitySettings.model_validate(settings(timezone=bad))
 

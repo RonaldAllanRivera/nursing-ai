@@ -7,9 +7,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from nursing_core.domain import DomainModel
-from nursing_core.domain.errors import NoteLocked
+from nursing_core.domain.errors import NoteLocked, ReviewIncomplete
 from nursing_core.domain.facility import NoteFormat, preset
-from nursing_core.domain.hashing import SignedContent, canonical_json, content_hash, signed_content
+from nursing_core.domain.hashing import SignedNote, canonical_json, content_hash, signed_content
 from nursing_core.domain.notes import (
     ChecklistItem,
     ChecklistRule,
@@ -24,10 +24,12 @@ from nursing_core.domain.notes import (
     Note,
     NoteStatus,
     RoughNote,
+    Signature,
     SourceQuote,
     Span,
 )
 from nursing_core.domain.shifts import shift_containing
+from pydantic import ValidationError
 
 PH = preset("PH", "ph-demo", "SYNTHETIC Demo Hospital (PH)")
 MANILA = ZoneInfo("Asia/Manila")
@@ -156,14 +158,12 @@ def test_rough_note_must_be_the_notes_own() -> None:
 def test_content_hash_known_vector() -> None:
     content = signed_content(note(), rough_note(), NURSE, SIGNED_AT)
     assert content_hash(content) == (
-        "8188d6f0af060da2e3849efe06a513b81c33650b8789ec39dd6bc97a47a5b065"
+        "901cbb1cda61c9f878f7c528a8983272d55649634a065a065765cc3777799650"
     )
 
 
-def test_content_hash_ignores_field_order_and_changes_with_one_character() -> None:
+def test_content_hash_changes_with_one_character() -> None:
     content = signed_content(note(), rough_note(), NURSE, SIGNED_AT)
-    reordered = SignedContent.model_validate(dict(reversed(content.model_dump().items())))
-    assert content_hash(reordered) == content_hash(content)
     changed = signed_content(note(), rough_note(TEXT.replace("2am", "3am")), NURSE, SIGNED_AT)
     assert content_hash(changed) != content_hash(content)
 
@@ -172,3 +172,46 @@ def test_signed_at_is_hashed_as_the_same_instant_in_any_zone() -> None:
     manila = signed_content(note(), rough_note(), NURSE, SIGNED_AT)
     utc = signed_content(note(), rough_note(), NURSE, SIGNED_AT.astimezone(UTC))
     assert content_hash(manila) == content_hash(utc)
+
+
+def edited(base: Note, line_id: str, **changes: object) -> Note:
+    entry = base.draft.entries[0]
+    lines = [entry.focus, *entry.data]
+    replaced = [line.model_copy(update=changes) if line.id == line_id else line for line in lines]
+    new_entry = entry.model_copy(update={"focus": replaced[0], "data": replaced[1:]})
+    return base.model_copy(update={"draft": FdarDraft(entries=[new_entry])})
+
+
+def test_signed_lines_keep_the_nurses_text_but_never_the_ai_wording() -> None:
+    fixed = edited(note(), "e1-D1", text="Still weak at 0300.", review=LineReview.EDITED)
+    content = signed_content(fixed, rough_note(), NURSE, SIGNED_AT)
+    raw = canonical_json(content).decode()
+    assert "Still weak at 0300." in raw
+    assert "ai_text" not in raw
+
+
+def test_signing_refuses_lines_that_still_need_review() -> None:
+    flagged = edited(note(), "e1-D1", status=LineStatus.NUMBER_MISMATCH)
+    with pytest.raises(ReviewIncomplete) as caught:
+        signed_content(flagged, rough_note(), NURSE, SIGNED_AT)
+    assert caught.value.line_ids == ["e1-D1"]
+
+
+def test_signing_refuses_a_removed_focus() -> None:
+    removed = edited(note(), "e1-F", review=LineReview.REMOVED)
+    with pytest.raises(ValueError, match="focus"):
+        signed_content(removed, rough_note(), NURSE, SIGNED_AT)
+
+
+def test_signed_note_must_carry_its_own_hash() -> None:
+    content = signed_content(note(), rough_note(), NURSE, SIGNED_AT)
+    good = Signature(signed_by=NURSE, signed_at=SIGNED_AT, content_hash=content_hash(content))
+    assert SignedNote(note_id=content.note_id, content=content, signature=good)
+    for wrong in (
+        good.model_copy(update={"content_hash": "0" * 64}),
+        good.model_copy(update={"signed_by": UUID("00000000-0000-4000-8000-000000000099")}),
+    ):
+        with pytest.raises(ValidationError):
+            SignedNote(note_id=content.note_id, content=content, signature=wrong)
+    with pytest.raises(ValidationError):
+        SignedNote(note_id=UUID(int=7), content=content, signature=good)
