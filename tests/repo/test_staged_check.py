@@ -247,3 +247,76 @@ def test_type_change_with_a_word_refused(
     assert code == 1
     assert "core/link: private word #1" in out
     assert CANARY not in out.casefold()
+
+
+# Reviewed binary files (carry-over 1).
+
+FONT = "web/public/fonts/a.woff2"
+
+
+def stage_bytes(repo: Path, name: str, data: bytes) -> str:
+    """Stage a binary file and return its blob id."""
+    target = repo / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    git(repo, "add", "--force", name)
+    done = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", f":{name}"],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
+def test_staged_unlisted_binary_refused_when_reviewed_file_exists(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    (tmp_path / "reviewed-binaries.txt").write_text("# none yet\n")
+    stage_bytes(repo, FONT, b"wOF2\x00\x01")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"{FONT}: binary not reviewed: run make accept-binary" in out
+
+
+def test_staged_listed_binary_passes(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    blob = stage_bytes(repo, FONT, b"wOF2\x00\x01")
+    (tmp_path / "reviewed-binaries.txt").write_text(f"{blob} {FONT}\n")
+    code, out = run(repo, capsys)
+    assert code == 0, out
+    assert "binary not reviewed" not in out
+
+
+def test_staged_binary_warns_without_reviewed_file(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    stage_bytes(repo, FONT, b"wOF2\x00\x01")
+    code, out = run(repo, capsys)
+    assert code == 0
+    assert f"binary not reviewed: {FONT}" in out
+
+
+def test_staged_binary_warns_in_a_worktree_without_settings(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stage_bytes(repo, FONT, b"wOF2\x00\x01")
+    code, out = run(repo, capsys)
+    assert code == 0
+    assert f"binary not reviewed: {FONT}" in out
+
+
+def test_staged_binary_path_with_a_word_is_hidden(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    (tmp_path / "reviewed-binaries.txt").write_text("# none yet\n")
+    stage_bytes(repo, f"web/public/{CANARY}.png", b"\x89PNG\x00")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert CANARY not in out.casefold()

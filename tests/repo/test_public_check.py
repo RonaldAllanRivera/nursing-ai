@@ -871,3 +871,111 @@ def test_missing_repo_path_is_never_printed(
     assert code != 0
     assert "no-such-repo-dir" not in out
     assert str(tmp_path) not in out
+
+
+# Reviewed binary files and Git LFS (carry-over 1).
+
+FONT = "web/public/fonts/a.woff2"
+
+
+def commit_bytes(repo: Path, name: str, data: bytes, message: str = "add a binary") -> None:
+    target = repo / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    git(repo, "add", "--force", name)
+    git(repo, "commit", "-q", "-m", message)
+
+
+def blob_of(repo: Path, name: str, ref: str = "HEAD") -> str:
+    done = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", f"{ref}:{name}"],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
+def reviewed(tmp_path: Path, *lines: str) -> None:
+    (tmp_path / "reviewed-binaries.txt").write_text("".join(f"{line}\n" for line in lines))
+
+
+def test_accepted_binary_is_not_a_finding(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit_bytes(repo, FONT, b"wOF2\x00\x01")
+    reviewed(tmp_path, "# fonts", f"{blob_of(repo, FONT)} {FONT}")
+    code, out = run(repo, capsys)
+    assert code == 0, out
+    assert "accepted binaries: 1" in out
+    assert "binary file not scanned" not in out
+
+
+def test_deleting_an_accepted_binary_is_not_a_finding(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit_bytes(repo, FONT, b"wOF2\x00\x01")
+    reviewed(tmp_path, f"{blob_of(repo, FONT)} {FONT}")
+    git(repo, "rm", "-q", FONT)
+    git(repo, "commit", "-q", "-m", "drop the font")
+    code, out = run(repo, capsys)
+    assert code == 0, out
+    assert "accepted binaries: 1" in out
+
+
+def test_changed_binary_is_a_finding_again(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit_bytes(repo, FONT, b"wOF2\x00\x01")
+    reviewed(tmp_path, f"{blob_of(repo, FONT)} {FONT}")
+    commit_bytes(repo, FONT, b"wOF2\x00\x02", "change the font")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"commit {head(repo)} · {FONT}: binary file not scanned" in out
+    assert "accepted binaries: 1" in out
+
+
+def test_malformed_reviewed_list_names_the_line_only(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    reviewed(tmp_path, "# fine", f"oops {CANARY}")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "reviewed binaries list line 2 is malformed" in out
+    assert CANARY not in out.casefold()
+
+
+@pytest.mark.parametrize("flags", [("--ci",), ()])
+def test_lfs_attribute_in_history_fails(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flags: tuple[str, ...],
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {".gitattributes": "*.png filter=lfs diff=lfs merge=lfs -text\n"})
+    code, out = run(repo, capsys, *flags)
+    assert code == 1
+    assert f"commit {head(repo)} · .gitattributes: Git LFS is not allowed" in out
+
+
+@pytest.mark.parametrize("flags", [("--ci",), ()])
+def test_lfs_pointer_blob_fails(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flags: tuple[str, ...],
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 12\n"
+    commit(repo, {"web/public/a.png": pointer})
+    code, out = run(repo, capsys, *flags)
+    assert code == 1
+    assert f"commit {head(repo)} · web/public/a.png: Git LFS pointer file" in out

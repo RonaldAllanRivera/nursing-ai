@@ -22,7 +22,7 @@ export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 export PATH := $(CURDIR)/.tools/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e check-py check-web check actionlint gen-api openapi spend private-words tools public-check public-check-ci hooks setup
+.PHONY: help ports up down dev e2e check-py check-web check actionlint gen-api openapi spend private-words accept-binary tools public-check public-check-ci hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -75,6 +75,12 @@ spend: ## Show the AI mode and monthly cap
 # Interactive: the words are typed at a hidden prompt, so don't pipe it.
 private-words: ## Add private words to the hashed word list (hidden prompt)
 	@uv run python scripts/privacy_words.py
+
+# Look at the file first: an image must show synthetic data only, and a font must come from its
+# published source. FILE is a path from the repo root.
+accept-binary: ## Record a reviewed binary file by its git blob id (FILE=path)
+	@test -n '$(subst ','\'',$(FILE))' || { echo 'usage: make accept-binary FILE=path/to/file'; exit 2; }
+	@uv run python scripts/reviewed_binaries.py '$(subst ','\'',$(FILE))'
 
 tools: ## Install the pinned gitleaks into .tools/bin
 	@scripts/install-tools.sh

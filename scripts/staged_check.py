@@ -22,9 +22,11 @@ from public_check import (
     read_allowlist,
     read_markers,
 )
+from reviewed_binaries import BinaryBlob, binary_blobs, load_reviewed, reviewed_file
 
 _DIFF_HEADER = re.compile(r"^diff --git ", re.MULTILINE)
 WARNING = "private words not checked: run make private-words"
+NOT_REVIEWED = "binary not reviewed: run make accept-binary"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -55,6 +57,33 @@ def _staged_changes(repo: Path) -> list[tuple[str, str]]:
     """(status, path) for every staged change; with -z the paths are not quoted."""
     fields = _git(repo, *_STAGED, "--name-status", "-z").split("\0")
     return list(zip(fields[0::2], fields[1::2], strict=False))
+
+
+def _staged_binaries(repo: Path) -> list[BinaryBlob]:
+    return binary_blobs(_git(repo, *_STAGED, "--raw", "--numstat", "-z", "--no-abbrev"))
+
+
+def binary_findings(
+    repo: Path, hashes: Sequence[str], markers: Sequence[str]
+) -> tuple[list[Finding], list[str]]:
+    """Unreviewed staged binaries: findings when the reviewed list exists, else warning lines.
+
+    A lane worktree has no .env, so it has no list and only warns; the owner's PC refuses.
+    """
+    path = reviewed_file(repo)
+    has_list = path is not None and path.is_file()
+    reviewed = load_reviewed(path) if path is not None and has_list else {}
+    findings: list[Finding] = []
+    warnings: list[str] = []
+    for binary in _staged_binaries(repo):
+        if binary.blob in reviewed:
+            continue
+        where = hide_if_private(binary.path, hashes, markers)
+        if has_list:
+            findings.append(Finding("paths", where, NOT_REVIEWED))
+        else:
+            warnings.append(f"binary not reviewed: {where}")
+    return findings, warnings
 
 
 def _staged_paths(repo: Path) -> list[str]:
@@ -122,6 +151,20 @@ def main(argv: list[str] | None = None) -> int:
         reason = exc.strerror or "unreadable"
         print(f"staged-check: cannot read the exclude file or the staged changes: {reason}")
         return 1
+    try:
+        unreviewed, warnings = binary_findings(repo, hashes, markers)
+    except UnicodeDecodeError:
+        print("staged-check: cannot use the reviewed binaries list: not UTF-8 text")
+        return 1
+    except ValueError as exc:
+        print(f"staged-check: reviewed binaries list {exc}")
+        return 1
+    except OSError:
+        print("staged-check: cannot read the reviewed binaries list or the staged binaries")
+        return 1
+    findings += unreviewed
+    for warning in warnings:
+        print(warning)
 
     for finding in findings:
         print(f"{finding.where}: {finding.detail}")

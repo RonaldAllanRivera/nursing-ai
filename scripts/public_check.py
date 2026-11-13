@@ -28,6 +28,7 @@ from typing import Any, Literal
 
 from privacy_words import SETTING, load_hashes, normalize, split_tokens, words_file
 from privacy_words import tokens as tokens
+from reviewed_binaries import BinaryBlob, binary_blobs, load_reviewed, reviewed_file
 
 HERE = Path(__file__).resolve().parent
 ALLOWLIST = HERE / "public_paths.txt"
@@ -44,6 +45,9 @@ _DIFF_HEADER = re.compile(r"^diff --git ", re.MULTILINE)
 _GITLEAKS_ERROR = re.compile(r"^(?:\S+ )?ERR\b", re.MULTILINE)
 _COMMITS_SCANNED = re.compile(r"\b(\d+) commits scanned\b")
 _STATUS = re.compile(r"[ADMT]")
+# Git LFS keeps file content outside the history, where no check can read it.
+_LFS_ATTRIBUTE = re.compile(r"^[+-][^\n]*\bfilter=lfs\b", re.MULTILINE)
+_LFS_POINTER = re.compile(r"^[+-]version https://git-lfs\.github\.com/spec/v1\b", re.MULTILINE)
 # Claude Code makes a .claude/ folder wherever a session starts, so these are refused anywhere.
 _MACHINE_LOCAL = re.compile(r"(?:^|/)\.claude/(?:settings\.local\.json$|worktrees/)")
 # The same options for the file list and the diffs, so both list the same files in the same
@@ -72,10 +76,12 @@ class Finding:
 class History:
     paths: set[str]
     chunks: list[tuple[str, str]]
-    binaries: list[str]
+    binaries: list[BinaryBlob]
     unpaired: list[str]
     # (file name, label, text) for the gitleaks scan of messages and identities.
     messages: list[tuple[str, str, str]]
+    # (where, detail) for every sign of Git LFS.
+    lfs: list[tuple[str, str]]
 
 
 def private_markers(exclude_text: str, gitignore_text: str) -> list[str]:
@@ -157,30 +163,33 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
-def _binary_files(repo: Path) -> list[str]:
-    """Where git still sees a binary blob (numstat prints '-' for it), as 'commit sha · path'."""
+def _binary_files(repo: Path) -> list[BinaryBlob]:
+    """Every change where git sees a binary blob (numstat prints '-' for it), with that blob."""
     log = _git(
         repo,
         "log",
         "--all",
+        "--raw",
         "--numstat",
         "-z",
+        "--no-abbrev",
         "--no-renames",
         "--no-ext-diff",
         "--no-textconv",
         "--diff-merges=first-parent",
         "--format=%x1e%H",
     )
-    found: list[str] = []
-    short = ""
-    # With -z, entries end in NUL and paths are not quoted; never splitlines() (it breaks on \x1e).
-    for entry in log.split("\0"):
-        line = entry.removeprefix("\n")
-        if line.startswith("\x1e"):
-            short = line[1:8]
-        elif line.startswith("-\t-\t"):
-            found.append(f"commit {short} · {line[4:]}")
-    return found
+    return binary_blobs(log)
+
+
+def _lfs_use(name: str, diff: str) -> str | None:
+    """Why a file diff shows Git LFS: a pointer file, or an LFS filter in a .gitattributes."""
+    if _LFS_POINTER.search(diff):
+        return "Git LFS pointer file"
+    attributes = name == HIDDEN or name.rsplit("/", 1)[-1] == ".gitattributes"
+    if attributes and _LFS_ATTRIBUTE.search(diff):
+        return "Git LFS is not allowed"
+    return None
 
 
 def names_by_commit(repo: Path, nonce: str) -> dict[str, list[str]]:
@@ -253,6 +262,7 @@ def read_history(repo: Path) -> History:
     chunks: list[tuple[str, str]] = []
     unpaired: list[str] = []
     messages: list[tuple[str, str, str]] = []
+    lfs: list[tuple[str, str]] = []
     for entry in log.split(f"\x1e{nonce}")[1:]:
         parts = entry.split(sep)
         if len(parts) != len(fields) + 1:
@@ -270,10 +280,13 @@ def read_history(repo: Path) -> History:
         if len(labels) != len(files):
             unpaired.append(short)
             labels = [HIDDEN] * len(files)
-        chunks += [(f"{short} · {label}", part) for label, part in zip(labels, files, strict=True)]
+        for label, part in zip(labels, files, strict=True):
+            chunks.append((f"{short} · {label}", part))
+            if (detail := _lfs_use(label, part)) is not None:
+                lfs.append((f"{short} · {label}", detail))
     tag_chunks, tag_messages = _tags(repo, nonce)
     return History(
-        paths, chunks + tag_chunks, _binary_files(repo), unpaired, messages + tag_messages
+        paths, chunks + tag_chunks, _binary_files(repo), unpaired, messages + tag_messages, lfs
     )
 
 
@@ -461,6 +474,24 @@ def load_private_hashes(repo: Path) -> tuple[list[str], list[Finding]]:
     return hashes, []
 
 
+def load_reviewed_list(repo: Path) -> tuple[dict[str, str], list[Finding]]:
+    """The reviewed binaries (none when there is no list yet), or the finding that says why not."""
+    where = "reviewed binaries list"
+    try:
+        path = reviewed_file(repo)
+        if path is None or not path.exists():
+            return {}, []
+        return load_reviewed(path), []
+    except UnicodeDecodeError:
+        return {}, _fail("words", where, f"cannot use the {where}: not UTF-8 text")
+    except OSError as exc:
+        return {}, _fail("words", where, f"cannot use the {where}: {exc.strerror}")
+    except ValueError as exc:
+        number = re.match(r"line (\d+) ", str(exc))
+        what = f"{where} line {number[1]} is malformed" if number else f"{where} is malformed"
+        return {}, _fail("words", where, what)
+
+
 def hide_if_private(name: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
     """Hide a file name that holds a private word or marker."""
     return HIDDEN if check_text("", name, hashes, markers) else name
@@ -489,8 +520,11 @@ def main(argv: list[str] | None = None) -> int:
 
     hashes: list[str] = []
     word_problem: list[Finding] = []
+    reviewed: dict[str, str] = {}
     if local:
         hashes, word_problem = load_private_hashes(repo)
+        reviewed, reviewed_problem = load_reviewed_list(repo)
+        word_problem += reviewed_problem
     # Markers hide labels in every mode (a CI checkout's exclude file holds none).
     markers, marker_problem = load_markers(repo)
 
@@ -512,8 +546,13 @@ def main(argv: list[str] | None = None) -> int:
     words_found: list[Finding] = list(word_problem)
     if local:
         words_found += [
-            Finding("words", scrub(where, hashes, markers), "binary file not scanned")
-            for where in history.binaries
+            Finding(
+                "words",
+                scrub(f"commit {binary.commit[:7]} · {binary.path}", hashes, markers),
+                "binary file not scanned",
+            )
+            for binary in history.binaries
+            if binary.blob not in reviewed
         ]
         words_found += [
             Finding("words", where, "file names and diff do not line up: names hidden")
@@ -527,7 +566,9 @@ def main(argv: list[str] | None = None) -> int:
             words_found += found
 
     marker_paths = marker_problem + [f for f in paths_found if f.check == "markers"]
-    paths_only = [f for f in paths_found if f.check == "paths"]
+    # Git LFS fails in every mode: CI can't read LFS content either.
+    lfs_found = [Finding("paths", scrub(where, hashes, markers), d) for where, d in history.lfs]
+    paths_only = [f for f in paths_found if f.check == "paths"] + lfs_found
     sections: list[tuple[str, list[Finding]]] = [("secrets", secrets_found)]
     if local:
         sections.append(("paths", paths_only))
@@ -548,7 +589,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{name}: {ok if not found else f'{len(found)} finding(s)'}")
         for finding in found:
             print(f"  {finding.where}: {finding.detail}")
-    if not local:
+    if local:
+        accepted = {binary.blob for binary in history.binaries if binary.blob in reviewed}
+        print(f"accepted binaries: {len(accepted)}")
+    else:
         print("words: SKIPPED (local only)")
         print("markers: SKIPPED (local only)")
     print("public-check: PASS" if total == 0 else f"public-check: FAIL ({total} findings)")

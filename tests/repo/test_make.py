@@ -103,3 +103,15 @@ def test_setup_installs_python_web_tools_and_hooks_in_order() -> None:
 def test_only_public_check_ci_passes_the_ci_flag() -> None:
     assert run_make("-n", "public-check-ci").stdout.split()[-1] == "--ci"
     assert "--ci" not in run_make("-n", "public-check").stdout
+
+
+def test_accept_binary_needs_a_file() -> None:
+    done = run_make("accept-binary")
+    assert done.returncode != 0
+    assert "FILE=" in done.stdout + done.stderr
+
+
+def test_accept_binary_passes_the_file_to_the_script() -> None:
+    steps = run_make("-n", "accept-binary", "FILE=web/public/fonts/a b.woff2").stdout
+    assert "scripts/reviewed_binaries.py" in steps
+    assert "'web/public/fonts/a b.woff2'" in steps
