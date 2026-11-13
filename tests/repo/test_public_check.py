@@ -15,13 +15,19 @@ LISTED_EMAIL = "listed.person@family.example"
 AUTHOR = ("Test Author", "author@example.com")
 
 
-def git(repo: Path, *args: str, author: tuple[str, str] = AUTHOR) -> None:
+def git(
+    repo: Path,
+    *args: str,
+    author: tuple[str, str] = AUTHOR,
+    committer: tuple[str, str] | None = None,
+) -> None:
+    who = committer or author
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": author[0],
         "GIT_AUTHOR_EMAIL": author[1],
-        "GIT_COMMITTER_NAME": author[0],
-        "GIT_COMMITTER_EMAIL": author[1],
+        "GIT_COMMITTER_NAME": who[0],
+        "GIT_COMMITTER_EMAIL": who[1],
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
     }
@@ -33,13 +39,14 @@ def commit(
     files: dict[str, str],
     message: str = "add files",
     author: tuple[str, str] = AUTHOR,
+    committer: tuple[str, str] | None = None,
 ) -> None:
     for name, text in files.items():
         target = repo / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         git(repo, "add", "--force", name)
-    git(repo, "commit", "-q", "-m", message, author=author)
+    git(repo, "commit", "-q", "-m", message, author=author, committer=committer)
 
 
 @pytest.fixture
@@ -88,7 +95,7 @@ def test_secret_in_history_fails(
     git(repo, "commit", "-q", "-m", "remove it")
     code, out = run(repo, capsys)
     assert code == 1
-    assert "secrets" in out
+    assert "github-pat" in out
     assert token not in out
     assert out.rstrip().splitlines()[-1].startswith("public-check: FAIL (")
 
@@ -315,3 +322,176 @@ def test_history_on_an_empty_repo_is_fine(
     git(empty, "init", "-q")
     code, _ = run(empty, capsys)
     assert code == 0
+
+
+def merge_adding(repo: Path, files: dict[str, str]) -> None:
+    """A merge commit that alone adds the files (the side branch and main don't)."""
+    git(repo, "checkout", "-qb", "side")
+    commit(repo, {"core/a.py": "x = 1\n"})
+    git(repo, "checkout", "-q", "main")
+    commit(repo, {"core/b.py": "y = 2\n"})
+    git(repo, "merge", "-q", "--no-ff", "--no-commit", "side")
+    for name, text in files.items():
+        (repo / name).write_text(text, encoding="utf-8")
+        git(repo, "add", "--force", name)
+    git(repo, "commit", "-q", "-m", "merge side")
+
+
+def test_merge_commit_changes_are_scanned(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    merge_adding(repo, {"NOTES.md": "n\n", "core/b.py": f"y = 2  # {CANARY}\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "NOTES.md" in out
+    assert "private word #1" in out
+
+
+def test_listed_email_at_the_start_of_a_line_is_caught(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, LISTED_EMAIL)
+    commit(repo, {"core/invited.txt": f"{LISTED_EMAIL}\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+
+
+def test_file_git_calls_binary_is_scanned_and_listed(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    target = repo / "core" / "data.txt"
+    target.parent.mkdir()
+    target.write_bytes(b"\x00 " + CANARY.encode() + b"\n")
+    git(repo, "add", "core/data.txt")
+    git(repo, "commit", "-q", "-m", "binary-ish")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+    assert "core/data.txt: binary file not scanned" in out
+    assert CANARY not in out.casefold()
+
+
+def test_secret_path_with_a_marker_is_hidden(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    token = "ghp_" + "".join(
+        secrets.choice(string.ascii_letters + string.digits) for _ in range(36)
+    )
+    commit(repo, {"core/secret-notes/key.py": f'TOKEN = "{token}"\n'})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "github-pat" in out
+    assert "secret-notes" not in out.casefold()
+    assert token not in out
+
+
+@pytest.mark.parametrize("exit_code", [1, 2])
+def test_gitleaks_error_or_empty_report_fails(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exit_code: int,
+) -> None:
+    import public_check
+
+    fake = tmp_path / "fake-gitleaks"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'while [ $# -gt 0 ]; do\n  if [ "$1" = --report-path ]; then printf "[]" > "$2"; fi\n'
+        "  shift\ndone\n"
+        f"exit {exit_code}\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setattr(public_check, "_gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "secrets: 1 finding(s)" in out
+    assert "gitleaks" in out
+
+
+def test_gitleaks_error_exit_says_failed(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import public_check
+
+    fake = tmp_path / "fake-gitleaks"
+    fake.write_text("#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setattr(public_check, "_gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "gitleaks failed (exit 1)" in out
+
+
+def test_unit_separator_in_a_message_hides_nothing(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {"core/a.py": "x = 1\n"}, message=f"first\x1fabout {CANARY}")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+
+
+def test_fake_commit_header_in_a_message_does_not_crash(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {"core/a.py": "x = 1\n"}, message=f"first\n\x1e{'a' * 40}\x1f\nabout {CANARY}")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+
+
+def test_root_commit_is_scanned_even_if_show_root_is_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    word_list(tmp_path, monkeypatch, CANARY)
+    root = tmp_path / "rooted"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "log.showRoot", "false")
+    commit(root, {"core/a.py": f"# {CANARY}\n"})
+    code, out = run(root, capsys)
+    assert code == 1
+    assert "private word #1" in out
+
+
+def test_marker_count_is_printed(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    assert "markers: ok (1 marker)" in run(repo, capsys)[1]
+    (repo / ".git" / "info" / "exclude").unlink()
+    assert "markers: ok (0 markers)" in run(repo, capsys)[1]
+
+
+def test_committer_only_listed_email_is_caught(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY, LISTED_EMAIL)
+    commit(repo, {"core/a.py": "x = 1\n"}, committer=("Someone", LISTED_EMAIL))
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #2" in out
+    assert "committer" in out
+    assert "author:" not in out
+
+
+def test_missing_repo_path_is_never_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    missing = tmp_path / "no-such-repo-dir"
+    code, out = run(missing, capsys)
+    assert code != 0
+    assert "no-such-repo-dir" not in out
+    assert str(tmp_path) not in out

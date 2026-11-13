@@ -172,28 +172,40 @@ def test_add_words_dedupes_lines_already_in_the_file(tmp_path: Path) -> None:
     assert path.read_text().splitlines() == [h, privacy_words.hash_word("beta")]
 
 
-def test_add_words_refuses_blank_and_multi_word_entries(tmp_path: Path) -> None:
+REFUSAL = "That entry can't be matched as one word (letters only, or a whole email): not saved."
+UNMATCHABLE = ["mary-ann", "o'brien", "st4luke", "two words"]
+
+
+def test_add_words_refuses_blank_and_unmatchable_entries(tmp_path: Path) -> None:
     path = tmp_path / "w"
-    for bad in ("", "   ", "Two Words"):
+    for bad in ("", "   ", *UNMATCHABLE):
         with pytest.raises(ValueError, match="one word") as info:
             privacy_words.add_words(path, [bad])
-        assert "words" not in str(info.value).lower().replace("one word", "")
+        assert bad.strip() == "" or bad not in str(info.value)
     assert not path.exists()
 
 
-def test_cli_refuses_an_entry_with_spaces(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_add_words_accepts_a_word_and_a_whole_email(tmp_path: Path) -> None:
+    path = tmp_path / "w"
+    assert privacy_words.add_words(path, ["Zebracanary", "person@family.example"]) == 2
+
+
+@pytest.mark.parametrize("bad", UNMATCHABLE)
+def test_cli_refuses_an_entry_the_matcher_cannot_produce(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    bad: str,
 ) -> None:
     monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
     repo = make_repo(tmp_path, "PRIVATE_WORDS_FILE=words.sha256", ignore="words.sha256\n")
-    type_answers(monkeypatch, "Two Words", "Zebracanary", "")
+    type_answers(monkeypatch, bad, "Zebracanary", "person@family.example", "")
     assert privacy_words.main(["--repo", str(repo)]) == 0
     out = capsys.readouterr()
-    assert out.out.count("One word per entry: that entry was not saved.") == 1
-    assert "1 hash" in out.out
-    text = (out.out + out.err).lower()
-    assert "two" not in text
-    assert "words" not in text.replace("private word list", "").replace("one word per", "")
+    assert out.out.count(REFUSAL) == 1
+    assert "2 hashes" in out.out
+    assert bad.lower() not in (out.out + out.err).lower()
     assert privacy_words.load_hashes(repo / "words.sha256") == [
-        privacy_words.hash_word("zebracanary")
+        privacy_words.hash_word("zebracanary"),
+        privacy_words.hash_word("person@family.example"),
     ]

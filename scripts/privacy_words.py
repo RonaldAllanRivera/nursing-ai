@@ -18,11 +18,32 @@ from pathlib import Path
 
 SETTING = "PRIVATE_WORDS_FILE"
 _HASH = re.compile(r"[0-9a-f]{64}")
+EMAIL = re.compile(r"\w[\w.+-]*@[\w-]+(?:\.[\w-]+)+")
+LETTERS = re.compile(r"[^\W\d_]+")
+NOT_MATCHABLE = (
+    "That entry can't be matched as one word (letters only, or a whole email): not saved."
+)
 
 
 def normalize(text: str) -> str:
     """NFC first, then casefold, so case and Unicode-form variants compare equal."""
     return unicodedata.normalize("NFC", text).casefold()
+
+
+def split_tokens(normalized: str) -> set[str]:
+    """Whole emails and letter runs of text that is already normalized."""
+    return set(EMAIL.findall(normalized)) | set(LETTERS.findall(normalized))
+
+
+def tokens(text: str) -> set[str]:
+    """NFC + casefold the whole text first, then whole emails and letter runs."""
+    return split_tokens(normalize(text))
+
+
+def is_matchable(entry: str) -> bool:
+    """True when the checker can produce the entry as a token: letters only, or one whole email."""
+    folded = normalize(entry.strip())
+    return bool(LETTERS.fullmatch(folded) or EMAIL.fullmatch(folded))
 
 
 def hash_word(word: str) -> str:
@@ -47,8 +68,8 @@ def add_words(path: Path, words: Iterable[str]) -> int:
     merged = list(dict.fromkeys(load_hashes(path))) if path.exists() else []
     seen = set(merged)
     for word in words:
-        if not word.strip() or word.strip().split() != [word.strip()]:
-            raise ValueError("one word per entry, and not blank")
+        if not is_matchable(word):
+            raise ValueError("entry can't be matched as one word (letters only, or a whole email)")
         digest = hash_word(word)
         if digest not in seen:
             seen.add(digest)
@@ -117,8 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         entry = answer.strip()
         if not entry:
             continue
-        if entry.split() != [entry]:
-            print("One word per entry: that entry was not saved.")
+        if not is_matchable(entry):
+            print(NOT_MATCHABLE)
             continue
         words.append(entry)
     try:

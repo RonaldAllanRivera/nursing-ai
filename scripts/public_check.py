@@ -22,15 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from privacy_words import SETTING, load_hashes, normalize, words_file
+from privacy_words import SETTING, load_hashes, normalize, split_tokens, words_file
+from privacy_words import tokens as tokens
 
 HERE = Path(__file__).resolve().parent
 ALLOWLIST = HERE / "public_paths.txt"
 HIDDEN = "(path hidden)"
 
-_TOKEN = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|[^\W\d_]+")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_LETTERS = re.compile(r"[^\W\d_]+")
 _COMMIT_START = re.compile(r"\x1e(?=[0-9a-f]{40,64}\x1f)")
 _DIFF_HEADER = re.compile(r"^diff --git ", re.MULTILINE)
 _SAME_PATH = re.compile(r"a/(?P<p>.+) b/(?P=p)")
@@ -49,15 +47,7 @@ class Finding:
 class History:
     paths: set[str]
     chunks: list[tuple[str, str]]
-
-
-def tokens(text: str) -> set[str]:
-    """NFC + casefold the whole text first, then whole emails and letter runs."""
-    return _split(normalize(text))
-
-
-def _split(normalized: str) -> set[str]:
-    return set(_EMAIL.findall(normalized)) | set(_LETTERS.findall(normalized))
+    binaries: list[str]
 
 
 def private_markers(exclude_text: str, gitignore_text: str) -> list[str]:
@@ -111,7 +101,7 @@ def check_text(
         entry = {digest: n for n, digest in reversed(list(enumerate(hashes, start=1)))}
         hit = {
             entry[digest]
-            for token in _split(folded)
+            for token in split_tokens(folded)
             if (digest := hashlib.sha256(token.encode("utf-8")).hexdigest()) in entry
         }
         findings += [Finding("words", where, f"private word #{n}") for n in sorted(hit)]
@@ -125,10 +115,11 @@ def check_text(
 
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(  # noqa: S603
-        ["git", "-c", "core.quotePath=false", *args],  # noqa: S607
+        ["git", "-c", "core.quotePath=false", "-c", "log.showRoot=true", *args],  # noqa: S607
         cwd=repo,
         capture_output=True,
         check=False,
+        env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
     )
     if result.returncode != 0:
         raise OSError("git could not read the history")
@@ -145,25 +136,73 @@ def _file_chunks(short: str, diff: str) -> list[tuple[str, str]]:
     return chunks
 
 
+def _binary_files(repo: Path) -> list[str]:
+    """Where git still sees a binary blob (numstat prints '-' for it), as 'commit sha · path'."""
+    log = _git(
+        repo,
+        "log",
+        "--all",
+        "--numstat",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--diff-merges=first-parent",
+        "--format=%x1e%H",
+    )
+    found: list[str] = []
+    short = ""
+    for line in log.splitlines():
+        if line.startswith("\x1e"):
+            short = line[1:8]
+        elif line.startswith("-\t-\t"):
+            found.append(f"commit {short} · {line[4:]}")
+    return found
+
+
 def read_history(repo: Path) -> History:
     """Paths ever committed, and one chunk per message, person and file diff."""
-    names = _git(repo, "log", "--all", "--no-renames", "--name-only", "--format=", "-z")
+    names = _git(
+        repo,
+        "log",
+        "--all",
+        "--diff-merges=first-parent",
+        "--no-renames",
+        "--name-only",
+        "--format=",
+        "-z",
+    )
     paths = {name.strip("\n") for name in names.split("\0") if name.strip("\n")}
     fmt = "%x1e%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1f"
     log = _git(
-        repo, "log", "--all", "-p", "--no-color", "--no-renames", "--no-ext-diff", f"--format={fmt}"
+        repo,
+        "log",
+        "--all",
+        "-p",
+        "--text",
+        "--diff-merges=first-parent",
+        "--no-color",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        f"--format={fmt}",
     )
     chunks: list[tuple[str, str]] = []
+    short = "commit ?"
     for entry in _COMMIT_START.split(log)[1:] if log else []:
-        sha, author, author_email, committer, committer_email, message, diff = entry.split(
-            "\x1f", 6
-        )
+        parts = entry.split("\x1f", 5)
+        if len(parts) < 6:
+            # A message that imitates a commit header: scan it as message text.
+            chunks.append((f"{short} · message", entry))
+            continue
+        sha, author, author_email, committer, committer_email, rest = parts
         short = f"commit {sha[:7]}"
-        chunks.append((f"{short} · message", message))
+        header = _DIFF_HEADER.search(rest)
+        before, diff = (rest[: header.start()], rest[header.start() :]) if header else (rest, "")
+        chunks.append((f"{short} · message", before))
         chunks.append((f"{short} · author", f"{author} {author_email}"))
         chunks.append((f"{short} · committer", f"{committer} {committer_email}"))
         chunks += _file_chunks(sha[:7], diff)
-    return History(paths, chunks)
+    return History(paths, chunks, _binary_files(repo))
 
 
 def _gitleaks_binary() -> str | None:
@@ -188,7 +227,7 @@ def run_gitleaks(repo: Path) -> list[Finding]:
                 "--no-banner",
                 "--no-color",
                 "--exit-code",
-                "1",
+                "2",
                 "--report-format",
                 "json",
                 "--report-path",
@@ -200,9 +239,12 @@ def run_gitleaks(repo: Path) -> list[Finding]:
         )
         if result.returncode == 0:
             return []
-        if result.returncode != 1 or not report.is_file():
-            return [Finding("secrets", "gitleaks", f"gitleaks failed (exit {result.returncode})")]
+        failed = [Finding("secrets", "gitleaks", f"gitleaks failed (exit {result.returncode})")]
+        if result.returncode != 2 or not report.is_file():
+            return failed
         leaks = json.loads(report.read_text(encoding="utf-8"))
+        if not leaks:
+            return failed
     return [
         Finding(
             "secrets",
@@ -290,20 +332,26 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         history = read_history(repo)
-    except OSError as exc:
-        print(f"public-check: cannot read the history: {exc}")
+    except OSError:
+        print("public-check: cannot read the history")
         return 1
     allowed = frozenset(
         line.strip() for line in ALLOWLIST.read_text(encoding="utf-8").splitlines() if line.strip()
     )
 
-    secrets_found = run_gitleaks(repo)
+    secrets_found = [
+        Finding(f.check, _scrub(f.where, hashes, markers), f.detail) for f in run_gitleaks(repo)
+    ]
     paths_found = check_paths(history.paths, allowed, markers)
     paths_found = [
         Finding(f.check, _hide_if_private(f.where, hashes, markers), f.detail) for f in paths_found
     ]
     words_found: list[Finding] = list(word_problem) + list(marker_problem)
     if local:
+        words_found += [
+            Finding("words", _scrub(where, hashes, markers), "binary file not scanned")
+            for where in history.binaries
+        ]
         for where, text in history.chunks:
             found = check_text(_scrub(where, hashes, markers), text, hashes, markers)
             words_found += found
@@ -320,7 +368,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     total = sum(len(found) for _, found in sections)
     for name, found in sections:
-        print(f"{name}: {'ok' if not found else f'{len(found)} finding(s)'}")
+        ok = (
+            f"ok ({len(markers)} marker{'' if len(markers) == 1 else 's'})"
+            if name == "markers"
+            else "ok"
+        )
+        print(f"{name}: {ok if not found else f'{len(found)} finding(s)'}")
         for finding in found:
             print(f"  {finding.where}: {finding.detail}")
     if not local:
