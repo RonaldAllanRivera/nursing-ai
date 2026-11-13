@@ -13,8 +13,9 @@ The model writes, code checks, the nurse signs.**
 
 ## The problem
 
-Nurses document constantly, often in a hurry and in a mix of English and Filipino (Taglish), with
-shorthand like `c/o`, `IVF`, `@ 30 gtts/min`. Turning that into a formal note format takes time
+Nurses document constantly, often in a hurry and in ward shorthand like `c/o`, `IVF`,
+`@ 30 gtts/min`: on Philippine wards often in a mix of English and Filipino (Taglish), on US units
+in their own shorthand (`A&Ox4`, `T 100.2F`). Turning that into a formal note format takes time
 away from patients, and an AI that "cleans it up" is dangerous if it quietly adds a fact the nurse
 never wrote.
 
@@ -56,7 +57,8 @@ Empty sections stay empty and are flagged for the nurse.
 
 - [ ] **Rough note → FDAR or SOAPIE note**, with the format set per facility
 - [ ] **Source-linked lines:** every line carries its source quotes; code verifies the quotes and the numbers
-- [ ] **De-identification before any AI call:** names and identifiers become tokens; the AI provider never sees who the patient is
+- [ ] **Known identifiers removed before any AI call:** the patient's names, relatives, record number and dates, plus patterns such as phone numbers and email addresses, become tokens before the note reaches the model (data minimisation)
+- [ ] **Philippine and US wards:** timezone, shifts, units, note format and wording are facility settings that an admin edits, so nothing is hard-coded for one country
 - [ ] **Missing-items checklist** (plain code, no AI), checked against the patient's record: no allergies recorded, lines and tubes or pending tests not mentioned, medicines due but not recorded as given, held or refused, and fall risk with no safety measure written
 - [ ] **Review and sign:** signed notes are immutable and hashed
 - [ ] **Sign in with Google** (OpenID Connect, invite-only, no account passwords stored), with demo personas for visitors
@@ -79,7 +81,7 @@ information system covers. This is a documentation module that sits beside one.
 
 ```mermaid
 flowchart LR
-    A[Rough note] --> B[De-identify<br/>names → tokens]
+    A[Rough note] --> B[Redact<br/>known identifiers → tokens]
     B --> GL[Glossary lookup<br/>shorthand + Taglish]
     GL --> C[Claude<br/>structured output]
     C --> D{Code checks}
@@ -89,7 +91,7 @@ flowchart LR
     D -->|ambiguous term| F
     E --> G[Missing-items checklist]
     F --> G
-    G --> H[Re-identify]
+    G --> H[Restore names]
     H --> I[Nurse reviews and edits]
     I --> J[Sign: hash + audit log]
     J --> K[(Record)]
@@ -99,7 +101,7 @@ AI generation runs as an asynchronous job. The API answers right away with `202 
 ID, a worker calls the model, and the app shows progress. That way slow responses never time out,
 and retries are safe thanks to idempotency keys.
 
-The glossary lookup runs on the de-identified note and combines three searches in PostgreSQL: exact
+The glossary lookup runs on the redacted note and combines three searches in PostgreSQL: exact
 and variant matches, trigram similarity for misspellings (pg_trgm), and vector similarity for meaning
 (pgvector), merged with reciprocal rank fusion. The matched entries go to the model as context.
 
@@ -195,7 +197,7 @@ Major decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
 ## Repository layout
 
 ```text
-core/     domain model, draft pipeline, de-identification, providers, database layer
+core/     domain model, draft pipeline, redaction, providers, database layer
 api/      FastAPI app (HTTP entry point)
 mcp/      MCP server (agent entry point)
 evals/    gold-set cases, runner, metrics, reports
@@ -248,9 +250,13 @@ See [CHANGELOG.md](CHANGELOG.md) for what has shipped.
 - **A documentation aid, not a medical device.** It gives no clinical advice; a nurse reviews and
   signs every note.
 - **Synthetic data only** in this repository: no real names, hospital numbers or patient details.
-- **De-identification before AI calls**, and logging that never records note text or names.
-- Any real-world use would require the facility's own data-privacy approval (in the Philippines,
-  under the Data Privacy Act of 2012), a data processing agreement and a privacy impact assessment.
+- **Known identifiers removed before AI calls** (data minimisation, not formal de-identification),
+  and logging that never records note text or names.
+- Synthetic data only; not for real patient information. Real use would need the facility's own
+  privacy approval: in the Philippines under the Data Privacy Act of 2012, with a data processing
+  agreement and a privacy impact assessment; in the US under HIPAA, with business associate
+  agreements and a risk analysis, and in California under the Confidentiality of Medical
+  Information Act as well.
 
 ## Acknowledgements
 
