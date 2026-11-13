@@ -1,10 +1,14 @@
 """Root pytest fixtures shared by every package."""
 
+import asyncio
+import contextlib
 import os
-from collections.abc import Iterator
+import socket
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 import yaml
 from testcontainers.community.postgres import PostgresContainer
 
@@ -37,3 +41,36 @@ def repo_root() -> Path:
 def postgres_url() -> Iterator[str]:
     with PostgresContainer(compose_db_image(), driver="asyncpg") as pg:
         yield pg.get_connection_url()
+
+
+@pytest.fixture
+def free_port() -> int:
+    """A local port that nothing listens on."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+    return port
+
+
+@pytest_asyncio.fixture
+async def silent_port() -> AsyncIterator[int]:
+    """A local port that accepts connections and never answers; each one is closed afterwards."""
+    release = asyncio.Event()
+    writers: list[asyncio.StreamWriter] = []
+
+    async def silent(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writers.append(writer)
+        await release.wait()
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
+    port: int = server.sockets[0].getsockname()[1]
+    try:
+        yield port
+    finally:
+        release.set()
+        for writer in writers:
+            writer.close()
+            with contextlib.suppress(ConnectionError):
+                await writer.wait_closed()
+        server.close()
+        await server.wait_closed()
