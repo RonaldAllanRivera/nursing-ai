@@ -1,0 +1,376 @@
+{
+  "key": "demo-1",
+  "synthetic": true,
+  "facility_key": "ph-demo",
+  "ward": "Medical Ward",
+  "bed_label": "12",
+  "patient_id": "00000000-0000-4000-8000-000000000011",
+  "display_name": "Demo patient A",
+  "age": 64,
+  "sex": "F",
+  "patient": {
+    "given_name": "Perpetua",
+    "middle_name": null,
+    "family_name": "Malabanan",
+    "suffix": null,
+    "nicknames": [],
+    "relatives": [],
+    "record_number": "SYN-PH-0012",
+    "birth_date": "1962-03-04",
+    "address": null,
+    "postal_code": null
+  },
+  "context": {
+    "allergies": [
+      "penicillin"
+    ],
+    "code_status": "Full code",
+    "lines_tubes": [
+      {
+        "kind": "IV line",
+        "description": "IV line, left arm",
+        "aliases": [
+          "IVF",
+          "IV"
+        ]
+      }
+    ],
+    "medicines_due": [],
+    "pending_tests": [
+      {
+        "name": "CBC",
+        "sent_at": "2026-11-12T03:30:00+08:00",
+        "aliases": [
+          "CBC"
+        ]
+      }
+    ],
+    "latest_vitals": {
+      "taken_at": "2026-11-12T02:00:00+08:00",
+      "temperature": {
+        "value": "37.9",
+        "unit": "Cel"
+      },
+      "pulse": {
+        "value": "112",
+        "unit": "/min"
+      },
+      "resp_rate": null,
+      "bp_systolic": {
+        "value": "90",
+        "unit": "mm[Hg]"
+      },
+      "bp_diastolic": {
+        "value": "60",
+        "unit": "mm[Hg]"
+      },
+      "spo2": null,
+      "weight": null
+    },
+    "fall_risk": {
+      "scale": "Morse",
+      "score": 45,
+      "high": true
+    }
+  },
+  "rough_note": {
+    "id": "00000000-0000-4000-8000-000000000013",
+    "encounter_id": "00000000-0000-4000-8000-000000000012",
+    "author_id": "00000000-0000-4000-8000-000000000101",
+    "text": "pt c/o hilo since 2am, BP 90/60 HR 112. pinainom ng water 200ml, still weak.\nnanginginig around 3am, T 37.9. nagsuka x1 ~4am, mga 100ml.\nIVF D5LR 1L @ 30gtts/min infusing well L arm",
+    "written_at": "2026-11-12T05:10:00+08:00",
+    "shift": {
+      "code": "10-6",
+      "label": "10-6",
+      "starts_at": "2026-11-11T14:00:00Z",
+      "ends_at": "2026-11-11T22:00:00Z",
+      "shift_date": "2026-11-11",
+      "timezone": "Asia/Manila"
+    },
+    "note_format": "fdar"
+  },
+  "model_output": {
+    "entries": [
+      {
+        "focus": {
+          "text": "Dizziness with low blood pressure",
+          "source_quotes": [
+            "c/o hilo since 2am",
+            "BP 90/60"
+          ],
+          "own_wording": true
+        },
+        "data": [
+          {
+            "text": "Reports dizziness since 2 AM.",
+            "source_quotes": [
+              "c/o hilo since 2am"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "BP 90/60 mmHg, HR 121 bpm.",
+            "source_quotes": [
+              "BP 90/60 HR 112"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "Shivering at around 3 AM, temperature 37.9 °C.",
+            "source_quotes": [
+              "nanginginig around 3am, T 37.9"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "Vomited once at about 4 AM, about 100 mL.",
+            "source_quotes": [
+              "nagsuka x1 ~4am, mga 100ml"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "IV fluid D5LR 1 L at 30 gtts/min, left arm, infusing well.",
+            "source_quotes": [
+              "IVF D5LR 1L @ 30gtts/min infusing well L arm"
+            ],
+            "own_wording": false
+          }
+        ],
+        "action": [
+          {
+            "text": "Given 200 mL of water to drink.",
+            "source_quotes": [
+              "pinainom ng water 200ml"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "Physician notified.",
+            "source_quotes": [],
+            "own_wording": false
+          }
+        ],
+        "response": [
+          {
+            "text": "Still weak.",
+            "source_quotes": [
+              "still weak"
+            ],
+            "own_wording": false
+          }
+        ]
+      }
+    ]
+  },
+  "expected_draft": {
+    "entries": [
+      {
+        "focus": {
+          "id": "e1-F",
+          "section": "focus",
+          "text": "Dizziness with low blood pressure",
+          "ai_text": "Dizziness with low blood pressure",
+          "status": "summary",
+          "review": "pending",
+          "source_quotes": [
+            {
+              "text": "c/o hilo since 2am",
+              "span": {
+                "start": 3,
+                "end": 21
+              }
+            },
+            {
+              "text": "BP 90/60",
+              "span": {
+                "start": 23,
+                "end": 31
+              }
+            }
+          ],
+          "number_mismatches": []
+        },
+        "data": [
+          {
+            "id": "e1-D1",
+            "section": "data",
+            "text": "Reports dizziness since 2 AM.",
+            "ai_text": "Reports dizziness since 2 AM.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "c/o hilo since 2am",
+                "span": {
+                  "start": 3,
+                  "end": 21
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e1-D2",
+            "section": "data",
+            "text": "BP 90/60 mmHg, HR 121 bpm.",
+            "ai_text": "BP 90/60 mmHg, HR 121 bpm.",
+            "status": "number_mismatch",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "BP 90/60 HR 112",
+                "span": {
+                  "start": 23,
+                  "end": 38
+                }
+              }
+            ],
+            "number_mismatches": [
+              {
+                "kind": "value",
+                "draft_text": "121",
+                "draft_span": {
+                  "start": 18,
+                  "end": 21
+                },
+                "note_text": "112",
+                "note_span": {
+                  "start": 35,
+                  "end": 38
+                }
+              }
+            ]
+          },
+          {
+            "id": "e1-D3",
+            "section": "data",
+            "text": "Shivering at around 3 AM, temperature 37.9 °C.",
+            "ai_text": "Shivering at around 3 AM, temperature 37.9 °C.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "nanginginig around 3am, T 37.9",
+                "span": {
+                  "start": 77,
+                  "end": 107
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e1-D4",
+            "section": "data",
+            "text": "Vomited once at about 4 AM, about 100 mL.",
+            "ai_text": "Vomited once at about 4 AM, about 100 mL.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "nagsuka x1 ~4am, mga 100ml",
+                "span": {
+                  "start": 109,
+                  "end": 135
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e1-D5",
+            "section": "data",
+            "text": "IV fluid D5LR 1 L at 30 gtts/min, left arm, infusing well.",
+            "ai_text": "IV fluid D5LR 1 L at 30 gtts/min, left arm, infusing well.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "IVF D5LR 1L @ 30gtts/min infusing well L arm",
+                "span": {
+                  "start": 137,
+                  "end": 181
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ],
+        "action": [
+          {
+            "id": "e1-A1",
+            "section": "action",
+            "text": "Given 200 mL of water to drink.",
+            "ai_text": "Given 200 mL of water to drink.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "pinainom ng water 200ml",
+                "span": {
+                  "start": 40,
+                  "end": 63
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e1-A2",
+            "section": "action",
+            "text": "Physician notified.",
+            "ai_text": "Physician notified.",
+            "status": "no_source",
+            "review": "pending",
+            "source_quotes": [],
+            "number_mismatches": []
+          }
+        ],
+        "response": [
+          {
+            "id": "e1-R1",
+            "section": "response",
+            "text": "Still weak.",
+            "ai_text": "Still weak.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "still weak",
+                "span": {
+                  "start": 65,
+                  "end": 75
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ]
+      }
+    ]
+  },
+  "expected_checklist": [
+    {
+      "rule": "line_or_tube",
+      "subject": "IV line, left arm",
+      "missing": false,
+      "note_span": {
+        "start": 137,
+        "end": 140
+      }
+    },
+    {
+      "rule": "pending_test",
+      "subject": "CBC",
+      "missing": true,
+      "note_span": null
+    },
+    {
+      "rule": "fall_risk",
+      "subject": "Fall risk",
+      "missing": true,
+      "note_span": null
+    }
+  ]
+}

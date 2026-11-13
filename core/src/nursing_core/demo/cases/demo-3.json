@@ -1,0 +1,441 @@
+{
+  "key": "demo-3",
+  "synthetic": true,
+  "facility_key": "us-demo",
+  "ward": "Med-Surg",
+  "bed_label": "412-A",
+  "patient_id": "00000000-0000-4000-8000-000000000031",
+  "display_name": "Demo patient C",
+  "age": 78,
+  "sex": "M",
+  "patient": {
+    "given_name": "Harold",
+    "middle_name": null,
+    "family_name": "Whitcomb",
+    "suffix": null,
+    "nicknames": [],
+    "relatives": [
+      {
+        "name": "Linda Whitcomb",
+        "relation": "daughter"
+      }
+    ],
+    "record_number": "SYN-US-0004",
+    "birth_date": "1948-02-17",
+    "address": null,
+    "postal_code": null
+  },
+  "context": {
+    "allergies": [
+      "penicillin (rash)"
+    ],
+    "code_status": "Full code",
+    "lines_tubes": [
+      {
+        "kind": "IV line",
+        "description": "PIV, left forearm",
+        "aliases": [
+          "PIV",
+          "IV"
+        ]
+      }
+    ],
+    "medicines_due": [
+      {
+        "name": "Enoxaparin",
+        "dose": "40 mg",
+        "route": "SUBQ",
+        "due_at": "2026-11-12T09:00:00-08:00",
+        "aliases": [
+          "enoxaparin",
+          "lovenox"
+        ]
+      },
+      {
+        "name": "Acetaminophen",
+        "dose": "1000 mg",
+        "route": "PO",
+        "due_at": "2026-11-12T12:00:00-08:00",
+        "aliases": [
+          "acetaminophen",
+          "tylenol"
+        ]
+      }
+    ],
+    "pending_tests": [
+      {
+        "name": "BMP",
+        "sent_at": "2026-11-12T06:00:00-08:00",
+        "aliases": [
+          "BMP"
+        ]
+      }
+    ],
+    "latest_vitals": null,
+    "fall_risk": {
+      "scale": "Morse",
+      "score": 55,
+      "high": true
+    }
+  },
+  "rough_note": {
+    "id": "00000000-0000-4000-8000-000000000033",
+    "encounter_id": "00000000-0000-4000-8000-000000000032",
+    "author_id": "00000000-0000-4000-8000-000000000201",
+    "text": "0830 pt A&Ox4, c/o R hip pain 6/10, oxycodone 5mg PO given per MAR. T 100.2F HR 96 BP 142/84\nRR 18 SpO2 95% 2L NC. wt 176 lb this AM. dtr Linda at bedside, updated on POC. 1015 pain 3/10.\nambulated 10 ft w/ walker with PT, tolerated. SCDs on, bed alarm on, call light within reach.",
+    "written_at": "2026-11-12T10:15:00-08:00",
+    "shift": {
+      "code": "7a-7p",
+      "label": "7a-7p",
+      "starts_at": "2026-11-12T15:00:00Z",
+      "ends_at": "2026-11-13T03:00:00Z",
+      "shift_date": "2026-11-12",
+      "timezone": "America/Los_Angeles"
+    },
+    "note_format": "fdar"
+  },
+  "model_output": {
+    "entries": [
+      {
+        "focus": {
+          "text": "Acute pain, right hip",
+          "source_quotes": [
+            "c/o R hip pain 6/10"
+          ],
+          "own_wording": true
+        },
+        "data": [
+          {
+            "text": "Alert and oriented x4; complains of right hip pain 6/10 at 0830.",
+            "source_quotes": [
+              "0830 pt A&Ox4, c/o R hip pain 6/10"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "T 100.2 °F, HR 96, BP 142/84, RR 18, SpO2 95% on 2 L nasal cannula.",
+            "source_quotes": [
+              "T 100.2F HR 96 BP 142/84 RR 18 SpO2 95% 2L NC"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "Weight 176 lb this morning.",
+            "source_quotes": [
+              "wt 176 lb this AM"
+            ],
+            "own_wording": false
+          }
+        ],
+        "action": [
+          {
+            "text": "Oxycodone 5 mg PO given per MAR.",
+            "source_quotes": [
+              "oxycodone 5mg PO given per MAR"
+            ],
+            "own_wording": false
+          }
+        ],
+        "response": [
+          {
+            "text": "Pain 3/10 at 1015.",
+            "source_quotes": [
+              "1015 pain 3/10"
+            ],
+            "own_wording": false
+          }
+        ]
+      },
+      {
+        "focus": {
+          "text": "Risk for falls",
+          "source_quotes": [
+            "ambulated 10 ft w/ walker"
+          ],
+          "own_wording": true
+        },
+        "data": [
+          {
+            "text": "Ambulated 10 ft with a walker with PT.",
+            "source_quotes": [
+              "ambulated 10 ft w/ walker with PT"
+            ],
+            "own_wording": false
+          }
+        ],
+        "action": [
+          {
+            "text": "SCDs on, bed alarm on, call light within reach.",
+            "source_quotes": [
+              "SCDs on, bed alarm on, call light within reach"
+            ],
+            "own_wording": false
+          },
+          {
+            "text": "Daughter at the bedside, updated on POC.",
+            "source_quotes": [
+              "dtr [RELATIVE_1] at bedside, updated on POC"
+            ],
+            "own_wording": false
+          }
+        ],
+        "response": [
+          {
+            "text": "Tolerated ambulation.",
+            "source_quotes": [
+              "tolerated"
+            ],
+            "own_wording": false
+          }
+        ]
+      }
+    ]
+  },
+  "expected_draft": {
+    "entries": [
+      {
+        "focus": {
+          "id": "e1-F",
+          "section": "focus",
+          "text": "Acute pain, right hip",
+          "ai_text": "Acute pain, right hip",
+          "status": "summary",
+          "review": "pending",
+          "source_quotes": [
+            {
+              "text": "c/o R hip pain 6/10",
+              "span": {
+                "start": 15,
+                "end": 34
+              }
+            }
+          ],
+          "number_mismatches": []
+        },
+        "data": [
+          {
+            "id": "e1-D1",
+            "section": "data",
+            "text": "Alert and oriented x4; complains of right hip pain 6/10 at 0830.",
+            "ai_text": "Alert and oriented x4; complains of right hip pain 6/10 at 0830.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "0830 pt A&Ox4, c/o R hip pain 6/10",
+                "span": {
+                  "start": 0,
+                  "end": 34
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e1-D2",
+            "section": "data",
+            "text": "T 100.2 °F, HR 96, BP 142/84, RR 18, SpO2 95% on 2 L nasal cannula.",
+            "ai_text": "T 100.2 °F, HR 96, BP 142/84, RR 18, SpO2 95% on 2 L nasal cannula.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "T 100.2F HR 96 BP 142/84 RR 18 SpO2 95% 2L NC",
+                "span": {
+                  "start": 68,
+                  "end": 113
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e1-D3",
+            "section": "data",
+            "text": "Weight 176 lb this morning.",
+            "ai_text": "Weight 176 lb this morning.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "wt 176 lb this AM",
+                "span": {
+                  "start": 115,
+                  "end": 132
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ],
+        "action": [
+          {
+            "id": "e1-A1",
+            "section": "action",
+            "text": "Oxycodone 5 mg PO given per MAR.",
+            "ai_text": "Oxycodone 5 mg PO given per MAR.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "oxycodone 5mg PO given per MAR",
+                "span": {
+                  "start": 36,
+                  "end": 66
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ],
+        "response": [
+          {
+            "id": "e1-R1",
+            "section": "response",
+            "text": "Pain 3/10 at 1015.",
+            "ai_text": "Pain 3/10 at 1015.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "1015 pain 3/10",
+                "span": {
+                  "start": 172,
+                  "end": 186
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ]
+      },
+      {
+        "focus": {
+          "id": "e2-F",
+          "section": "focus",
+          "text": "Risk for falls",
+          "ai_text": "Risk for falls",
+          "status": "summary",
+          "review": "pending",
+          "source_quotes": [
+            {
+              "text": "ambulated 10 ft w/ walker",
+              "span": {
+                "start": 188,
+                "end": 213
+              }
+            }
+          ],
+          "number_mismatches": []
+        },
+        "data": [
+          {
+            "id": "e2-D1",
+            "section": "data",
+            "text": "Ambulated 10 ft with a walker with PT.",
+            "ai_text": "Ambulated 10 ft with a walker with PT.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "ambulated 10 ft w/ walker with PT",
+                "span": {
+                  "start": 188,
+                  "end": 221
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ],
+        "action": [
+          {
+            "id": "e2-A1",
+            "section": "action",
+            "text": "SCDs on, bed alarm on, call light within reach.",
+            "ai_text": "SCDs on, bed alarm on, call light within reach.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "SCDs on, bed alarm on, call light within reach",
+                "span": {
+                  "start": 234,
+                  "end": 280
+                }
+              }
+            ],
+            "number_mismatches": []
+          },
+          {
+            "id": "e2-A2",
+            "section": "action",
+            "text": "Daughter at the bedside, updated on POC.",
+            "ai_text": "Daughter at the bedside, updated on POC.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "dtr Linda at bedside, updated on POC",
+                "span": {
+                  "start": 134,
+                  "end": 170
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ],
+        "response": [
+          {
+            "id": "e2-R1",
+            "section": "response",
+            "text": "Tolerated ambulation.",
+            "ai_text": "Tolerated ambulation.",
+            "status": "source_found",
+            "review": "pending",
+            "source_quotes": [
+              {
+                "text": "tolerated",
+                "span": {
+                  "start": 223,
+                  "end": 232
+                }
+              }
+            ],
+            "number_mismatches": []
+          }
+        ]
+      }
+    ]
+  },
+  "expected_checklist": [
+    {
+      "rule": "line_or_tube",
+      "subject": "PIV, left forearm",
+      "missing": true,
+      "note_span": null
+    },
+    {
+      "rule": "medicine_due",
+      "subject": "Enoxaparin 40 mg SUBQ",
+      "missing": true,
+      "note_span": null
+    },
+    {
+      "rule": "pending_test",
+      "subject": "BMP",
+      "missing": true,
+      "note_span": null
+    },
+    {
+      "rule": "fall_risk",
+      "subject": "Fall risk",
+      "missing": false,
+      "note_span": {
+        "start": 243,
+        "end": 255
+      }
+    }
+  ]
+}
