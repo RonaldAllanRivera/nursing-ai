@@ -93,3 +93,23 @@ def test_first_occurrence_wins() -> None:
 
 def test_quote_whitespace_is_stripped() -> None:
     assert find_span(prepare("has chest pain."), " chest pain\n") == Span(start=4, end=14)
+
+
+def test_quote_inside_a_hyphenated_word_is_not_found() -> None:
+    assert find_span(prepare("pt non-responsive"), "responsive") is None
+    assert find_span(prepare("non-responsive pt"), "non") is None
+    assert find_span(prepare("BP 90/60 and 2-3 times"), "2") == Span(start=13, end=14)
+    assert find_span(prepare("pt - responsive"), "responsive") == Span(start=5, end=15)
+
+
+def test_number_inside_a_decimal_is_not_found() -> None:
+    assert find_span(prepare("T 37.8"), "T 37") is None
+    assert find_span(prepare("37.8 HR 90"), "8 HR") is None
+    assert find_span(prepare("T 37.8"), "37.8") == Span(start=2, end=6)
+    assert find_span(prepare("seen at 3. 4 more"), "3") == Span(start=8, end=9)
+
+
+def test_combining_mark_continues_the_word() -> None:
+    assert find_span(prepare("mañana"), "man") is None
+    assert find_span(prepare("mañana"), "̃ana") is None
+    assert find_span(prepare("mañana"), "mañana") == Span(start=0, end=7)

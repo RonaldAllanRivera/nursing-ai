@@ -30,7 +30,8 @@ def prepare(raw: str) -> MatchText:
     """Normalise one code point at a time so each result character has one raw origin.
 
     Known limit: a precomposed letter ("\u00f1") and its decomposed form don't match each other.
-    That errs towards "not found", which is safe.
+    A combining mark counts as part of its word, so a split-up letter is never cut in half.
+    Both errors are towards "not found", which is safe.
     """
     chars: list[str] = []
     origin: list[int] = []
@@ -58,12 +59,35 @@ def find_span(note: MatchText, quote: str) -> Span | None:
     start = note.text.find(needle)
     while start >= 0:
         end = start + len(needle)
-        before = note.text[start - 1] if start > 0 else ""
-        after = note.text[end] if end < len(note.text) else ""
-        if not (_run_on(before, needle[0]) or _run_on(needle[-1], after)):
+        if not _inside_longer_word(note.text, start, end):
             return Span(start=note.origin[start], end=note.origin[end - 1] + 1)
         start = note.text.find(needle, start + 1)
     return None
+
+
+def _at(text: str, index: int) -> str:
+    return text[index] if 0 <= index < len(text) else ""
+
+
+def _inside_longer_word(text: str, start: int, end: int) -> bool:
+    """True when text[start:end] is only part of a word, a hyphenated word or a number."""
+    first, last = text[start], text[end - 1]
+    before, after = _at(text, start - 1), _at(text, end)
+    if _is_mark(first) or (after and _is_mark(after)):
+        return True
+    if _run_on(before, first) or _run_on(last, after):
+        return True
+    if first.isalpha() and before == "-" and _at(text, start - 2).isalpha():
+        return True
+    if last.isalpha() and after == "-" and _at(text, end + 1).isalpha():
+        return True
+    if last.isdigit() and after == "." and _at(text, end + 1).isdigit():
+        return True
+    return first.isdigit() and before == "." and _at(text, start - 2).isdigit()
+
+
+def _is_mark(char: str) -> bool:
+    return unicodedata.category(char).startswith("M")
 
 
 def _run_on(left: str, right: str) -> bool:
