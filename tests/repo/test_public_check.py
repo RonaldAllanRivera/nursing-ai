@@ -493,6 +493,7 @@ def test_gitleaks_error_on_the_message_scan_fails(
     fake.write_text(
         "#!/bin/sh\n"
         f'if [ "$1" = version ]; then echo {public_check.pinned_gitleaks_version()}; fi\n'
+        'if [ "$1" = git ]; then echo "INF 2 commits scanned." >&2; fi\n'
         'if [ "$1" = dir ]; then exit 1; fi\n'
     )
     fake.chmod(0o755)
@@ -757,19 +758,75 @@ def test_gitleaks_config_variables_cannot_hide_a_leak(
     assert_leak_found(out, token)
 
 
-def fake_gitleaks(tmp_path: Path, version: str, exit_code: int = 0) -> Path:
-    """A stand-in gitleaks that prints `version`, writes an empty report and exits."""
+def fake_gitleaks(
+    tmp_path: Path, version: str, exit_code: int = 0, log: str = "INF 1 commits scanned."
+) -> Path:
+    """A stand-in gitleaks that prints `version`, logs `log`, writes an empty report and exits."""
     fake = tmp_path / "fake-bin" / "gitleaks"
     fake.parent.mkdir(exist_ok=True)
+    (fake.parent / "log.txt").write_text(log + "\n")
     fake.write_text(
         "#!/bin/sh\n"
         f'if [ "$1" = version ]; then echo {version}; exit 0; fi\n'
+        f'cat "{fake.parent / "log.txt"}" >&2\n'
         'while [ $# -gt 0 ]; do\n  if [ "$1" = --report-path ]; then printf "[]" > "$2"; fi\n'
         "  shift\ndone\n"
         f"exit {exit_code}\n"
     )
     fake.chmod(0o755)
     return fake
+
+
+def test_relative_git_dir_cannot_hide_a_leak(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    token = committed_leak(repo)
+    # What `git --git-dir=.git push` puts in the pre-push hook's environment.
+    monkeypatch.setenv("GIT_DIR", ".git")
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert_leak_found(out, token)
+
+
+def test_explicit_bare_repository_setting_cannot_hide_a_leak(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    token = committed_leak(repo)
+    settings = tmp_path / "global.gitconfig"
+    settings.write_text("[safe]\n\tbareRepository = explicit\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(settings))
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert_leak_found(out, token)
+
+
+@pytest.mark.parametrize(
+    ("log", "detail"),
+    [
+        ("12:00PM INF 0 commits scanned.", "gitleaks read no commits: secrets not checked"),
+        ("12:00PM INF no leaks found", "gitleaks read no commits: secrets not checked"),
+        (
+            "12:00PM ERR [git] fatal: not a git repository\n12:00PM INF 1 commits scanned.",
+            "gitleaks reported an error: secrets not fully checked",
+        ),
+    ],
+)
+def test_gitleaks_that_reads_nothing_fails(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    log: str,
+    detail: str,
+) -> None:
+    import public_check
+
+    fake = fake_gitleaks(tmp_path, public_check.pinned_gitleaks_version(), log=log)
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert f"gitleaks: {detail}" in out
+    assert "not a git repository" not in out
 
 
 def test_pinned_gitleaks_wins_over_one_on_path(

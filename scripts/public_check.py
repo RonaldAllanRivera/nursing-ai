@@ -36,8 +36,13 @@ PINNED_GITLEAKS = HERE.parent / ".tools" / "bin" / "gitleaks"
 # Only gitleaks' own rules: no config or ignore file from the repo, the folder or the environment.
 GITLEAKS_CONFIG = "[extend]\nuseDefault = true\n"
 HIDDEN = "(path hidden)"
+GITLEAKS_ERRORED = "gitleaks reported an error: secrets not fully checked"
+GITLEAKS_READ_NOTHING = "gitleaks read no commits: secrets not checked"
 
 _DIFF_HEADER = re.compile(r"^diff --git ", re.MULTILINE)
+# gitleaks' log lines: "12:43PM ERR [git] fatal: …" and "12:43PM INF 3 commits scanned."
+_GITLEAKS_ERROR = re.compile(r"^(?:\S+ )?ERR\b", re.MULTILINE)
+_COMMITS_SCANNED = re.compile(r"\b(\d+) commits scanned\b")
 _STATUS = re.compile(r"[ADMT]")
 # Claude Code makes a .claude/ folder wherever a session starts, so these are refused anywhere.
 _MACHINE_LOCAL = re.compile(r"(?:^|/)\.claude/(?:settings\.local\.json$|worktrees/)")
@@ -293,8 +298,11 @@ def _gitleaks_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
 
 
-def _gitleaks_scan(binary: str, work: Path, *target: str) -> list[Any] | Finding:
-    """The leaks gitleaks reports for one target, or the finding that says it failed."""
+def _gitleaks_scan(
+    binary: str, work: Path, env: dict[str, str], *target: str
+) -> tuple[list[Any], Finding | None, str]:
+    """The leaks gitleaks reports for one target, the finding that says it failed (or None),
+    and its log, which is never printed (it can hold paths)."""
     report = work / "report.json"
     report.unlink(missing_ok=True)
     result = subprocess.run(  # noqa: S603
@@ -305,6 +313,8 @@ def _gitleaks_scan(binary: str, work: Path, *target: str) -> list[Any] | Finding
             str(work / "gitleaks.toml"),
             "--gitleaks-ignore-path",
             str(work / "no-ignore-file"),
+            "--log-level",
+            "info",
             "--redact",
             "--no-banner",
             "--no-color",
@@ -318,15 +328,22 @@ def _gitleaks_scan(binary: str, work: Path, *target: str) -> list[Any] | Finding
         capture_output=True,
         check=False,
         cwd=work,
-        env=_gitleaks_env(),
+        env=env,
     )
-    if result.returncode == 0:
-        return []
-    failed = Finding("secrets", "gitleaks", f"gitleaks failed (exit {result.returncode})")
-    if result.returncode != 2 or not report.is_file():
-        return failed
-    leaks: list[Any] = json.loads(report.read_text(encoding="utf-8"))
-    return leaks or failed
+    log = result.stderr.decode("utf-8", errors="replace")
+    leaks: list[Any] = []
+    if result.returncode == 2 and report.is_file():
+        leaks = json.loads(report.read_text(encoding="utf-8"))
+    if result.returncode not in (0, 2) or (result.returncode == 2 and not leaks):
+        return (
+            leaks,
+            Finding("secrets", "gitleaks", f"gitleaks failed (exit {result.returncode})"),
+            log,
+        )
+    if _GITLEAKS_ERROR.search(log):
+        # gitleaks logs a failed `git log` and carries on as if the history were empty.
+        return leaks, Finding("secrets", "gitleaks", GITLEAKS_ERRORED), log
+    return leaks, None, log
 
 
 def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> list[Finding]:
@@ -336,9 +353,8 @@ def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> l
         return [Finding("secrets", "gitleaks", "gitleaks not found: run make tools")]
     try:
         pinned = pinned_gitleaks_version()
-        # gitleaks also reads a .gitleaksignore at the folder it scans, whatever
-        # --gitleaks-ignore-path says, so the scan starts in the git folder, not the work tree.
         git_dir = _git(repo, "rev-parse", "--absolute-git-dir").strip()
+        commits = int(_git(repo, "rev-list", "--all", "--count").strip())
     except (OSError, ValueError):
         return [Finding("secrets", "gitleaks", "cannot read the gitleaks pin or the git folder")]
     version = subprocess.run(  # noqa: S603
@@ -350,6 +366,7 @@ def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> l
         work = Path(tmp)
         (work / "gitleaks.toml").write_text(GITLEAKS_CONFIG, encoding="utf-8")
         (work / "no-ignore-file").mkdir()
+        (work / "source").mkdir()
         folder = work / "messages"
         folder.mkdir()
         label_of: dict[str, str] = {}
@@ -357,30 +374,37 @@ def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> l
             (folder / name).write_text(text, encoding="utf-8")
             label_of[name] = label
 
-        found = _gitleaks_scan(binary, work, "git", git_dir)
-        if isinstance(found, Finding):
-            return [found]
+        # gitleaks reads a .gitleaksignore in the folder it scans, whatever
+        # --gitleaks-ignore-path says, so it scans an empty folder and finds the history
+        # through an absolute GIT_DIR. That also replaces a relative GIT_DIR from the caller
+        # (`git --git-dir=.git push`), and git accepts it under safe.bareRepository=explicit.
+        git_env = {**_gitleaks_env(), "GIT_DIR": git_dir}
+        leaks, problem, log = _gitleaks_scan(binary, work, git_env, "git", str(work / "source"))
         findings = [
             Finding(
                 "secrets",
                 f"commit {str(leak.get('Commit', ''))[:7]} · {leak.get('File', '')}",
                 str(leak.get("RuleID", "secret")),
             )
-            for leak in found
+            for leak in leaks
         ]
+        scanned = _COMMITS_SCANNED.search(log)
+        if problem is None and commits and (scanned is None or int(scanned[1]) == 0):
+            problem = Finding("secrets", "gitleaks", GITLEAKS_READ_NOTHING)
+        if problem is not None:
+            return [*findings, problem]
         if not messages:
             return findings
-        found = _gitleaks_scan(binary, work, "dir", str(folder))
-        if isinstance(found, Finding):
-            return [*findings, found]
-    return findings + [
+        leaks, problem, _ = _gitleaks_scan(binary, work, _gitleaks_env(), "dir", str(folder))
+    findings += [
         Finding(
             "secrets",
             label_of.get(Path(str(leak.get("File", ""))).name, "a message"),
             str(leak.get("RuleID", "secret")),
         )
-        for leak in found
+        for leak in leaks
     ]
+    return [*findings, problem] if problem is not None else findings
 
 
 def read_allowlist() -> frozenset[str]:

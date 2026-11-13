@@ -220,7 +220,7 @@ make e2e      # Playwright end-to-end tests
 ```
 
 On a fresh Ubuntu or WSL machine, install the test browser's system libraries once:
-`sudo pnpm -C web exec playwright install-deps chromium`.
+`pnpm -C web exec playwright install-deps chromium` (it asks for your sudo password itself).
 
 If a port is already taken, add `PORT_OFFSET=1` to the command (every port moves up by 10), for
 example `make dev PORT_OFFSET=1`. `make help` lists every target.
