@@ -202,17 +202,24 @@ evals/    gold-set cases, runner, metrics, reports
 web/      React + TypeScript ward app
 infra/    Terraform for AWS
 docs/     architecture notes and ADRs
+scripts/  repository hygiene: the public-history check, the staged-files check, the tool installer
+tests/    repository-level tests
 ```
 
 ## Getting started
 
-> Available after the first milestone. Planned workflow:
+**Prerequisites:** Docker with Compose, [uv](https://docs.astral.sh/uv/), Node 22 and
+[pnpm](https://pnpm.io/).
 
 ```bash
-make dev      # Postgres + API + web, with the fake AI provider (no API key needed)
+make setup    # install the Python and web dependencies, the pinned tools and the git hooks
+make dev      # Postgres + API + web; open http://localhost:5173, it shows "API: healthy"
 make check    # lint, type-check and test everything
 make e2e      # Playwright end-to-end tests
 ```
+
+If a port is already taken, add `PORT_OFFSET=1` to the command (every port moves up by 10), for
+example `make dev PORT_OFFSET=1`. `make help` lists every target.
 
 ---
 
@@ -220,7 +227,7 @@ make e2e      # Playwright end-to-end tests
 
 Each release ships one complete feature through every layer, from the screen to the database.
 
-- [ ] **v0.1** Foundation: monorepo, Docker Compose, CI
+- [x] **v0.1** Foundation: monorepo, Docker Compose, CI
 - [ ] **v0.2** First feature, end to end: rough note → checked FDAR draft with source highlights → edit → sign
 - [ ] **v0.3** Live on AWS: Terraform, continuous deployment, Google sign-in, async drafts on SQS
 - [ ] **v0.4** Eval harness with a CI gate and first published results, plus glossary lookup for ward shorthand (hybrid search with pgvector)
@@ -243,7 +250,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what has shipped.
 
 ## Acknowledgements
 
-Built with clinical input from a registered nurse, who writes and reviews the evaluation cases.
+Built with clinical input from a registered nurse. Her review of the evaluation cases is pending.
 
 ## License
 

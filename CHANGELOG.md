@@ -8,8 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-13
+
 ### Added
 
+- A uv workspace monorepo with the shared core and the api, mcp and evals entry points, plus the
+  web app, infra and docs folders.
+- The health endpoint and the start page that shows it.
+- Postgres and the API in Docker Compose, with make targets.
+- End-to-end tests at three screen widths.
+- CI on GitHub Actions, with Dependabot.
+- Pre-commit hooks.
+- The public-history check, which scans the whole git history for secrets, stray paths and private
+  words.
+- The first architecture decision records.
 - README with the problem, the safety approach (the model writes, code checks, the nurse signs),
   a planned architecture, the evaluation metrics and the roadmap.
 - This changelog.
