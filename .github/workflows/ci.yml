@@ -26,6 +26,8 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run pyright
       - run: uv run pytest --cov --cov-report=term-missing
+      - name: Safety code coverage (at least 90%)
+        run: uv run coverage report --include='*/nursing_core/domain/*,*/nursing_core/pipeline/*,*/nursing_core/storage/signing.py' --fail-under=90
 
   web:
     runs-on: ubuntu-latest

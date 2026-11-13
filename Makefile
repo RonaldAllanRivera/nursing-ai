@@ -51,6 +51,8 @@ check-py: ## Python checks: ruff, pyright, pytest with coverage
 	uv run ruff format --check
 	uv run pyright
 	uv run pytest --cov --cov-report=term-missing
+	@echo "safety code coverage (at least 90%):"
+	uv run coverage report --include='*/nursing_core/domain/*,*/nursing_core/pipeline/*,*/nursing_core/storage/signing.py' --fail-under=90
 
 check-web: ## Web checks: eslint, tsc, vitest, build, prettier
 	pnpm -C web lint
@@ -83,7 +85,7 @@ accept-binary: ## Record a reviewed binary file by its git blob id (FILE=path)
 	@test -n '$(subst ','\'',$(FILE))' || { echo 'usage: make accept-binary FILE=path/to/file'; exit 2; }
 	@uv run python scripts/reviewed_binaries.py '$(subst ','\'',$(FILE))'
 
-tools: ## Install the pinned gitleaks into .tools/bin
+tools: ## Install the pinned gitleaks, tflint and trivy into .tools/bin
 	@scripts/install-tools.sh
 
 public-check: ## Scan the whole git history for secrets, stray paths and private words

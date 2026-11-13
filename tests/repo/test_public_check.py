@@ -860,7 +860,7 @@ def test_install_script_reads_the_one_pin() -> None:
     version = public_check.pinned_gitleaks_version()
     assert re.fullmatch(r"\d+\.\d+\.\d+", version)
     assert version not in script
-    assert public_check.GITLEAKS_PIN.name in script
+    assert f"read_pin {public_check.GITLEAKS_PIN.stem}" in script
 
 
 def test_missing_repo_path_is_never_printed(

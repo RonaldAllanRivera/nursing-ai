@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Shared logic for the API, MCP server and evals."
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.20.1",
+    "anthropic>=2.8.0",
     "asyncpg>=0.32.0",
+    "faker>=40.54.0",
     "pydantic>=2.14.3",
     "sqlalchemy[asyncio]>=2.1.8",
     "tzdata>=2026.6",

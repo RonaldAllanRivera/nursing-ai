@@ -1,0 +1,7 @@
+# The trivy pin: scripts/install-tools.sh installs this release and checks its SHA-256.
+# Aqua's advisories were read on 2026-11-13: the March 2026 compromise published v0.69.4 (and
+# Docker images 0.69.5 and 0.69.6), and the later path-traversal and tar-bomb advisories are fixed
+# in 0.72.0. v0.76.2 (2026-11-05) is an immutable GitHub release and a security update Aqua
+# recommends; the SHA-256 is its trivy_0.76.2_checksums.txt entry for the Linux-64bit archive.
+TRIVY_VERSION=0.76.2
+TRIVY_SHA256=bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf

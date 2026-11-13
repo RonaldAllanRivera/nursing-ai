@@ -1,0 +1,5 @@
+# The tflint pin: scripts/install-tools.sh installs this release and checks its SHA-256.
+# v0.65.0 (2026-10-22) is an immutable GitHub release, picked at least two weeks old; the SHA-256
+# is the release's checksums.txt entry for tflint_linux_amd64.zip (checked 2026-11-13).
+TFLINT_VERSION=0.65.0
+TFLINT_SHA256=d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61

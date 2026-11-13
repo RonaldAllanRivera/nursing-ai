@@ -14,6 +14,7 @@ dev = [
     "pre-commit>=4.7.0",
     "actionlint-py>=1.7.12.25",
     "shellcheck-py>=0.11.0.1",
+    "hypothesis>=6.170.15",
 ]
 
 [tool.ruff]
