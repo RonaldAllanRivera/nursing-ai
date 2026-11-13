@@ -1,4 +1,6 @@
 import importlib
+import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -20,3 +22,29 @@ def test_python_tools_ignore_claude_folder(repo_root: Path) -> None:
 @pytest.mark.parametrize("name", ["vite.config.ts", "eslint.config.js", ".prettierignore"])
 def test_web_tools_ignore_claude_folder(repo_root: Path, name: str) -> None:
     assert ".claude" in (repo_root / "web" / name).read_text()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".claude/settings.local.json",
+        ".claude/worktrees/a/x.txt",
+        "web/.claude/settings.local.json",
+        "web/.claude/worktrees/x/y",
+    ],
+)
+def test_gitignore_ignores_machine_local_claude_files_anywhere(
+    repo_root: Path, tmp_path: Path, path: str
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
+    shutil.copy(repo_root / ".gitignore", tmp_path / ".gitignore")
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    target.write_text("x\n")
+    # Only the repo's own rules: no global ignore file.
+    ignored = subprocess.run(  # noqa: S603
+        ["git", "-c", "core.excludesFile=/dev/null", "check-ignore", "-q", path],  # noqa: S607
+        cwd=tmp_path,
+        check=False,
+    )
+    assert ignored.returncode == 0

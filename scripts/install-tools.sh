@@ -2,11 +2,17 @@
 # Install the pinned gitleaks release into .tools/bin/ (git-ignored), checking its SHA-256.
 set -euo pipefail
 
-GITLEAKS_VERSION="8.30.1"
-GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
-
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bin="$root/.tools/bin"
+
+# The pin lives in one file that scripts/public_check.py also reads.
+pin="$root/scripts/gitleaks.pin"
+GITLEAKS_VERSION="$(sed -n 's/^GITLEAKS_VERSION=//p' "$pin")"
+GITLEAKS_SHA256="$(sed -n 's/^GITLEAKS_SHA256=//p' "$pin")"
+if [ -z "$GITLEAKS_VERSION" ] || [ -z "$GITLEAKS_SHA256" ]; then
+  echo "scripts/gitleaks.pin must set GITLEAKS_VERSION and GITLEAKS_SHA256" >&2
+  exit 1
+fi
 
 if [ -x "$bin/gitleaks" ] && [ "$("$bin/gitleaks" version 2>/dev/null)" = "$GITLEAKS_VERSION" ]; then
   echo "gitleaks $GITLEAKS_VERSION already installed"

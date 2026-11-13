@@ -22,6 +22,7 @@ EMAIL = re.compile(r"\w[\w.+-]*@[\w-]+(?:\.[\w-]+)+")
 LETTERS = re.compile(r"[^\W\d_]+")
 NOT_MATCHABLE = (
     "That entry can't be matched as one word (letters only, or a whole email): not saved."
+    " Type each part of a hyphenated name separately."
 )
 
 

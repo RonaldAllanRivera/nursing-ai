@@ -1,11 +1,14 @@
 """Scan the whole git history before the repo goes public.
 
-(a) secrets, with gitleaks; (b) paths outside the committed allowlist, plus env files;
-(c) on the owner's PC only, every word, email, author and committer compared with the hashed
-private word list, plus private path markers read from .git/info/exclude at run time.
+(a) secrets, with the pinned gitleaks: every commit's diff, then every commit and tag message
+with its author, committer or tagger; (b) paths outside the committed allowlist, plus env files
+and machine-local Claude Code files; (c) on the owner's PC only (CI passes --ci), every word,
+email, author, committer, tagger, file name and tag name compared with the hashed private word
+list, plus private path markers read from .git/info/exclude at run time.
 
-A report never shows a private word, a marker or the line it was found on: only the commit,
-the place ("message", "author", a file) and the entry number.
+A report never shows a private word, a marker or the line it was found on: only the commit or
+tag, the place ("message", "author", a file) and the entry number. Markers hide labels in
+every mode.
 """
 
 import argparse
@@ -13,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -20,18 +24,34 @@ import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from privacy_words import SETTING, load_hashes, normalize, split_tokens, words_file
 from privacy_words import tokens as tokens
 
 HERE = Path(__file__).resolve().parent
 ALLOWLIST = HERE / "public_paths.txt"
+GITLEAKS_PIN = HERE / "gitleaks.pin"
+PINNED_GITLEAKS = HERE.parent / ".tools" / "bin" / "gitleaks"
+# Only gitleaks' own rules: no config or ignore file from the repo, the folder or the environment.
+GITLEAKS_CONFIG = "[extend]\nuseDefault = true\n"
 HIDDEN = "(path hidden)"
 
-_COMMIT_START = re.compile(r"\x1e(?=[0-9a-f]{40,64}\x1f)")
 _DIFF_HEADER = re.compile(r"^diff --git ", re.MULTILINE)
-_SAME_PATH = re.compile(r"a/(?P<p>.+) b/(?P=p)")
+_STATUS = re.compile(r"[ADMT]")
+# Claude Code makes a .claude/ folder wherever a session starts, so these are refused anywhere.
+_MACHINE_LOCAL = re.compile(r"(?:^|/)\.claude/(?:settings\.local\.json$|worktrees/)")
+# The same options for the file list and the diffs, so both list the same files in the same
+# order whatever the user's diff settings (order file, relative paths, colour).
+_DIFF_OPTIONS = (
+    "--diff-merges=first-parent",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-relative",
+    "-O/dev/null",
+)
 
 Check = Literal["secrets", "paths", "words", "markers"]
 
@@ -48,11 +68,17 @@ class History:
     paths: set[str]
     chunks: list[tuple[str, str]]
     binaries: list[str]
+    unpaired: list[str]
+    # (file name, label, text) for the gitleaks scan of messages and identities.
+    messages: list[tuple[str, str, str]]
 
 
 def private_markers(exclude_text: str, gitignore_text: str) -> list[str]:
-    """Entries of .git/info/exclude that .gitignore does not also hold, without the slashes."""
-    ignored = {line.strip().strip("/") for line in gitignore_text.splitlines()}
+    """Entries of .git/info/exclude that .gitignore does not also hold, without the slashes.
+
+    A .gitignore entry `**/x` (x in any folder) also holds the entry `x`.
+    """
+    ignored = {line.strip().removeprefix("**/").strip("/") for line in gitignore_text.splitlines()}
     markers: list[str] = []
     for raw in exclude_text.splitlines():
         line = raw.strip()
@@ -85,7 +111,7 @@ def check_paths(
         basename = path.rsplit("/", 1)[-1]
         if basename.startswith(".env") and basename != ".env.example":
             findings.append(Finding("paths", path, "env file"))
-        elif path == ".claude/settings.local.json" or path.startswith(".claude/worktrees/"):
+        elif _MACHINE_LOCAL.search(path):
             findings.append(Finding("paths", path, "machine-local Claude Code file"))
         elif path.split("/", 1)[0] not in allowed_top:
             findings.append(Finding("paths", path, "top-level entry is not in the allowlist"))
@@ -126,16 +152,6 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
-def _file_chunks(short: str, diff: str) -> list[tuple[str, str]]:
-    chunks: list[tuple[str, str]] = []
-    for part in _DIFF_HEADER.split(diff)[1:]:
-        header = part.split("\n", 1)[0]
-        match = _SAME_PATH.fullmatch(header)
-        name = match["p"] if match else header
-        chunks.append((f"commit {short} · {name}", part))
-    return chunks
-
-
 def _binary_files(repo: Path) -> list[str]:
     """Where git still sees a binary blob (numstat prints '-' for it), as 'commit sha · path'."""
     log = _git(
@@ -162,99 +178,208 @@ def _binary_files(repo: Path) -> list[str]:
     return found
 
 
+def names_by_commit(repo: Path, nonce: str) -> dict[str, list[str]]:
+    """Each commit's file names, unquoted, in the order `git log -p` prints their diffs.
+
+    A type change (a link that becomes a file) prints two diffs, so its name is listed twice.
+    """
+    head = f"\x1e{nonce}"
+    log = _git(repo, "log", "--all", *_DIFF_OPTIONS, "--name-status", "-z", f"--format={head}%H")
+    found: dict[str, list[str]] = {}
+    names: list[str] = []
+    # With -z, entries end in NUL and names are not quoted; a name is never stripped.
+    entries = iter(log.split("\0"))
+    for entry in entries:
+        field = entry.removeprefix("\n")
+        if field.startswith(head):
+            names = found.setdefault(field[len(head) :], [])
+        elif _STATUS.fullmatch(field):
+            name = next(entries, None)
+            if name is None:
+                raise OSError("git listed a change without a file name")
+            names += [name, name] if field == "T" else [name]
+        elif field:
+            raise OSError("git listed the changed files in an unexpected form")
+    return found
+
+
+def _tags(repo: Path, nonce: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    """Chunks for every tag's name and, for an annotated tag, its message and tagger."""
+    sep = f"\x1f{nonce}"
+    fields = ("%(objecttype)", "%(objectname)", "%(refname)", "%(taggername) %(taggeremail)")
+    fmt = f"%1e{nonce}" + "".join(f"{field}%1f{nonce}" for field in fields) + "%(contents)"
+    listing = _git(repo, "for-each-ref", f"--format={fmt}", "refs/tags")
+    chunks: list[tuple[str, str]] = []
+    messages: list[tuple[str, str, str]] = []
+    for entry in listing.split(f"\x1e{nonce}")[1:]:
+        parts = entry.split(sep)
+        if len(parts) != len(fields) + 1:
+            raise OSError("git printed a tag in an unexpected form")
+        kind, sha, ref, tagger, contents = parts
+        short = f"tag {sha[:7]}"
+        # The label never holds the tag's name, so a word in it is never printed.
+        chunks.append((f"{short} · name", ref.removeprefix("refs/tags/")))
+        if kind == "tag":
+            chunks.append((f"{short} · message", contents))
+            chunks.append((f"{short} · tagger", tagger))
+            messages.append((f"tag-{sha}.txt", f"{short} · message", f"{tagger}\n\n{contents}"))
+    return chunks, messages
+
+
 def read_history(repo: Path) -> History:
-    """Paths ever committed, and one chunk per message, person and file diff."""
-    names = _git(
-        repo,
-        "log",
-        "--all",
-        "--diff-merges=first-parent",
-        "--no-renames",
-        "--name-only",
-        "--format=",
-        "-z",
-    )
-    paths = {name.strip("\n") for name in names.split("\0") if name.strip("\n")}
-    fmt = "%x1e%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1f"
+    """Paths ever committed, and one chunk per message, person, file diff and tag."""
+    # A random marker per run ends each field, so no message or name can imitate one.
+    nonce = secrets.token_hex(16)
+    names = names_by_commit(repo, nonce)
+    paths = {name for found in names.values() for name in found}
+    sep = f"\x1f{nonce}"
+    fields = ("%H", "%an", "%ae", "%cn", "%ce", "%B")
     log = _git(
         repo,
         "log",
         "--all",
         "-p",
         "--text",
-        "--diff-merges=first-parent",
-        "--no-color",
-        "--no-renames",
-        "--no-ext-diff",
-        "--no-textconv",
-        f"--format={fmt}",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        *_DIFF_OPTIONS,
+        "--format=" + f"%x1e{nonce}" + "".join(f"{field}%x1f{nonce}" for field in fields),
     )
     chunks: list[tuple[str, str]] = []
-    short = "commit ?"
-    for entry in _COMMIT_START.split(log)[1:] if log else []:
-        parts = entry.split("\x1f", 5)
-        if len(parts) < 6:
-            # A message that imitates a commit header: scan it as message text.
-            chunks.append((f"{short} · message", entry))
-            continue
-        sha, author, author_email, committer, committer_email, rest = parts
+    unpaired: list[str] = []
+    messages: list[tuple[str, str, str]] = []
+    for entry in log.split(f"\x1e{nonce}")[1:]:
+        parts = entry.split(sep)
+        if len(parts) != len(fields) + 1:
+            raise OSError("git printed a commit in an unexpected form")
+        sha, author, author_email, committer, committer_email, message, diff = parts
         short = f"commit {sha[:7]}"
-        header = _DIFF_HEADER.search(rest)
-        before, diff = (rest[: header.start()], rest[header.start() :]) if header else (rest, "")
-        chunks.append((f"{short} · message", before))
+        chunks.append((f"{short} · message", message))
         chunks.append((f"{short} · author", f"{author} {author_email}"))
         chunks.append((f"{short} · committer", f"{committer} {committer_email}"))
-        chunks += _file_chunks(sha[:7], diff)
-    return History(paths, chunks, _binary_files(repo))
+        people = f"{author} {author_email}\n{committer} {committer_email}"
+        messages.append((f"{sha}.txt", f"{short} · message", f"{people}\n\n{message}"))
+        # Labels come from the unquoted file list: a diff header C-quotes odd names.
+        files = _DIFF_HEADER.split(diff)[1:]
+        labels = names.get(sha, [])
+        if len(labels) != len(files):
+            unpaired.append(short)
+            labels = [HIDDEN] * len(files)
+        chunks += [(f"{short} · {label}", part) for label, part in zip(labels, files, strict=True)]
+    tag_chunks, tag_messages = _tags(repo, nonce)
+    return History(
+        paths, chunks + tag_chunks, _binary_files(repo), unpaired, messages + tag_messages
+    )
 
 
-def _gitleaks_binary() -> str | None:
-    found = shutil.which("gitleaks")
-    if found:
-        return found
-    local = HERE.parent / ".tools" / "bin" / "gitleaks"
-    return str(local) if local.is_file() else None
+def pinned_gitleaks_version() -> str:
+    """The version scripts/gitleaks.pin names; install-tools.sh reads the same file."""
+    for line in GITLEAKS_PIN.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "GITLEAKS_VERSION":
+            return value.strip()
+    raise ValueError("the gitleaks pin names no version")
 
 
-def run_gitleaks(repo: Path) -> list[Finding]:
-    binary = _gitleaks_binary()
+def gitleaks_binary() -> str | None:
+    """The pinned gitleaks in .tools/bin, else one on PATH (its version is checked before use)."""
+    if PINNED_GITLEAKS.is_file():
+        return str(PINNED_GITLEAKS)
+    return shutil.which("gitleaks")
+
+
+def _gitleaks_env() -> dict[str, str]:
+    """The environment without GITLEAKS_* settings (GITLEAKS_CONFIG would replace the rules)."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
+
+
+def _gitleaks_scan(binary: str, work: Path, *target: str) -> list[Any] | Finding:
+    """The leaks gitleaks reports for one target, or the finding that says it failed."""
+    report = work / "report.json"
+    report.unlink(missing_ok=True)
+    result = subprocess.run(  # noqa: S603
+        [
+            binary,
+            *target,
+            "--config",
+            str(work / "gitleaks.toml"),
+            "--gitleaks-ignore-path",
+            str(work / "no-ignore-file"),
+            "--redact",
+            "--no-banner",
+            "--no-color",
+            "--exit-code",
+            "2",
+            "--report-format",
+            "json",
+            "--report-path",
+            str(report),
+        ],
+        capture_output=True,
+        check=False,
+        cwd=work,
+        env=_gitleaks_env(),
+    )
+    if result.returncode == 0:
+        return []
+    failed = Finding("secrets", "gitleaks", f"gitleaks failed (exit {result.returncode})")
+    if result.returncode != 2 or not report.is_file():
+        return failed
+    leaks: list[Any] = json.loads(report.read_text(encoding="utf-8"))
+    return leaks or failed
+
+
+def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> list[Finding]:
+    """gitleaks over every commit's diff, then over the messages and identities it never reads."""
+    binary = gitleaks_binary()
     if binary is None:
         return [Finding("secrets", "gitleaks", "gitleaks not found: run make tools")]
+    try:
+        pinned = pinned_gitleaks_version()
+        # gitleaks also reads a .gitleaksignore at the folder it scans, whatever
+        # --gitleaks-ignore-path says, so the scan starts in the git folder, not the work tree.
+        git_dir = _git(repo, "rev-parse", "--absolute-git-dir").strip()
+    except (OSError, ValueError):
+        return [Finding("secrets", "gitleaks", "cannot read the gitleaks pin or the git folder")]
+    version = subprocess.run(  # noqa: S603
+        [binary, "version"], capture_output=True, check=False, env=_gitleaks_env()
+    )
+    if version.returncode != 0 or version.stdout.decode(errors="replace").strip() != pinned:
+        return [Finding("secrets", "gitleaks", "not the pinned gitleaks: run make tools")]
     with tempfile.TemporaryDirectory() as tmp:
-        report = Path(tmp) / "report.json"
-        result = subprocess.run(  # noqa: S603
-            [
-                binary,
-                "git",
-                "--redact",
-                "--no-banner",
-                "--no-color",
-                "--exit-code",
-                "2",
-                "--report-format",
-                "json",
-                "--report-path",
-                str(report),
-                str(repo),
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            return []
-        failed = [Finding("secrets", "gitleaks", f"gitleaks failed (exit {result.returncode})")]
-        if result.returncode != 2 or not report.is_file():
-            return failed
-        leaks = json.loads(report.read_text(encoding="utf-8"))
-        if not leaks:
-            return failed
-    return [
+        work = Path(tmp)
+        (work / "gitleaks.toml").write_text(GITLEAKS_CONFIG, encoding="utf-8")
+        (work / "no-ignore-file").mkdir()
+        folder = work / "messages"
+        folder.mkdir()
+        label_of: dict[str, str] = {}
+        for name, label, text in messages:
+            (folder / name).write_text(text, encoding="utf-8")
+            label_of[name] = label
+
+        found = _gitleaks_scan(binary, work, "git", git_dir)
+        if isinstance(found, Finding):
+            return [found]
+        findings = [
+            Finding(
+                "secrets",
+                f"commit {str(leak.get('Commit', ''))[:7]} · {leak.get('File', '')}",
+                str(leak.get("RuleID", "secret")),
+            )
+            for leak in found
+        ]
+        if not messages:
+            return findings
+        found = _gitleaks_scan(binary, work, "dir", str(folder))
+        if isinstance(found, Finding):
+            return [*findings, found]
+    return findings + [
         Finding(
             "secrets",
-            f"commit {str(leak.get('Commit', ''))[:7]} · {leak.get('File', '')}",
+            label_of.get(Path(str(leak.get("File", ""))).name, "a message"),
             str(leak.get("RuleID", "secret")),
         )
-        for leak in leaks
+        for leak in found
     ]
 
 
@@ -271,6 +396,17 @@ def read_markers(repo: Path) -> list[str]:
     ignore = repo / ".gitignore"
     ignore_text = ignore.read_text(encoding="utf-8") if ignore.is_file() else ""
     return private_markers(exclude_text, ignore_text)
+
+
+def load_markers(repo: Path) -> tuple[list[str], list[Finding]]:
+    """The private markers, or the one finding that says why they can't be read."""
+    try:
+        return read_markers(repo), []
+    except UnicodeDecodeError:
+        reason = "not UTF-8 text"
+    except OSError as exc:
+        reason = exc.strerror or "unreadable"
+    return [], _fail("markers", "private markers", f"cannot read the exclude file: {reason}")
 
 
 def _fail(check: Check, where: str, detail: str) -> list[Finding]:
@@ -308,7 +444,7 @@ def hide_if_private(name: str, hashes: Sequence[str], markers: Sequence[str]) ->
 
 def scrub(where: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
     head, sep, name = where.partition(" · ")
-    if not sep or name in {"message", "author", "committer"}:
+    if not sep or name in {"message", "author", "committer", "tagger", "name"}:
         return where
     return f"{head}{sep}{hide_if_private(name, hashes, markers)}"
 
@@ -318,26 +454,21 @@ def main(argv: list[str] | None = None) -> int:
         description="Scan the git history before the repo goes public."
     )
     parser.add_argument("--repo", type=Path, default=Path.cwd())
-    repo: Path = parser.parse_args(argv).repo.resolve()
-    local = not os.environ.get("CI")
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="CI mode: skip the private word list and the marker text scan (no list in CI)",
+    )
+    args = parser.parse_args(argv)
+    repo: Path = args.repo.resolve()
+    local = not args.ci
 
     hashes: list[str] = []
-    markers: list[str] = []
     word_problem: list[Finding] = []
-    marker_problem: list[Finding] = []
     if local:
         hashes, word_problem = load_private_hashes(repo)
-        try:
-            markers = read_markers(repo)
-        except UnicodeDecodeError:
-            marker_problem = _fail(
-                "markers", "private markers", "cannot read the exclude file: not UTF-8 text"
-            )
-        except OSError as exc:
-            reason = exc.strerror or "unreadable"
-            marker_problem = _fail(
-                "markers", "private markers", f"cannot read the exclude file: {reason}"
-            )
+    # Markers hide labels in every mode (a CI checkout's exclude file holds none).
+    markers, marker_problem = load_markers(repo)
 
     try:
         history = read_history(repo)
@@ -347,32 +478,42 @@ def main(argv: list[str] | None = None) -> int:
     allowed = read_allowlist()
 
     secrets_found = [
-        Finding(f.check, scrub(f.where, hashes, markers), f.detail) for f in run_gitleaks(repo)
+        Finding(f.check, scrub(f.where, hashes, markers), f.detail)
+        for f in run_gitleaks(repo, history.messages)
     ]
     paths_found = check_paths(history.paths, allowed, markers)
     paths_found = [
         Finding(f.check, hide_if_private(f.where, hashes, markers), f.detail) for f in paths_found
     ]
-    words_found: list[Finding] = list(word_problem) + list(marker_problem)
+    words_found: list[Finding] = list(word_problem)
     if local:
         words_found += [
             Finding("words", scrub(where, hashes, markers), "binary file not scanned")
             for where in history.binaries
         ]
+        words_found += [
+            Finding("words", where, "file names and diff do not line up: names hidden")
+            for where in history.unpaired
+        ]
+        # The diff headers C-quote odd names (a tab, a quote), which hides a word in them.
+        for path in sorted(history.paths):
+            words_found += check_text(HIDDEN, path, hashes, [])
         for where, text in history.chunks:
             found = check_text(scrub(where, hashes, markers), text, hashes, markers)
             words_found += found
 
-    sections: list[tuple[str, list[Finding]]] = [
-        ("secrets", secrets_found),
-        ("paths", [f for f in paths_found if f.check == "paths"]),
-    ]
-    marker_paths = [f for f in paths_found if f.check == "markers"]
+    marker_paths = marker_problem + [f for f in paths_found if f.check == "markers"]
+    paths_only = [f for f in paths_found if f.check == "paths"]
+    sections: list[tuple[str, list[Finding]]] = [("secrets", secrets_found)]
     if local:
+        sections.append(("paths", paths_only))
         sections.append(("words", [f for f in words_found if f.check == "words"]))
         sections.append(
             ("markers", marker_paths + [f for f in words_found if f.check == "markers"])
         )
+    else:
+        # The text scan is skipped, but a marker path (hidden) still fails the paths check.
+        sections.append(("paths", paths_only + marker_paths))
     total = sum(len(found) for _, found in sections)
     for name, found in sections:
         ok = (

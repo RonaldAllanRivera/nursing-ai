@@ -1,6 +1,7 @@
 """`make public-check` scans the whole history without ever printing a private word."""
 
 import os
+import re
 import secrets
 import string
 import subprocess
@@ -51,7 +52,6 @@ def commit(
 
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
     path = tmp_path / "repo"
     path.mkdir()
@@ -62,9 +62,9 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
-def head(repo: Path) -> str:
-    done = subprocess.run(
-        ["git", "rev-parse", "--short=7", "HEAD"],  # noqa: S607
+def head(repo: Path, ref: str = "HEAD") -> str:
+    done = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--short=7", ref],  # noqa: S607
         cwd=repo,
         check=True,
         capture_output=True,
@@ -73,14 +73,19 @@ def head(repo: Path) -> str:
     return done.stdout.strip()
 
 
+def ghp_token() -> str:
+    """A GitHub token shape built at run time, so no test file holds one."""
+    return "ghp_" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(36))
+
+
 def word_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *words: str) -> None:
     path = tmp_path / "words.sha256"
     path.write_text("".join(f"{hash_word(w)}\n" for w in words))
     monkeypatch.setenv("PRIVATE_WORDS_FILE", str(path))
 
 
-def run(repo: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
-    code = main(["--repo", str(repo)])
+def run(repo: Path, capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, str]:
+    code = main(["--repo", str(repo), *flags])
     captured = capsys.readouterr()
     return code, captured.out + captured.err
 
@@ -111,12 +116,9 @@ def test_secret_in_history_fails(
     assert out.rstrip().splitlines()[-1].startswith("public-check: FAIL (")
 
 
-def test_unknown_top_level_path_fails(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setenv("CI", "1")
+def test_unknown_top_level_path_fails(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     commit(repo, {"NOTES.md": "hello\n"})
-    code, out = run(repo, capsys)
+    code, out = run(repo, capsys, "--ci")
     assert code == 1
     assert "NOTES.md" in out
 
@@ -134,26 +136,39 @@ def test_unknown_top_level_path_fails(
 )
 def test_env_files_fail_except_example(
     repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     path: str,
     fails: bool,
 ) -> None:
-    monkeypatch.setenv("CI", "1")
     commit(repo, {path: "X=1\n"})
-    code, out = run(repo, capsys)
+    code, out = run(repo, capsys, "--ci")
     assert (code == 1) is fails
     assert ("env file" in out) is fails
 
 
-def test_settings_local_json_fails(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setenv("CI", "1")
+def test_settings_local_json_fails(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     commit(repo, {".claude/settings.local.json": "{}\n", ".claude/worktrees/a/x.txt": "x\n"})
-    code, out = run(repo, capsys)
+    code, out = run(repo, capsys, "--ci")
     assert code == 1
     assert out.count("machine-local") == 2
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".claude/settings.local.json",
+        ".claude/worktrees/a/x.txt",
+        "web/.claude/settings.local.json",
+        "web/.claude/worktrees/x/y",
+    ],
+)
+def test_machine_local_claude_files_fail_anywhere(
+    repo: Path, capsys: pytest.CaptureFixture[str], path: str
+) -> None:
+    commit(repo, {path: "x\n"})
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert f"{path}: machine-local Claude Code file" in out
 
 
 def test_marker_path_fails(
@@ -181,6 +196,12 @@ def test_marker_text_fails(
 def test_private_markers_skip_gitignore_entries() -> None:
     exclude = "# c\n\n/secret-notes/\n/shared/\nthing\n"
     assert private_markers(exclude, "shared/\n.env*\n") == ["secret-notes", "thing"]
+
+
+def test_private_markers_skip_entries_gitignore_holds_in_any_folder() -> None:
+    exclude = "/.claude/worktrees/\n.claude/settings.local.json\n/secret-notes/\n"
+    gitignore = "**/.claude/settings.local.json\n**/.claude/worktrees/\n"
+    assert private_markers(exclude, gitignore) == ["secret-notes"]
 
 
 def test_tokens_split_emails_and_letter_runs() -> None:
@@ -276,14 +297,33 @@ def test_empty_word_list_fails_locally(
     assert "run make private-words" in out
 
 
-def test_ci_mode_says_words_skipped(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setenv("CI", "1")
-    code, out = run(repo, capsys)
+def test_ci_mode_says_words_skipped(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    code, out = run(repo, capsys, "--ci")
     assert code == 0
     assert "words: SKIPPED (local only)" in out
     assert "markers: SKIPPED (local only)" in out
+
+
+def test_ci_mode_hides_marker_paths(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    token = ghp_token()
+    commit(repo, {"secret-notes/todo.txt": f'TOKEN = "{token}"\n'})
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert "private marker #1" in out
+    assert "(path hidden): github-pat" in out
+    assert "secret-notes" not in out.casefold()
+    assert token not in out
+    assert "words: SKIPPED (local only)" in out
+
+
+def test_ci_variable_alone_never_skips_the_words(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CI", "true")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "run make private-words" in out
+    assert "SKIPPED" not in out
 
 
 def test_word_list_that_is_a_folder_leaks_no_path(
@@ -317,21 +357,19 @@ def test_missing_gitleaks_says_run_make_tools(
 ) -> None:
     import public_check
 
-    monkeypatch.setenv("CI", "1")
-    monkeypatch.setattr(public_check, "_gitleaks_binary", lambda: None)
-    code, out = run(repo, capsys)
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: None)
+    code, out = run(repo, capsys, "--ci")
     assert code == 1
     assert "gitleaks not found: run make tools" in out
 
 
 def test_history_on_an_empty_repo_is_fine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("CI", "1")
     empty = tmp_path / "empty"
     empty.mkdir()
     git(empty, "init", "-q")
-    code, _ = run(empty, capsys)
+    code, _ = run(empty, capsys, "--ci")
     assert code == 0
 
 
@@ -426,17 +464,9 @@ def test_gitleaks_error_or_empty_report_fails(
 ) -> None:
     import public_check
 
-    fake = tmp_path / "fake-gitleaks"
-    fake.write_text(
-        "#!/bin/sh\n"
-        'while [ $# -gt 0 ]; do\n  if [ "$1" = --report-path ]; then printf "[]" > "$2"; fi\n'
-        "  shift\ndone\n"
-        f"exit {exit_code}\n"
-    )
-    fake.chmod(0o755)
-    monkeypatch.setenv("CI", "1")
-    monkeypatch.setattr(public_check, "_gitleaks_binary", lambda: str(fake))
-    code, out = run(repo, capsys)
+    fake = fake_gitleaks(tmp_path, public_check.pinned_gitleaks_version(), exit_code)
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys, "--ci")
     assert code == 1
     assert "secrets: 1 finding(s)" in out
     assert "gitleaks" in out
@@ -447,14 +477,29 @@ def test_gitleaks_error_exit_says_failed(
 ) -> None:
     import public_check
 
-    fake = tmp_path / "fake-gitleaks"
-    fake.write_text("#!/bin/sh\nexit 1\n")
-    fake.chmod(0o755)
-    monkeypatch.setenv("CI", "1")
-    monkeypatch.setattr(public_check, "_gitleaks_binary", lambda: str(fake))
-    code, out = run(repo, capsys)
+    fake = fake_gitleaks(tmp_path, public_check.pinned_gitleaks_version(), 1)
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys, "--ci")
     assert code == 1
     assert "gitleaks failed (exit 1)" in out
+
+
+def test_gitleaks_error_on_the_message_scan_fails(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import public_check
+
+    fake = tmp_path / "gitleaks"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$1" = version ]; then echo {public_check.pinned_gitleaks_version()}; fi\n'
+        'if [ "$1" = dir ]; then exit 1; fi\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert "gitleaks: gitleaks failed (exit 1)" in out
 
 
 def test_unit_separator_in_a_message_hides_nothing(
@@ -480,7 +525,6 @@ def test_fake_commit_header_in_a_message_does_not_crash(
 def test_root_commit_is_scanned_even_if_show_root_is_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("CI", raising=False)
     word_list(tmp_path, monkeypatch, CANARY)
     root = tmp_path / "rooted"
     root.mkdir()
@@ -513,12 +557,260 @@ def test_committer_only_listed_email_is_caught(
     assert "author:" not in out
 
 
-def test_missing_repo_path_is_never_printed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_word_only_in_a_tab_path_fails(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("CI", "1")
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {f"core/\t{CANARY}.py": "x = 1\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+    assert CANARY not in out.casefold()
+
+
+def test_tab_path_with_another_finding_never_prints_the_word(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {f"core/\t{CANARY}.py": f"# {CANARY}\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+    assert CANARY not in out.casefold()
+
+
+def test_labels_ignore_diff_noprefix(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    git(repo, "config", "diff.noprefix", "true")
+    commit(repo, {"core/a.py": f"# {CANARY}\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"commit {head(repo)} · core/a.py: private word #1" in out
+
+
+def test_diff_line_in_a_message_keeps_the_labels(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {"core/a.py": "x = 1\n"}, message=f"subject\n\ndiff --git a/x b/x\n{CANARY}\n")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"commit {head(repo)} · message: private word #1" in out
+    assert "· x:" not in out
+
+
+def test_type_change_keeps_the_labels(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    (repo / "core").mkdir()
+    (repo / "core" / "link").symlink_to("target")
+    commit(repo, {"core/a.py": "x = 1\n"})
+    git(repo, "add", "core/link")
+    git(repo, "commit", "-q", "-m", "add a link")
+    (repo / "core" / "link").unlink()
+    commit(repo, {"core/link": f"# {CANARY}\n"}, message="the link becomes a file")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"commit {head(repo)} · core/link: private word #1" in out
+    assert "do not line up" not in out
+
+
+def test_file_list_and_diff_that_disagree_fail_closed(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import public_check
+
+    word_list(tmp_path, monkeypatch, CANARY)
+    commit(repo, {"core/a.py": f"# {CANARY}\n", "core/b.py": "y = 2\n"})
+    real = public_check.names_by_commit
+
+    def one_name_short(repo: Path, nonce: str) -> dict[str, list[str]]:
+        return {sha: names[1:] for sha, names in real(repo, nonce).items()}
+
+    monkeypatch.setattr(public_check, "names_by_commit", one_name_short)
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"commit {head(repo)} · (path hidden): private word #1" in out
+    assert f"commit {head(repo)}: file names and diff do not line up" in out
+    assert "core/a.py" not in out
+
+
+def test_secret_only_in_a_commit_message_fails(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    token = ghp_token()
+    commit(repo, {"core/a.py": "x = 1\n"}, message=f"add a\n\nused {token} here")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"commit {head(repo)} · message: github-pat" in out
+    assert token not in out
+
+
+@pytest.mark.parametrize(("place", "entry"), [("message", 1), ("tagger", 2)])
+def test_listed_word_in_a_tag_is_caught(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    place: str,
+    entry: int,
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY, LISTED_EMAIL)
+    if place == "message":
+        git(repo, "tag", "-a", "v0.1.0", "-m", f"release for {CANARY}")
+    else:
+        git(repo, "tag", "-a", "v0.1.0", "-m", "release", committer=("Someone", LISTED_EMAIL))
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"tag {head(repo, 'v0.1.0')} · {place}: private word #{entry}" in out
+    assert CANARY not in out.casefold()
+    assert LISTED_EMAIL not in out
+
+
+def test_listed_word_in_a_tag_name_is_caught_and_hidden(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    git(repo, "tag", f"{CANARY}-build")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"tag {head(repo)} · name: private word #1" in out
+    assert CANARY not in out.casefold()
+
+
+def test_secret_only_in_a_tag_message_fails(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    token = ghp_token()
+    git(repo, "tag", "-a", "v0.1.0", "-m", f"release {token}")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert f"tag {head(repo, 'v0.1.0')} · message: github-pat" in out
+    assert token not in out
+
+
+ALLOW_ALL = "[allowlist]\nregexes = ['''.*''']\n"
+
+
+def committed_leak(repo: Path) -> str:
+    token = ghp_token()
+    commit(repo, {"core/leak.py": f'TOKEN = "{token}"\n'})
+    return token
+
+
+def assert_leak_found(out: str, token: str) -> None:
+    assert "core/leak.py: github-pat" in out
+    assert token not in out
+    assert out.rstrip().splitlines()[-1].startswith("public-check: FAIL (")
+
+
+def test_untracked_gitleaks_config_cannot_hide_a_leak(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    token = committed_leak(repo)
+    (repo / ".gitleaks.toml").write_text(ALLOW_ALL)
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert_leak_found(out, token)
+
+
+def test_untracked_gitleaksignore_cannot_hide_a_leak(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    token = committed_leak(repo)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (repo / ".gitleaksignore").write_text(f"{sha}:core/leak.py:github-pat:1\n")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert_leak_found(out, token)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"), [("GITLEAKS_CONFIG", os.devnull), ("GITLEAKS_CONFIG_TOML", ALLOW_ALL)]
+)
+def test_gitleaks_config_variables_cannot_hide_a_leak(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+    value: str,
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    token = committed_leak(repo)
+    monkeypatch.setenv(name, value)
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert_leak_found(out, token)
+
+
+def fake_gitleaks(tmp_path: Path, version: str, exit_code: int = 0) -> Path:
+    """A stand-in gitleaks that prints `version`, writes an empty report and exits."""
+    fake = tmp_path / "fake-bin" / "gitleaks"
+    fake.parent.mkdir(exist_ok=True)
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$1" = version ]; then echo {version}; exit 0; fi\n'
+        'while [ $# -gt 0 ]; do\n  if [ "$1" = --report-path ]; then printf "[]" > "$2"; fi\n'
+        "  shift\ndone\n"
+        f"exit {exit_code}\n"
+    )
+    fake.chmod(0o755)
+    return fake
+
+
+def test_pinned_gitleaks_wins_over_one_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import public_check
+
+    fake = fake_gitleaks(tmp_path, public_check.pinned_gitleaks_version())
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+    assert public_check.PINNED_GITLEAKS.is_file(), "run make tools"
+    assert public_check.gitleaks_binary() == str(public_check.PINNED_GITLEAKS)
+
+
+def test_unpinned_gitleaks_version_fails(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import public_check
+
+    fake = fake_gitleaks(tmp_path, "8.0.0")
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    word_list(tmp_path, monkeypatch, CANARY)
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "gitleaks: not the pinned gitleaks: run make tools" in out
+
+
+def test_install_script_reads_the_one_pin() -> None:
+    import public_check
+
+    script = (public_check.HERE / "install-tools.sh").read_text(encoding="utf-8")
+    version = public_check.pinned_gitleaks_version()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
+    assert version not in script
+    assert public_check.GITLEAKS_PIN.name in script
+
+
+def test_missing_repo_path_is_never_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     missing = tmp_path / "no-such-repo-dir"
-    code, out = run(missing, capsys)
+    code, out = run(missing, capsys, "--ci")
     assert code != 0
     assert "no-such-repo-dir" not in out
     assert str(tmp_path) not in out

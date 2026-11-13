@@ -172,7 +172,10 @@ def test_add_words_dedupes_lines_already_in_the_file(tmp_path: Path) -> None:
     assert path.read_text().splitlines() == [h, privacy_words.hash_word("beta")]
 
 
-REFUSAL = "That entry can't be matched as one word (letters only, or a whole email): not saved."
+REFUSAL = (
+    "That entry can't be matched as one word (letters only, or a whole email): not saved."
+    " Type each part of a hyphenated name separately."
+)
 UNMATCHABLE = ["mary-ann", "o'brien", "st4luke", "two words"]
 
 

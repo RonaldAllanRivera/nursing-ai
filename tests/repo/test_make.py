@@ -98,3 +98,8 @@ def test_setup_installs_python_web_tools_and_hooks_in_order() -> None:
     assert steps[2] == "pnpm -C web exec playwright install chromium"
     assert any("install-tools" in step for step in steps[3:])
     assert steps[-1].endswith("pre-commit install")
+
+
+def test_only_public_check_ci_passes_the_ci_flag() -> None:
+    assert run_make("-n", "public-check-ci").stdout.split()[-1] == "--ci"
+    assert "--ci" not in run_make("-n", "public-check").stdout

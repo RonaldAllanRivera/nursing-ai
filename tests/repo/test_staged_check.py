@@ -231,3 +231,19 @@ def test_staged_path_with_a_word_refused(
     assert code == 1
     assert "(path hidden): private word #1" in out
     assert CANARY not in out.casefold()
+
+
+def test_type_change_with_a_word_refused(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, CANARY)
+    (repo / "core").mkdir()
+    (repo / "core" / "link").symlink_to("target")
+    git(repo, "add", "core/link")
+    git(repo, "commit", "-q", "-m", "add a link")
+    (repo / "core" / "link").unlink()
+    stage(repo, {"core/link": f"# {CANARY}\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "core/link: private word #1" in out
+    assert CANARY not in out.casefold()

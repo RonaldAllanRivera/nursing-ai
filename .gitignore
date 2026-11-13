@@ -24,6 +24,6 @@ web/test-results/
 .env*
 !.env.example
 
-# Machine-local Claude Code settings and parallel-chat worktrees
-.claude/settings.local.json
-.claude/worktrees/
+# Machine-local Claude Code settings and parallel-chat worktrees, in any folder
+**/.claude/settings.local.json
+**/.claude/worktrees/

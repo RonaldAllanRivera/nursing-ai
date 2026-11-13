@@ -40,3 +40,10 @@ def test_public_check_job_reads_full_history() -> None:
     job = _load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]["public-check"]
     checkout = next(s for s in job["steps"] if s["uses"].startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
+
+
+def test_public_check_job_runs_the_ci_mode() -> None:
+    job = _load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]["public-check"]
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+    assert "make public-check-ci" in runs
+    assert "make public-check" not in runs

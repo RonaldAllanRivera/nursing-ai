@@ -39,23 +39,36 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
+# The same options for the file list and the diff, so both list the same files in the same
+# order. T: a type change, such as a link replaced by a file.
+_STAGED = (
+    "diff",
+    "--cached",
+    "--no-renames",
+    "--diff-filter=ACMRT",
+    "--no-relative",
+    "-O/dev/null",
+)
+
+
+def _staged_changes(repo: Path) -> list[tuple[str, str]]:
+    """(status, path) for every staged change; with -z the paths are not quoted."""
+    fields = _git(repo, *_STAGED, "--name-status", "-z").split("\0")
+    return list(zip(fields[0::2], fields[1::2], strict=False))
+
+
 def _staged_paths(repo: Path) -> list[str]:
-    names = _git(
-        repo, "diff", "--cached", "--no-renames", "--name-only", "--diff-filter=ACMR", "-z"
-    )
-    return [name for name in names.split("\0") if name]
+    return [path for _, path in _staged_changes(repo)]
 
 
 def _added_text(repo: Path) -> list[tuple[str, str]]:
-    """One (path, added lines) pair per staged file; removed and context lines are left out."""
-    diff = _git(
-        repo,
-        *("diff", "--cached", "-U0", "--no-color", "--text", "--no-ext-diff", "--no-textconv"),
-        *("--no-renames", "--diff-filter=ACMR"),
-    )
-    # Same filter and order as _staged_paths, so the names come from there: a diff header
-    # C-quotes odd names and would print them.
-    names = _staged_paths(repo)
+    """One (path, added lines) pair per file diff; removed and context lines are left out."""
+    diff = _git(repo, *_STAGED, "-U0", "--no-color", "--text", "--no-ext-diff", "--no-textconv")
+    # The names come from the file list: a diff header C-quotes odd names and would print
+    # them. A type change prints two diffs (the old file removed, the new one added).
+    names = [
+        path for status, path in _staged_changes(repo) for _ in range(2 if status == "T" else 1)
+    ]
     parts = _DIFF_HEADER.split(diff)[1:]
     if len(parts) != len(names):
         raise OSError("git listed the staged files twice with different results")

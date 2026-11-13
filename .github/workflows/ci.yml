@@ -93,8 +93,8 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --all-packages
       - run: make tools
-      # GitHub sets CI=true, so only the secret and path checks run here.
-      - run: make public-check
+      # No private word list here, so only the secret and path checks run.
+      - run: make public-check-ci
 
   actionlint:
     runs-on: ubuntu-latest
