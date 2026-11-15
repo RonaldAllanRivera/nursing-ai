@@ -287,7 +287,7 @@ def test_a_slash_then_a_digit_or_a_space_ends_the_unit() -> None:
     assert written is not None
     assert (written.compared, written.rate, written.end) == ("l", (), 7)
     assert [token for token, _ in numbers_in("D5LR 1L/8hrs")] == ["1", "8"]
-    spaced = _written("5 mg / kg", "5")
+    spaced = _written("1 L / 8 hrs", "1")
     assert spaced is not None
     assert spaced.rate == ()
 
@@ -296,3 +296,36 @@ def test_one_letter_shorthand_has_no_unit_at_all() -> None:
     for text, number in [("T 38 c/o chills", "38"), ("2 f/u", "2"), ("5 u/a", "5"), ("1 c/w", "1")]:
         assert _written(text, number) is None, text
     assert _written("1 U/A.", "1") is None
+    assert _written("38 c/d", "38") is None
+    assert _written("2 l/a", "2") is None
+    assert _written("1 g/a", "1") is None
+    assert _written("1 f/h", "1") is None
+
+
+def test_spaces_around_a_slash_and_per_make_a_rate_only_for_known_denominators() -> None:
+    for text, number, rate in [
+        ("5 mcg / kg / min", "5", ("kg", "minute")),
+        ("5 mcg/ kg/ min", "5", ("kg", "minute")),
+        ("1000 units /hr", "1000", ("hour",)),
+        ("1000 units per hour", "1000", ("hour",)),
+        ("5 mcg PER kg per min", "5", ("kg", "minute")),
+        ("2 L/m", "2", ("minute",)),
+        ("5 mg per NGT", "5", ()),
+        ("1 L / 8 hrs", "1", ()),
+        ("1L/D5LR", "1", ()),
+        ("5 mg/dose", "5", ("dose",)),
+    ]:
+        written = _written(text, number)
+        assert written is not None, text
+        assert written.rate == rate, text
+
+
+def test_only_dose_and_volume_units_take_a_rate_in_the_reader() -> None:
+    for text, number in [
+        ("T 37.8C/HR 110", "37.8"),
+        ("BP 120/80 mmHg/HR 80", "80"),
+        ("80 kg/m", "80"),
+    ]:
+        written = _written(text, number)
+        assert written is not None, text
+        assert written.rate == (), text

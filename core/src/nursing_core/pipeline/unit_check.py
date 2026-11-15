@@ -8,11 +8,13 @@ unit ("D5LR", "q4h") belong to a word; "HR121bpm" and "BT37.9C" keep their numbe
 converts units. It only reads the few spellings below, so a unit the nurse didn't write can be
 told apart from one she did.
 
-A unit followed by "/" and letters is a rate: "units/hr" is units per hour and "mcg/kg/min" is mcg
-per kg per minute. Only "/" makes a rate ("per hour" is not read as one), and each denominator is
-kept by meaning ("h", "hr" and "hours" are one). A "/" followed by a digit or a space ends the unit
-("1L/8hrs" is the unit L, then the number 8). A one-letter unit, "/", one letter and then no
-letter or digit is clinical shorthand, not a unit ("c/o", "f/u", "u/a"); "u/h" and "g/d" are rates.
+A dose, volume or drop unit followed by "/" or "per" and a time word or "kg" is a rate: "units/hr"
+and "units per hour" are units per hour, "mcg / kg / min" is mcg per kg per minute. Spaces around
+a "/" are fine. Each denominator is kept by meaning ("h", "hr" and "hours" are one) and must be a
+whole word ("1L/D5LR" has no rate). A "/" followed by a digit ("1L/8hrs", "1 L / 8 hrs") ends the
+unit, and so does "per" and anything else ("5 mg per NGT"). Any other unit followed by "/" is read
+as written with no rate ("37.8C/HR 110"). A one-letter unit, "/" and one more letter is clinical
+shorthand, not a unit ("c/o", "f/u", "u/a"), except "u/h", "L/m" and "g/d", which are rates.
 """
 
 import re
@@ -92,6 +94,8 @@ _COMPARED_UNITS = {
     "l": "l",
     "ml": "ml",
     "cc": "ml",
+    "gtt": "gtt",
+    "gtts": "gtt",
 }
 # The unit spellings the code knows, folded. A letter run right after whole digits that is one of
 # them ("HR121bpm") leaves the digits a number, and a note number followed by one has a unit.
@@ -104,11 +108,14 @@ _UNIT_SPELLINGS = frozenset(
 # Rate denominators compared by meaning. Any other letter run is compared by its folded spelling.
 _DENOMINATORS = {
     **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), "hour"),
-    **dict.fromkeys(("min", "mins", "minute", "minutes"), "minute"),
+    **dict.fromkeys(("m", "min", "mins", "minute", "minutes"), "minute"),
     **dict.fromkeys(("d", "day", "days"), "day"),
     **dict.fromkeys(("kg", "kgs"), "kg"),
 }
-_TIME_LETTERS = "hd"  # the one-letter denominators that make "u/h" and "g/d" rates
+_TEMPERATURE_LETTERS = frozenset("cf")  # "c/o" and "f/u" are shorthand, whatever the letter after
+_RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are rates, "u/a" is not
+_PER = re.compile(r"[ \t]+per[ \t]+", re.IGNORECASE)
+_SLASH = re.compile(r"[ \t]*/[ \t]*")
 type NumberValue = tuple[str | Decimal, ...]
 _WINDOW = 24  # how many typed characters after a number are read for its unit
 
@@ -218,28 +225,44 @@ def written_unit(text: str, number_span: Span) -> WrittenUnit | None:
         return None
     unit, unit_end = (None, number_span.end) if read is None else read
     spelling, spelling_end = (None, number_span.end) if spelled is None else spelled
-    rate, end = _rate_after(text, max(unit_end, spelling_end))
+    compared = None if spelling is None else _COMPARED_UNITS.get(spelling)
+    end = max(unit_end, spelling_end)
+    rate, end = ((), end) if compared is None else _rate_after(text, end)
     return WrittenUnit(
         unit=unit,
-        compared=None if spelling is None else _COMPARED_UNITS.get(spelling),
+        compared=compared,
         rate=rate,
         end=end,
     )
 
 
 def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
-    """What the unit ending at `unit_end` is per ("/hr", "/kg/min"), and where the rate ends."""
+    """What the unit ending at `unit_end` is per ("/hr", " per kg / min"), and where the rate ends.
+
+    Each denominator is a whole word. After a "/" any letter run counts; after "per" only a time
+    word or "kg" does.
+    """
     folded, origin = _fold_after(text, unit_end)
     rate: list[str] = []
     position = 0
-    while folded.startswith("/", position):
-        letters = _LETTERS.match(folded, position + 1)
-        if letters is None:
+    end = unit_end
+    while True:
+        slash = _SLASH.match(folded, position)
+        per = None if slash else _PER.match(folded, position)
+        separator = slash or per
+        letters = None if separator is None else _LETTERS.match(folded, separator.end())
+        if letters is None or folded[letters.end() : letters.end() + 1].isdigit():
             break
         spelling = letters.group().casefold()
-        rate.append(_DENOMINATORS.get(spelling) or _COMPARED_UNITS.get(spelling) or spelling)
-        position = letters.end()
-    return tuple(rate), unit_end if not rate else origin[position - 1] + 1
+        denominator = _DENOMINATORS.get(spelling)
+        if denominator is None and slash:
+            denominator = _COMPARED_UNITS.get(spelling) or spelling
+        if denominator is None:
+            break
+        rate.append(denominator)
+        position = end_in_folded = letters.end()
+        end = origin[end_in_folded - 1] + 1
+    return tuple(rate), end
 
 
 def _spelling_after(text: str, number_span: Span) -> tuple[str, int] | None:
@@ -298,13 +321,23 @@ def _word_ends(folded: str, stop: int) -> bool:
 
 
 def _is_shorthand(folded: str, stop: int) -> bool:
-    """One letter, "/", one letter, then no letter or digit; "u/h" and "g/d" are rates instead."""
-    unit_is_one_letter = folded[stop - 1].isalpha() and not (
-        stop >= 2 and folded[stop - 2].isalpha()
-    )
+    """One-letter unit, "/", one more letter, then no digit: "c/o", "f/u", "u/a".
+
+    After u, l or g the letters h, d and m make a rate instead ("u/h", "g/d", "L/m").
+    """
+    if not _ends_a_one_letter_word(folded, stop):
+        return False
     second = _LETTERS.match(folded, stop + 1)
-    if not unit_is_one_letter or second is None or len(second.group()) != 1:
+    if second is None or len(second.group()) != 1 or folded[second.end() :][:1].isdigit():
         return False
     return (
-        second.group().casefold() not in _TIME_LETTERS and not folded[second.end() :][:1].isdigit()
+        folded[stop - 1].casefold() in _TEMPERATURE_LETTERS
+        or second.group().casefold() not in _RATE_LETTERS
     )
+
+
+def _ends_a_one_letter_word(folded: str, stop: int) -> bool:
+    """Whether the characters just before `stop` are one letter, not the end of a longer word."""
+    last_is_letter = folded[stop - 1].isalpha()
+    letter_before_it = stop >= 2 and folded[stop - 2].isalpha()
+    return last_is_letter and not letter_before_it

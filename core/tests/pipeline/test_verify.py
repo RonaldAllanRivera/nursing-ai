@@ -707,3 +707,52 @@ def test_a_volume_over_hours_is_checked_against_its_written_unit() -> None:
 def test_the_same_rate_in_another_spelling_agrees() -> None:
     for text in ["Heparin 1000 units/h.", "Heparin 1000 units/hr.", "Heparin 1000 U/hours."]:
         assert _rate_status("heparin 1000 units/hr", text).status is LineStatus.SOURCE_FOUND
+
+
+def _flagged_unit(note: str, text: str) -> None:
+    line = _rate_status(note, text)
+    assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+    assert {m.kind for m in line.number_mismatches} == {MismatchKind.UNIT}, (note, text)
+
+
+def test_spaced_and_worded_rates_are_compared_too() -> None:
+    for note, text in [
+        ("dopamine 5 mcg / kg / min", "Dopamine 5 mcg / kg / hr."),
+        ("dopamine 5 mcg/ kg/ min", "Dopamine 5 mcg/ min."),
+        ("heparin 1000 units / hr", "Heparin bolus 1000 units."),
+        ("heparin 1000 units /hr", "Heparin bolus 1000 units."),
+        ("heparin 1000 units per hr", "Heparin 1000 units per min."),
+        ("heparin 1000 units per hour", "Heparin bolus 1000 units."),
+        ("oxygen 2 L/m", "Oxygen at 2 mL/min."),
+    ]:
+        _flagged_unit(note, text)
+
+
+def test_a_worded_rate_equals_the_same_rate_with_slashes() -> None:
+    for note, text in [
+        ("heparin 1000 units per hour", "Heparin 1000 units/hr."),
+        ("dopamine 5 mcg per kg per min", "Dopamine 5 mcg/kg/min."),
+        ("dopamine 5 mcg/kg per MIN", "Dopamine 5 mcg / kg / min."),
+        ("D5LR 1 L / 8 hrs", "D5LR 1 L over 8 hrs."),
+        ("oxycodone 5 mg per NGT", "Oxycodone 5 mg via NGT."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_only_dose_and_volume_units_take_a_rate() -> None:
+    for note, text in [
+        ("T 37.8C/HR 110/RR 22", "Temperature 37.8 °C."),
+        ("BP 120/80 mmHg/HR 80", "BP 120/80 mmHg."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_drops_are_compared_and_gtt_equals_gtts() -> None:
+    _flagged_unit("IVF 30 mL/hr", "IVF 30 gtts/hr.")
+    _flagged_unit("30gtts/min", "30 gtt/hr.")
+    assert _rate_status("30gtts/min", "30 gtt/min.").status is LineStatus.SOURCE_FOUND
+
+
+def test_a_rate_on_the_line_alone_keeps_the_facility_default_rule() -> None:
+    line = _check("heparin 1000 at noon", "Heparin 1000 mL/hr.", ["heparin 1000"])
+    assert line.status is LineStatus.SOURCE_FOUND
