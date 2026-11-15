@@ -8,6 +8,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 
 ## [Unreleased]
 
+### Added
+
+- The core draft pipeline, which turns a rough note into an FDAR draft and checks every line
+  against the nurse's words. Known names and identifiers become tokens before any AI call, and the
+  call stops if one survives. Each quoted phrase must appear in the note character for character,
+  never inside a longer word or number. Lines whose quotes, numbers, doses or units don't match
+  the note are flagged. A missing-items list names what the chart expects but the shift's notes
+  don't mention. Fake, replay and Anthropic providers come with the first FDAR prompt, the pipeline
+  reproduces all three demo drafts and checklists exactly, and a decision record explains why it
+  uses structured output instead of the Citations API.
+- The web app, built against a mock API (MSW) that answers from the synthetic demo cases; the real
+  endpoints come next. Sign in as a demo persona, pick a patient, write a rough note (saved once
+  even when the request is retried) and follow the draft's progress. In the trace view, tapping a
+  draft line lights up its source words in the note and marks a differing number; each line can be
+  confirmed, edited, removed or put back, and the note signed (it locks and shows its hash) or
+  discarded. An admin edits a facility's timezone, locale, shifts, units and clock, and every
+  screen shows dates, times and ward words from those settings. Error, not-found and loading
+  screens are included. Fonts: Atkinson Hyperlegible Next and Mono, under the SIL Open Font
+  License 1.1.
+- `make e2e-mock`, which runs the Playwright journeys (three screen widths, a keyboard path and axe
+  accessibility checks) against the mock API with no database or API container. CI runs it after
+  the web checks.
+
+### Changed
+
+- README: the planned AWS design moves to Sydney (`ap-southeast-2`), with Aurora Serverless v2
+  and auto-pause instead of RDS, SSM Parameter Store instead of Secrets Manager, and an IPv6
+  egress-only internet gateway instead of NAT. Getting started adds mock mode and `make e2e-mock`,
+  and the web stack lists what is built, with the PWA marked as planned.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added

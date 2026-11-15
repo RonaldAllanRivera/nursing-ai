@@ -112,14 +112,15 @@ flowchart TB
     subgraph Client
         W[React PWA<br/>offline drafts in IndexedDB]
     end
-    subgraph AWS["AWS · ap-southeast-1 · Terraform"]
+    subgraph AWS["AWS · ap-southeast-2 (Sydney) · Terraform"]
         CF[CloudFront + S3]
         GW[API Gateway HTTP API]
         API[Lambda · FastAPI container]
         Q[SQS + DLQ]
         WK[Lambda · draft worker]
-        DB[(RDS PostgreSQL<br/>pgvector · private subnets)]
-        SM[Secrets Manager]
+        DB[(Aurora Serverless v2<br/>PostgreSQL 17 · pgvector<br/>auto-pause · private subnets)]
+        PS[SSM Parameter Store]
+        EG[IPv6 egress-only<br/>internet gateway]
     end
     LLM[Claude API]
     GID[Google sign-in<br/>OpenID Connect]
@@ -128,17 +129,22 @@ flowchart TB
 
     W --> CF
     W --> GW --> API --> DB
-    API -.-> GID
     API --> Q --> WK --> DB
-    WK --> LLM
-    API -.-> SM
-    WK -.-> SM
+    WK --> EG --> LLM
+    API -.-> EG -.-> GID
+    API -.-> PS
+    WK -.-> PS
     MCP --> DB
     EV --> LLM
 ```
 
 A shared Python `core` package holds the domain logic and the draft pipeline. The FastAPI app, the
 MCP server and the eval runner are three thin entry points over that one core.
+
+The AWS design is built to cost a few dollars a month while idle. The database is Aurora Serverless
+v2, the same PostgreSQL, and it pauses when nobody uses it (the first request after a pause waits
+while it wakes). Secrets live in Parameter Store, and the Lambdas reach Claude and Google over IPv6
+through an egress-only internet gateway instead of a NAT gateway.
 
 Sign-in follows the backend-for-frontend pattern: the API completes the Google OpenID Connect flow
 and gives the browser only an `httpOnly` session cookie, so no tokens are ever stored in the browser.
@@ -184,9 +190,9 @@ or PHI leaks, fails the build.
 | AI | Anthropic Claude (structured output), provider interface with fake and replay providers so tests and the demo cost $0 |
 | Retrieval (RAG) | Glossary lookup with hybrid search: exact and variant match, trigram similarity (pg_trgm) and vector similarity (pgvector), merged with reciprocal rank fusion; embedding model chosen by benchmark (local vs hosted) and recorded in an ADR |
 | Auth | Google OpenID Connect (Authorization Code + PKCE) through the API, server-side sessions, role-based access, idle lock + signing PIN (Argon2id) for shared PCs |
-| Web | React 19, TypeScript, Vite, TanStack Router + Query, Tailwind CSS v4, shadcn/ui, PWA |
+| Web | React 19, TypeScript, Vite, TanStack Router + Query, React Hook Form + Zod, openapi-fetch (typed from the API's OpenAPI schema), Radix UI with shadcn-style components, Tailwind CSS v4, MSW for the mock API. Planned: PWA with offline drafts |
 | Agent tools | Model Context Protocol (MCP) server in Python |
-| Infrastructure | AWS Lambda, API Gateway, SQS, RDS, S3, CloudFront, Secrets Manager. All in Terraform. |
+| Infrastructure | AWS in Sydney (`ap-southeast-2`): Lambda, API Gateway HTTP API, SQS, Aurora Serverless v2 PostgreSQL with auto-pause, S3, CloudFront, SSM Parameter Store, and a dual-stack VPC with an IPv6 egress-only internet gateway instead of NAT. All in Terraform. |
 | Quality | pytest, Hypothesis, Testcontainers, Vitest, Playwright, axe, Ruff, Pyright (strict), ESLint |
 | CI/CD | GitHub Actions, OIDC to AWS (no stored keys), eval gate, Terraform plan/apply |
 
@@ -215,10 +221,11 @@ tests/    repository-level tests
 
 ```bash
 make setup    # install the Python and web dependencies, the test browser, the pinned tools and the git hooks
-make dev      # Postgres + API + web; open http://localhost:5173, it shows "API: healthy"
+make dev      # Postgres + API + web; open http://localhost:5173, the Sign in page shows "API: healthy"
 make down     # stop Postgres and the API (Ctrl+C in make dev stops only the web app)
 make check    # lint, type-check and test everything
-make e2e      # Playwright end-to-end tests
+make e2e      # Playwright end-to-end tests against the real stack
+make e2e-mock # the browser journeys against the mock API, no Docker needed
 ```
 
 On a fresh Ubuntu or WSL machine, install the test browser's system libraries once:
@@ -226,6 +233,19 @@ On a fresh Ubuntu or WSL machine, install the test browser's system libraries on
 
 If a port is already taken, add `PORT_OFFSET=1` to the command (every port moves up by 10), for
 example `make dev PORT_OFFSET=1`. `make help` lists every target.
+
+**Mock mode.** So far the real API answers only its health check (`/api/v1/health`); every other
+route returns `501 Not Implemented`, so the Sign in page under `make dev` can't list anyone yet. To
+click through the screens, run the web app alone with a mock API in the browser that answers from
+the synthetic demo cases:
+
+```bash
+pnpm -C web dev:mock   # open http://localhost:5173; sign in as a demo persona, write a note, check it, sign
+```
+
+Open it at `localhost` (the mock needs localhost or https). Like `make dev` it uses port 5173;
+`PORT_OFFSET` doesn't apply here, so to move it set `WEB_PORT`, for example
+`WEB_PORT=5183 pnpm -C web dev:mock`.
 
 ---
 
