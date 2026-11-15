@@ -5,8 +5,11 @@ import { afterAll, afterEach } from "vitest";
 
 export const server = setupServer();
 
-// Listen at import time, not in beforeAll: openapi-fetch keeps the global `fetch` it finds
-// when the client is created, so MSW must patch it before the app's modules load.
+// jsdom has no scrolling; the router calls this on navigation.
+window.scrollTo = () => undefined;
+
+// Listen at import time, not in beforeAll, so MSW has patched the global `fetch` before any test
+// runs. (client.ts looks `fetch` up per request, so load order no longer matters.)
 server.listen({ onUnhandledFrame: "error" });
 
 afterEach(() => {

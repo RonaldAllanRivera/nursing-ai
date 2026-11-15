@@ -18,9 +18,15 @@ export function healthLabel(view: HealthView): string {
 
 export async function fetchHealth(): Promise<HealthView> {
   try {
-    const { data, response } = await api.GET("/api/v1/health");
+    const { data, error } = await api.GET("/api/v1/health");
     if (data?.status === "healthy") return { kind: "healthy" };
-    if (response.status === 503) return { kind: "unhealthy" };
+    // Only the API's own answer counts as "unhealthy", whatever the status code. A 502 or 503
+    // from a proxy has no such body (openapi-fetch puts a non-2xx body in `error`: empty or
+    // text when it is not JSON).
+    const body: unknown = data ?? error;
+    if (typeof body === "object" && body !== null && "database" in body) {
+      if (body.database === "unreachable") return { kind: "unhealthy" };
+    }
     return { kind: "unreachable" };
   } catch {
     return { kind: "unreachable" };

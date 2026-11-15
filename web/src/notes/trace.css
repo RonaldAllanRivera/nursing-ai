@@ -1,0 +1,688 @@
+/* The trace view: C's mockup CSS (the trace-view mockup), kept nearly as
+   written. Every rule sits under .trace-view so it can't touch the Tailwind screens.
+
+   What changed from the mockup, and why:
+   - var(--font-ui) and var(--font-note) are var(--stack-ui) and var(--stack-note): those are the
+     names that exist at runtime (tokens.css; Tailwind drops theme variables nothing uses).
+   - The page chrome (.top, .aid, the theme toggle, body, the :root tokens) is the app shell's.
+     .top-inner became .note-head: the same grid without the toggle column, and no band of its own.
+   - .layout became .trace-layout and lost its max-width and side padding: the shell's <main> has them.
+   - Left out for later tasks: glossary chips and ambiguous status (P3), the PIN field (P2).
+   - Added: .dar-empty ("Not written") and .line-text .num-bad on the draft's own number;
+     .write-problem (why a change was refused, with its next step), .discard-row (a quiet
+     "Discard draft" apart from the sign bar), and aria-disabled on .btn while a change saves.
+   - The signed block drops the mockup's "Any change now becomes an amendment": P1 has no amendments. */
+
+.trace-view {
+  /* ---------- Header ---------- */
+  .note-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "tab name" "tab meta";
+    align-items: center;
+    gap: 0 var(--sp-4);
+    padding: var(--sp-4) 0;
+  }
+  .bed-tab {
+    grid-area: tab;
+  }
+  .who-name {
+    grid-area: name;
+    font-size: var(--fs-24);
+    line-height: var(--lh-tight);
+    font-weight: 700;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--sp-2) var(--sp-3);
+  }
+  .who-meta {
+    grid-area: meta;
+    color: var(--ink-2);
+  }
+
+  /* ---------- Layout ---------- */
+  .trace-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--sp-6);
+    align-items: start;
+  }
+  .pane-note {
+    position: sticky;
+    top: var(--sp-4);
+    display: grid;
+    gap: var(--sp-4);
+  }
+  .pane-head {
+    display: grid;
+    gap: 2px;
+    margin-bottom: var(--sp-3);
+  }
+  .pane-head h2 {
+    font-size: var(--fs-21);
+    line-height: var(--lh-tight);
+    font-weight: 700;
+  }
+  .pane-head p {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+
+  /* ---------- Rough note on ruled paper ---------- */
+  .note-sheet {
+    background-color: var(--sheet);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-sheet);
+    padding: var(--sp-4) var(--sp-5) var(--sp-5);
+    box-shadow: var(--lift);
+  }
+  .note-text {
+    font-family: var(--stack-note);
+    font-size: var(--fs-18);
+    line-height: var(--lh-note);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--lh-note) - 1px),
+      var(--ruled) calc(var(--lh-note) - 1px),
+      var(--ruled) var(--lh-note)
+    );
+  }
+
+  /* The highlighter: the one bold thing on the screen */
+  mark.hl {
+    color: var(--hl-ink);
+    background-color: transparent;
+    background-image: linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--hl) 55%, transparent) 0%,
+      var(--hl) 0.35em,
+      color-mix(in srgb, var(--hl) 88%, transparent) calc(100% - 0.4em),
+      color-mix(in srgb, var(--hl) 50%, transparent) 100%
+    );
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    border-radius: var(--r-mark);
+    padding: 0.06em 0.14em;
+    margin: 0 -0.14em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .swipe mark.hl {
+    animation: trace-swipe 420ms cubic-bezier(0.3, 0.7, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 140ms);
+  }
+  .num-bad {
+    text-decoration: underline solid var(--stop);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 0.2em;
+    font-weight: 700;
+  }
+
+  /* ---------- Trace card (desktop: under the note; small screens: bottom drawer) ---------- */
+  .trace {
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--pen);
+    border-radius: var(--r-control) var(--r-sheet) var(--r-sheet) var(--r-control);
+    padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  }
+  .trace-empty {
+    color: var(--ink-2);
+  }
+  .trace-empty mark.hl {
+    color: var(--hl-ink);
+  }
+  .drawer-bar {
+    display: none;
+  }
+  .trace-line {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    padding-bottom: var(--sp-3);
+    margin-bottom: var(--sp-3);
+    border-bottom: 1px solid var(--rule);
+  }
+  .trace-line q {
+    quotes: "\201C" "\201D";
+  }
+  .trace-status {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--fs-21);
+    line-height: var(--lh-tight);
+    font-weight: 700;
+  }
+  .trace-reason {
+    margin-top: var(--sp-2);
+    max-width: 60ch;
+  }
+  .trace h3 {
+    font-size: var(--fs-14);
+    font-weight: 700;
+    color: var(--ink-2);
+    margin: var(--sp-4) 0 var(--sp-2);
+  }
+  .quotes {
+    display: grid;
+    gap: var(--sp-2);
+  }
+  .quotes li {
+    font-family: var(--stack-note);
+    font-size: var(--fs-16);
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+  .no-quote {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
+    color: var(--stop);
+    font-weight: 600;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    min-height: var(--tap);
+    padding: 0 var(--sp-4);
+    border-radius: var(--r-control);
+    border: 1px solid var(--rule-strong);
+    background: var(--sheet);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn:hover {
+    background: var(--sunk);
+  }
+  .btn-primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--primary-ink);
+  }
+  .btn-primary:hover {
+    background: var(--primary);
+    filter: brightness(1.15);
+  }
+  .btn-firm {
+    border-color: var(--pen);
+    color: var(--pen);
+  }
+  .btn-firm:hover {
+    background: var(--pen-tint);
+  }
+  /* A change is being saved: the button stays where it is (and keeps the focus) but does nothing. */
+  .btn[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: progress;
+  }
+
+  /* ---------- Line actions ---------- */
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin-top: var(--sp-5);
+  }
+  .edit-box {
+    display: grid;
+    gap: var(--sp-2);
+    margin-top: var(--sp-4);
+  }
+  .edit-box label {
+    font-weight: 700;
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
+  .edit-box textarea {
+    font: inherit;
+    font-size: var(--fs-18);
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-control);
+    padding: var(--sp-2) var(--sp-3);
+    min-height: 88px;
+    resize: vertical;
+  }
+  .edit-box .edit-actions {
+    margin-top: 0;
+  }
+  /* Added: why a change was refused, and what to do. Icon, words and colour. */
+  .write-problem {
+    display: grid;
+    justify-items: start;
+    gap: var(--sp-2);
+    margin-top: var(--sp-3);
+    color: var(--stop);
+    font-weight: 600;
+  }
+  .write-problem p {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: flex-start;
+  }
+  p.write-problem {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-2);
+  }
+  .write-problem .ic {
+    margin-top: 2px;
+  }
+  .write-problem .btn {
+    color: var(--ink);
+  }
+  /* Added: the way out of a draft, quiet and apart from the sign bar. */
+  .discard-row {
+    margin-top: var(--sp-5);
+  }
+
+  /* ---------- Sign and discard dialogs (the shell is components/ui/Dialog.tsx) ---------- */
+  .note-dialog .dialog-list {
+    margin-top: var(--sp-3);
+    padding: var(--sp-3);
+    background: var(--review-tint);
+    border-radius: var(--r-control);
+  }
+  .note-dialog .dialog-list p {
+    margin: 0;
+  }
+
+  /* ---------- Draft ---------- */
+  .answer {
+    font-size: var(--fs-21);
+    font-weight: 700;
+    line-height: var(--lh-tight);
+  }
+  .answer.is-ready {
+    color: var(--ok);
+  }
+  .key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-4);
+    margin: var(--sp-2) 0 var(--sp-4);
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
+  .key li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .key b {
+    color: var(--ink);
+  }
+
+  .form {
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-sheet);
+    box-shadow: var(--lift);
+    overflow: hidden;
+  }
+  .form-cols,
+  .form-row {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 0.85fr) minmax(0, 2fr);
+  }
+  .form-row + .form-row {
+    border-top: 1px solid var(--rule-strong);
+  }
+  .form-cols {
+    background: var(--sunk);
+    border-bottom: 1px solid var(--rule-strong);
+    font-size: var(--fs-14);
+    font-weight: 700;
+    color: var(--ink-2);
+  }
+  .form-cols > div {
+    padding: var(--sp-2) var(--sp-3);
+  }
+  .form-cols > div + div,
+  .form-row > div + div {
+    border-left: 1px solid var(--rule);
+  }
+  .cell-time {
+    padding: var(--sp-3);
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+    line-height: 1.4;
+  }
+  .cell-focus,
+  .cell-progress {
+    padding: var(--sp-2);
+  }
+  .dar {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 0 var(--sp-1);
+  }
+  .dar + .dar {
+    border-top: 1px dashed var(--rule);
+    margin-top: var(--sp-1);
+    padding-top: var(--sp-1);
+  }
+  .dar-letter {
+    font-size: var(--fs-21);
+    font-weight: 700;
+    color: var(--ink-3);
+    text-align: center;
+    padding-top: 8px;
+    line-height: 1;
+  }
+  .dar-empty {
+    color: var(--ink-3);
+    padding: var(--sp-2) var(--sp-3);
+    min-height: var(--tap);
+    display: flex;
+    align-items: center;
+  }
+  .focus-label {
+    display: none;
+  }
+
+  .line {
+    display: grid;
+    gap: 2px;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    min-height: var(--tap);
+    padding: var(--sp-2) var(--sp-3) var(--sp-2) calc(var(--sp-3) - 3px);
+    background: transparent;
+    border: 0;
+    border-left: 3px solid transparent;
+    border-radius: 0 var(--r-control) var(--r-control) 0;
+  }
+  .line:hover {
+    background: var(--sunk);
+  }
+  .line[aria-current="true"] {
+    background: var(--pen-tint);
+    border-left-color: var(--pen);
+  }
+  .line-text {
+    font-size: var(--fs-18);
+    line-height: 1.45;
+  }
+  .line.is-focus .line-text {
+    font-weight: 700;
+  }
+  .line.is-unsourced .line-text {
+    color: var(--ink-3);
+    text-decoration: underline dashed var(--stop);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 0.25em;
+  }
+  .line.is-removed .line-text {
+    color: var(--ink-3);
+    text-decoration: line-through;
+  }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-14);
+    font-weight: 600;
+  }
+  .tone-ok {
+    color: var(--ok);
+  }
+  .tone-review {
+    color: var(--review);
+  }
+  .tone-stop {
+    color: var(--stop);
+  }
+  .tone-you {
+    color: var(--pen);
+  }
+  .tone-muted {
+    color: var(--ink-3);
+  }
+
+  .checklist {
+    margin-top: var(--sp-6);
+  }
+  .checklist h2 {
+    font-weight: 700; /* the browser's default h2 weight; Tailwind's reset removes it */
+    font-size: var(--fs-21);
+    line-height: var(--lh-tight);
+  }
+  .checklist > p {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    margin: 2px 0 var(--sp-3);
+  }
+  .check-none {
+    color: var(--ink-2);
+    margin-bottom: var(--sp-3);
+  }
+  .check-items {
+    border-top: 1px solid var(--rule);
+  }
+  .check-items li {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: var(--sp-3);
+    padding: var(--sp-3) 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .check-items .ic {
+    margin-top: 2px;
+  }
+  .check-items b {
+    display: block;
+  }
+  .check-items span {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+  }
+
+  .signbar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    margin-top: var(--sp-6);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    flex-wrap: wrap;
+    padding: var(--sp-4) 0;
+    background: var(--paper);
+    border-top: 1px solid var(--rule);
+  }
+  .signbar .btn-primary {
+    min-height: 52px;
+    padding: 0 var(--sp-6);
+    font-size: var(--fs-18);
+  }
+  .signbar-msg {
+    color: var(--ink-2);
+  }
+  .signbar-msg b {
+    color: var(--ink);
+  }
+  .signed {
+    display: flex;
+    gap: var(--sp-3);
+    align-items: flex-start;
+  }
+  .signed .ic {
+    color: var(--ok);
+    width: 1.5em;
+    height: 1.5em;
+  }
+  .hash {
+    font-family: var(--stack-note);
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
+
+  /* ---------- Small screens: stacked, source drawer ---------- */
+  @media (width < 960px) {
+    .note-head {
+      grid-template-areas: "tab name" "meta meta";
+      gap: var(--sp-2) var(--sp-3);
+      padding: var(--sp-3) 0;
+    }
+    .who-name {
+      font-size: var(--fs-18);
+    }
+    .who-meta {
+      font-size: var(--fs-14);
+    }
+    .trace-layout {
+      grid-template-columns: minmax(0, 1fr);
+      padding-bottom: 120px;
+      gap: var(--sp-5);
+    }
+    .pane-note {
+      position: static;
+    }
+    .note-sheet {
+      padding: var(--sp-3) var(--sp-4) var(--sp-4);
+    }
+    .note-text {
+      font-size: var(--fs-16);
+      --lh-note: 1.75rem;
+    }
+    .line-text {
+      font-size: var(--fs-16);
+    }
+
+    .form-cols {
+      display: none;
+    }
+    .form-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .form-row > div + div {
+      border-left: 0;
+      border-top: 1px solid var(--rule);
+    }
+    .cell-time {
+      display: none;
+    }
+    .focus-label {
+      display: block;
+      font-size: var(--fs-14);
+      font-weight: 700;
+      color: var(--ink-2);
+      padding: var(--sp-1) var(--sp-3) 0;
+    }
+
+    .trace {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      max-height: 60vh;
+      overflow: auto;
+      border: 1px solid var(--rule);
+      border-bottom: 0;
+      border-top: 4px solid var(--pen);
+      border-radius: var(--r-drawer) var(--r-drawer) 0 0;
+      padding: 0 var(--sp-4) calc(var(--sp-5) + env(safe-area-inset-bottom));
+      box-shadow: 0 -12px 40px -12px rgba(0, 0, 0, 0.35);
+      transform: translateY(105%);
+      visibility: hidden;
+      transition:
+        transform 260ms cubic-bezier(0.3, 0.7, 0.3, 1),
+        visibility 0s linear 260ms;
+    }
+    .trace.open {
+      transform: none;
+      visibility: visible;
+      transition:
+        transform 260ms cubic-bezier(0.3, 0.7, 0.3, 1),
+        visibility 0s;
+    }
+    .drawer-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      background: var(--sheet);
+      padding: var(--sp-2) 0;
+      margin-bottom: var(--sp-2);
+      z-index: 1;
+    }
+    .drawer-bar span {
+      font-size: var(--fs-14);
+      font-weight: 700;
+      color: var(--ink-2);
+    }
+    .trace-empty {
+      display: none;
+    }
+
+    .signbar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      margin: 0;
+      z-index: 20;
+      padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom));
+      background: var(--sheet);
+      gap: var(--sp-2) var(--sp-3);
+    }
+    .signbar .btn-primary {
+      flex: 1 1 100%;
+    }
+    .signbar-msg {
+      font-size: var(--fs-14);
+    }
+    .actions .btn {
+      flex: 1 1 auto;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .swipe mark.hl {
+      animation: none;
+    }
+    .trace,
+    .trace.open {
+      transition: none;
+    }
+  }
+  @media print {
+    .signbar,
+    .trace {
+      display: none;
+    }
+  }
+}
+
+/* The draft's own focus ring keeps the mockup's rounded corners. */
+.trace-view :focus-visible:not(.line) {
+  border-radius: var(--r-control);
+}
+
+/* Outside the nesting above: the minifier can't read @keyframes inside a rule. */
+@keyframes trace-swipe {
+  from {
+    background-size: 0% 100%;
+  }
+  to {
+    background-size: 100% 100%;
+  }
+}
+
+/* Below 960 px the sign bar is fixed to the bottom: a focused line scrolls clear of it (WCAG 2.4.11). */
+@media (width < 960px) {
+  :root:has(.trace-view) {
+    scroll-padding-bottom: 7.5rem;
+  }
+}
