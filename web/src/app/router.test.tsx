@@ -22,25 +22,29 @@ vi.mock("../patients/PatientPage", async (importOriginal) => {
 
 const AID_LINE = "Documentation aid — the nurse reviews and signs every note.";
 
-// Silences console.warn and console.error for the rest of one test, restores them when it ends,
-// and gives back the calls. Use expectConsoleCalls to check every call was an expected one.
-function spyOnConsole() {
+// Silences console.warn and console.error for the rest of one test. When the test is over (after
+// the cleanup and handler reset, so their calls count too) it checks there was at least one call
+// of each kind and that every call carries the expected argument (the received arguments are
+// printed when one does not), then always restores both.
+function spyOnConsole(expected: { warn: unknown; error: unknown }) {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   onTestFinished(() => {
-    warn.mockRestore();
-    error.mockRestore();
+    try {
+      for (const [spy, arg] of [
+        [warn, expected.warn],
+        [error, expected.error],
+      ] as const) {
+        expect(spy.mock.calls.length).toBeGreaterThan(0);
+        for (const call of spy.mock.calls) {
+          expect(call).toContainEqual(arg);
+        }
+      }
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
-  return { warn, error };
-}
-
-// At least one call, and every call carries an argument equal to `expected` (the received
-// arguments are printed when one does not).
-function expectConsoleCalls(spy: { mock: { calls: unknown[][] } }, expected: unknown) {
-  expect(spy.mock.calls.length).toBeGreaterThan(0);
-  for (const call of spy.mock.calls) {
-    expect(call).toContainEqual(expected);
-  }
 }
 
 async function signInAsNurse() {
@@ -125,7 +129,10 @@ describe("app router", () => {
   it("shows a plain screen with Try again when the session does not load, and recovers", async () => {
     // The router warns and React reports the caught error for any route that errors; the screen is
     // what counts here, but every console call must be one we expect.
-    const spy = spyOnConsole();
+    spyOnConsole({
+      warn: "Warning: Error in route match: /app/",
+      error: expect.objectContaining({ name: "ApiError", status: 500 }),
+    });
     const { router, queryClient } = await renderApp("/sign-in");
     await userEvent.click(
       await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
@@ -149,8 +156,6 @@ describe("app router", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expectConsoleCalls(spy.warn, "Warning: Error in route match: /app/");
-    expectConsoleCalls(spy.error, expect.objectContaining({ name: "ApiError", status: 500 }));
   });
 
   it("shows a plain not-found screen with a way back", async () => {
@@ -165,7 +170,10 @@ describe("app router", () => {
   });
 
   it("shows one aid line and no nested main when a page inside the shell fails", async () => {
-    const spy = spyOnConsole();
+    spyOnConsole({
+      warn: expect.stringContaining("Error in route match"),
+      error: expect.objectContaining({ message: "synthetic page failure" }),
+    });
     const { router } = await signInAsNurse();
     pageBreaks.on = true;
     onTestFinished(() => {
@@ -178,8 +186,6 @@ describe("app router", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(screen.getAllByText(AID_LINE)).toHaveLength(1);
     expect(document.querySelectorAll("main main")).toHaveLength(0);
-    expectConsoleCalls(spy.warn, expect.stringContaining("Error in route match"));
-    expectConsoleCalls(spy.error, expect.objectContaining({ message: "synthetic page failure" }));
   });
 
   it("shows one aid line and no nested main for an unknown address when signed in", async () => {
