@@ -1,6 +1,8 @@
 """Things the chart says belong in this shift's notes that the notes don't mention yet."""
 
 import re
+import unicodedata
+from bisect import bisect_right
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 
@@ -8,10 +10,6 @@ from nursing_core.domain.notes import ChecklistItem, ChecklistRule, Span
 from nursing_core.domain.patient import PatientContext
 from nursing_core.pipeline.checklist_words import DEFAULT_WORDS, ChecklistWords
 from nursing_core.pipeline.text import MatchText, prepare
-
-# A sentence ends at a line break, at ";" and at "." followed by whitespace or the end of the
-# note, so "0.5 mg" stays in one sentence.
-_SENTENCE_END = re.compile(r"[\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029;]|\.(?=\s|\Z)")
 
 
 def _find_all(note: MatchText, phrase: str) -> list[Span]:
@@ -23,24 +21,61 @@ def _find_all(note: MatchText, phrase: str) -> list[Span]:
     return [
         Span(start=note.origin[m.start()], end=note.origin[m.end() - 1] + 1)
         for m in pattern.finditer(note.text)
+        if not _touches_a_mark(note.text, m.start(), m.end())
     ]
+
+
+def _touches_a_mark(text: str, start: int, end: int) -> bool:
+    """A combining mark next to the match makes it part of a longer word."""
+    neighbours = text[max(start - 1, 0) : start] + text[end : end + 1]
+    return any(unicodedata.category(char).startswith("M") for char in neighbours)
 
 
 def _find_any(note: MatchText, phrases: Iterable[str]) -> list[Span]:
     return [span for phrase in phrases for span in _find_all(note, phrase)]
 
 
-def _sentence_number(raw: str, offset: int) -> int:
-    return sum(1 for m in _SENTENCE_END.finditer(raw) if m.start() < offset)
+_LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def _clause_ends(raw: str) -> list[int]:
+    """Offsets in the typed text of the characters that end a clause, in ascending order.
+
+    A clause ends at a line break, at ";" or ",", and at "." followed by whitespace, the end of
+    the note or a letter, so "0.5 mg" stays whole. Characters are judged after the same
+    per-code-point folding the matcher uses, so full-width separators split too.
+    """
+    ends: list[int] = []
+    for index, code_point in enumerate(raw):
+        folded = unicodedata.normalize("NFKC", code_point)
+        if (
+            code_point in _LINE_BREAKS
+            or folded in (";", ",")
+            or (folded == "." and _starts_new_clause(raw, index + 1))
+        ):
+            ends.append(index)
+    return ends
+
+
+def _starts_new_clause(raw: str, index: int) -> bool:
+    if index >= len(raw):
+        return True
+    following = unicodedata.normalize("NFKC", raw[index])
+    return following.isspace() or following.isalpha()
+
+
+def _clause_number(ends: list[int], offset: int) -> int:
+    return bisect_right(ends, offset)
 
 
 def _earliest(spans: list[Span]) -> Span | None:
     return min(spans, key=lambda s: (s.start, s.start - s.end), default=None)
 
 
-def _recorded_in_a_sentence(note: MatchText, aliases: list[str], words: list[str]) -> bool:
-    mentioned = {_sentence_number(note.raw, s.start) for s in _find_any(note, aliases)}
-    return any(_sentence_number(note.raw, s.start) in mentioned for s in _find_any(note, words))
+def _recorded_in_a_clause(note: MatchText, aliases: list[str], words: list[str]) -> bool:
+    ends = _clause_ends(note.raw)
+    mentioned = {_clause_number(ends, s.start) for s in _find_any(note, aliases)}
+    return any(_clause_number(ends, s.start) in mentioned for s in _find_any(note, words))
 
 
 def _item(
@@ -88,7 +123,7 @@ def missing_items_checklist(
     action_words = [*words.given, *words.held, *words.refused]
     for medicine in sorted(due, key=lambda m: m.due_at):
         recorded = any(
-            _recorded_in_a_sentence(note, medicine.aliases, action_words) for note in notes
+            _recorded_in_a_clause(note, medicine.aliases, action_words) for note in notes
         )
         items.append(
             _item(

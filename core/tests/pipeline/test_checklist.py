@@ -1,6 +1,6 @@
 """The missing-items checklist: what the chart expects that this shift's notes don't mention."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from nursing_core.demo import load_demo_cases
@@ -253,3 +253,92 @@ def test_demo_checklists_match_expected() -> None:
             case.context, [case.rough_note.text], case.rough_note.written_at
         )
         assert items == case.expected_checklist, case.key
+
+
+def due_alpha_bravo() -> PatientContext:
+    due = NOW - timedelta(hours=1)
+    return context(allergies=[], medicines=[medicine("Alpha", due), medicine("Bravo", due)])
+
+
+def test_another_medicines_action_word_does_not_clear_a_due_medicine() -> None:
+    for note in (
+        "Alpha given, bravo due 0600",
+        "Pt refused breakfast, bravo due",
+        "Bravo due.Alpha given.",
+        "Alpha given\uff0c bravo due",
+        "Alpha given\uff1b bravo due",
+    ):
+        alpha, bravo = missing_items_checklist(due_alpha_bravo(), [note], NOW)
+        assert not alpha.missing or "breakfast" in note, note
+        assert bravo.missing, note
+        assert bravo.note_span is None, note
+
+
+def test_medicine_and_action_word_in_one_clause_clear_it() -> None:
+    ctx = context(allergies=[], medicines=[medicine("Alpha", NOW - timedelta(hours=1))])
+    assert not missing_items_checklist(ctx, ["Alpha 0.5 mg given"], NOW)[0].missing
+    assert not missing_items_checklist(ctx, ["Pt refused alpha"], NOW)[0].missing
+    assert missing_items_checklist(ctx, ["Alpha 40 mg SC, given at 0900"], NOW)[0].missing
+
+
+def test_medicine_note_span_is_the_earliest_whole_word_alias_in_the_current_note() -> None:
+    ctx = context(
+        allergies=[],
+        medicines=[medicine("Alpha", NOW - timedelta(hours=1), "alpha", "alpha tab", "al")],
+    )
+    current = "Pt had Alpha tab given. Alpha again."
+    item = missing_items_checklist(ctx, ["Alpha given."], NOW)[0]
+    assert item.note_span == Span(start=0, end=5)
+    item = missing_items_checklist(ctx, ["Alpha given.", current], NOW)[0]
+    assert item.note_span == Span(start=7, end=16)
+    assert current[7:16] == "Alpha tab"
+
+
+def test_missing_medicine_named_in_the_current_note_has_no_span() -> None:
+    ctx = context(allergies=[], medicines=[medicine("Alpha", NOW - timedelta(hours=1))])
+    item = missing_items_checklist(ctx, ["Alpha due soon."], NOW)[0]
+    assert item.missing
+    assert item.note_span is None
+
+
+def test_a_combining_mark_makes_the_letter_part_of_a_longer_word() -> None:
+    ctx = context(allergies=[], lines=[line("Cafe tube", "cafe")])
+    assert missing_items_checklist(ctx, ["café tube"], NOW)[0].missing
+    assert missing_items_checklist(ctx, ["xcafe"], NOW)[0].missing
+    assert not missing_items_checklist(ctx, ["cafe tube"], NOW)[0].missing
+
+
+def test_dizzy_word_and_safety_phrase_in_earlier_notes_count() -> None:
+    ctx = context(allergies=[], fall_risk=LOW)
+    flagged = missing_items_checklist(ctx, ["Pt dizzy.", "Pt resting."], NOW)
+    assert [(i.rule, i.missing) for i in flagged] == [(ChecklistRule.FALL_RISK, True)]
+    cleared = missing_items_checklist(ctx, ["Pt dizzy. Bed alarm on.", "Pt resting."], NOW)
+    assert [(i.rule, i.missing, i.note_span) for i in cleared] == [
+        (ChecklistRule.FALL_RISK, False, None)
+    ]
+
+
+def test_due_time_is_compared_as_an_instant_across_timezones() -> None:
+    plus8 = timezone(timedelta(hours=8))
+    due = medicine("Alpha", datetime(2026, 3, 4, 17, 30, tzinfo=plus8))
+    later = medicine("Alpha", datetime(2026, 3, 4, 18, 30, tzinfo=plus8))
+    assert len(missing_items_checklist(context(allergies=[], medicines=[due]), ["x"], NOW)) == 1
+    assert missing_items_checklist(context(allergies=[], medicines=[later]), ["x"], NOW) == []
+
+
+def test_taglish_and_other_action_words_clear_a_due_medicine() -> None:
+    ctx = context(allergies=[], medicines=[medicine("Alpha", NOW - timedelta(hours=1))])
+    for note in ("Alpha on hold", "Alpha binigay", "Alpha ibinigay", "Alpha tumanggi",
+                 "Alpha administered", "Alpha withheld", "Alpha declined"):  # fmt: skip
+        assert not missing_items_checklist(ctx, [note], NOW)[0].missing, note
+
+
+def test_more_safety_phrases_clear_fall_risk() -> None:
+    for phrase in ("Bed in low position", "Fall precautions", "fall precaution", "siderails up",
+                   "call bell within reach"):  # fmt: skip
+        items = missing_items_checklist(context(allergies=[], fall_risk=HIGH), [phrase], NOW)
+        assert [i.missing for i in items] == [False], phrase
+
+
+def test_a_recorded_allergy_list_is_not_flagged() -> None:
+    assert missing_items_checklist(context(allergies=["Zyxquil"]), ["x"], NOW) == []
