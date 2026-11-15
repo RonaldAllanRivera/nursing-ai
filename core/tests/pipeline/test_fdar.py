@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from nursing_core.demo import DEMO_FACILITIES, DemoCase, load_demo_cases
-from nursing_core.domain.errors import AiBudgetReached, InvalidModelOutput
+from nursing_core.domain.errors import AiBudgetReached, InvalidModelOutput, PhiLeak
 from nursing_core.domain.model_output import (
     DraftRequest,
     ModelFdarDraft,
@@ -15,8 +15,10 @@ from nursing_core.domain.model_output import (
     ProviderResult,
 )
 from nursing_core.domain.notes import ChecklistRule, MismatchKind, RoughNote
-from nursing_core.domain.patient import PatientRecord, PatientSummary
+from nursing_core.domain.patient import PatientIdentity, PatientRecord, PatientSummary
+from nursing_core.pipeline import fdar
 from nursing_core.pipeline.fdar import PipelineResult, run_fdar_pipeline
+from nursing_core.pipeline.redact import Redacted
 from nursing_core.prompts import FDAR_PROMPT_VERSION
 from nursing_core.providers.fake import FakeProvider
 
@@ -256,3 +258,21 @@ async def test_line_text_gets_the_typed_name_back() -> None:
         note, _patient(case), [], FakeProvider(_output(_entry(data=[line])))
     )
     assert result.draft.entries[0].data[0].text == f"{relative} at bedside."
+
+
+@pytest.mark.asyncio
+async def test_a_known_name_left_after_redaction_stops_before_any_provider_is_called(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = next(c for c in CASES if c.patient.relatives)
+
+    def redact_nothing(text: str, identity: PatientIdentity) -> Redacted:
+        return Redacted(text, {})
+
+    monkeypatch.setattr(fdar, "redact", redact_nothing)
+    provider = _Capturing(FakeProvider(_output(_entry())))
+    with pytest.raises(PhiLeak) as raised:
+        await run_fdar_pipeline(case.rough_note, _patient(case), [], provider)
+    assert provider.requests == []
+    assert case.patient.given_name not in str(raised.value)
+    assert case.patient.relatives[0].name not in str(raised.value)

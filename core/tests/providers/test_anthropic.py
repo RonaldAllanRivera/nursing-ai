@@ -3,10 +3,12 @@
 import json
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, NoReturn
 
+import anthropic
 import httpx2
 import pytest
+from anthropic.resources.messages import AsyncMessages
 from nursing_core.domain.errors import (
     AiBudgetReached,
     InvalidModelOutput,
@@ -339,3 +341,52 @@ async def test_max_tokens_or_invalid_json_is_invalid_output(
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None or caught.value.__suppress_context__
     assert "this is not json" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_thinking_block_before_the_answer_is_ignored() -> None:
+    body = json.loads(_message().content)
+    body["content"].insert(
+        0, {"type": "thinking", "thinking": "Reading the note first.", "signature": "c3lu"}
+    )
+    server = _Server(httpx2.Response(200, json=body))
+    result = await _provider(server).draft_fdar(_request())
+    assert result.output.entries[0].data[0].text == "Pain 6/10"
+    assert result.output.entries[0].data[0].source_quotes == ["pain 6/10"]
+
+
+_LEAKY = "the note says [PATIENT_1] has pain"
+
+
+def _unreadable_answer(request: httpx2.Request) -> anthropic.APIError:
+    return anthropic.APIResponseValidationError(
+        response=httpx2.Response(200, request=request), body={"text": _LEAKY}, message=_LEAKY
+    )
+
+
+def _plain_api_error(request: httpx2.Request) -> anthropic.APIError:
+    return anthropic.APIError(_LEAKY, request, body={"text": _LEAKY})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [_unreadable_answer, _plain_api_error])
+async def test_any_other_sdk_error_is_unavailable_without_retry_or_its_text(
+    monkeypatch: pytest.MonkeyPatch, error: Callable[[httpx2.Request], anthropic.APIError]
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def create(self: AsyncMessages, **kwargs: object) -> NoReturn:
+        calls.append(kwargs)
+        raise error(httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+
+    monkeypatch.setattr(AsyncMessages, "create", create)
+    raised: BaseException | None = None
+    try:
+        await _provider(_Server(_message())).draft_fdar(_request())
+    except Exception as caught:  # the test is that only ProviderUnavailable comes out
+        raised = caught
+    assert isinstance(raised, ProviderUnavailable)
+    assert len(calls) == 1
+    assert _LEAKY not in str(raised)
+    assert raised.__cause__ is None
+    assert raised.__suppress_context__

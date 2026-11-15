@@ -109,6 +109,9 @@ class AnthropicProvider:
                 wait = _retry_after(error.response)
             except anthropic.APIConnectionError:
                 pass
+            except anthropic.APIError:
+                # Anything else from the SDK, such as an answer it couldn't read; never retried.
+                raise ProviderUnavailable("the AI service call failed") from None
             else:
                 latency_ms = round((perf_counter() - started) * 1000)
                 return self._result(request, response, latency_ms)

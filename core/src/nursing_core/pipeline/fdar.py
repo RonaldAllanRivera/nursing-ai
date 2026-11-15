@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 
 from nursing_core.domain import DomainModel
-from nursing_core.domain.errors import InvalidModelOutput
+from nursing_core.domain.errors import InvalidModelOutput, PhiLeak
 from nursing_core.domain.model_output import DraftRequest, ModelLine
 from nursing_core.domain.notes import (
     ChecklistItem,
@@ -16,7 +16,7 @@ from nursing_core.domain.notes import (
 )
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.pipeline.checklist import missing_items_checklist
-from nursing_core.pipeline.redact import redact, restore
+from nursing_core.pipeline.redact import mentions_identity, redact, restore
 from nursing_core.pipeline.text import prepare
 from nursing_core.pipeline.verify import check_line
 from nursing_core.ports import LlmProvider
@@ -37,6 +37,9 @@ async def run_fdar_pipeline(
     prompt_version: str = FDAR_PROMPT_VERSION,
 ) -> PipelineResult:
     redacted = redact(note.text, patient.identity)
+    # Redaction leaves no known identifier by construction; this guards the live provider anyway.
+    if mentions_identity(redacted.text, patient.identity):
+        raise PhiLeak("a known identifier was left in the note after redaction")
     request = DraftRequest(
         redacted_text=redacted.text,
         note_format=note.note_format,
