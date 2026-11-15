@@ -30,6 +30,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 - `make e2e-mock`, which runs the Playwright journeys (three screen widths, a keyboard path and axe
   accessibility checks) against the mock API with no database or API container. CI runs it after
   the web checks.
+- The Terraform for the live demo on AWS in Sydney. Every module is tested against a mocked AWS
+  provider, and nothing has been applied yet. It covers a private dual-stack network whose only way
+  out is an IPv6 egress-only gateway, and Aurora Serverless v2 PostgreSQL 17 that pauses after 5
+  idle minutes, with a password that never reaches the Terraform state. One container image runs
+  as two Lambdas: the API behind a throttled HTTP API, and a queue worker with a dead-letter queue,
+  each reading only its own secrets. The web app is served from a private S3 bucket behind
+  CloudFront, with alarms for API errors, dead jobs and AI spend, and a budget brake that denies
+  the app's Lambdas everything at 100% of the budget. A bootstrap stack adds the locked state
+  bucket and GitHub OIDC roles behind a switch. One script formats, validates, tests, lints and
+  scans it all; `make infra-check` runs it locally, and CI runs it on every change to the
+  Terraform. Decision records 5 to 8 explain the hosting choices, and the infra guide covers setup
+  and a monthly cost table.
 
 ### Changed
 
