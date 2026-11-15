@@ -2,7 +2,7 @@ import type { components } from "../api/schema";
 import type { Locale } from "./words";
 
 type ShiftRef = components["schemas"]["ShiftRef"];
-type Clock = "24h" | "12h";
+type Clock = components["schemas"]["FacilityProfile"]["clock"];
 
 // Every function takes the zone explicitly: the browser's own zone is never used.
 

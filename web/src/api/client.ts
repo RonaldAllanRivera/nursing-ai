@@ -18,19 +18,28 @@ const base = createClient<paths>({
 
 function method<M extends Method>(name: M): Client<paths>[M] {
   const send = async (url: string, init: Init) => {
-    const timeout = new AbortController();
+    // One controller per request. The timeout always applies; the caller's abort (TanStack
+    // Query passes one to every queryFn) is forwarded into it. No AbortSignal.any: Safari 17.4+.
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      timeout.abort(new DOMException("The request took too long.", "TimeoutError"));
+      controller.abort(new DOMException("The request took too long.", "TimeoutError"));
     }, REQUEST_TIMEOUT_MS);
+    const caller = init?.signal;
+    const forward = () => {
+      controller.abort(caller?.reason);
+    };
+    if (caller?.aborted) forward();
+    else caller?.addEventListener("abort", forward, { once: true });
     const call = base[name] as unknown as (url: string, init: object) => Promise<unknown>;
     try {
       return await call(url, {
         baseUrl: globalThis.location.origin,
         ...init,
-        signal: init?.signal ?? timeout.signal,
+        signal: controller.signal,
       });
     } finally {
       clearTimeout(timer);
+      caller?.removeEventListener("abort", forward);
     }
   };
   return send as unknown as Client<paths>[M];

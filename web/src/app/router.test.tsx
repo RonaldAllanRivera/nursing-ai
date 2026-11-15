@@ -9,6 +9,6 @@ describe("app router", () => {
     expect(
       screen.getByText("Documentation aid — the nurse reviews and signs every note."),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("status")).toBeInTheDocument();
+    expect(await screen.findByText("API: healthy")).toBeInTheDocument();
   });
 });

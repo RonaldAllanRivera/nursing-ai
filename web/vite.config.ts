@@ -13,7 +13,6 @@ export default defineConfig({
     port: webPort,
     proxy: { "/api": `http://localhost:${apiPort}` },
   },
-  build: { target: "es2023" },
   test: {
     environment: "jsdom",
     setupFiles: ["src/test/setup.ts"],

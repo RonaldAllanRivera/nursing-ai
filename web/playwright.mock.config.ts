@@ -1,14 +1,15 @@
 import { defineConfig } from "@playwright/test";
+import { widths } from "./e2e/widths.ts";
 
 // The screens against the mock API (`pnpm dev:mock`): no backend needed.
 // Run with `WEB_PORT=5203 pnpm e2e:mock` (never port 5173).
-const baseURL = `http://localhost:${process.env["WEB_PORT"] ?? "5173"}`;
-
-const widths = [
-  { name: "chromium-375", width: 375, height: 812 },
-  { name: "chromium-768", width: 768, height: 1024 },
-  { name: "chromium-1280", width: 1280, height: 800 },
-];
+// WEB_PORT has no default: another container may own 5173, and reuseExistingServer would then
+// run this suite against that container's app.
+const webPort = process.env["WEB_PORT"];
+if (!webPort) {
+  throw new Error("Set WEB_PORT to a free port for the mock e2e run, e.g. WEB_PORT=5203.");
+}
+const baseURL = `http://localhost:${webPort}`;
 
 export default defineConfig({
   testDir: "e2e/mock",

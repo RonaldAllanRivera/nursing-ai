@@ -29,4 +29,11 @@ describe("fetchHealth", () => {
     server.use(http.get(HEALTH, () => new HttpResponse(null, { status: 502 })));
     expect(await fetchHealth()).toEqual({ kind: "unreachable" });
   });
+
+  it("is unhealthy when a 200 body says the database is unreachable", async () => {
+    server.use(
+      http.get(HEALTH, () => HttpResponse.json({ status: "unhealthy", database: "unreachable" })),
+    );
+    expect(await fetchHealth()).toEqual({ kind: "unhealthy" });
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { words } from "./words";
+import { words, type Words } from "./words";
 
 describe("words", () => {
   it("labels the format DAR for en-US", () => {
@@ -21,5 +21,30 @@ describe("words", () => {
     expect(words("en-US").patientsHeading).toBe("Patients on this unit");
     expect(words("en-US").recordNumber).toBe("MRN");
     expect(words("en-PH").recordNumber).toBe("Hospital no.");
+  });
+
+  it("has the exact words for every key in both locales", () => {
+    const ph: Partial<Words> = { ...words("en-PH") };
+    delete ph.noteFormat;
+    const us: Partial<Words> = { ...words("en-US") };
+    delete us.noteFormat;
+    expect(ph).toEqual({
+      ward: "Ward",
+      bed: "Bed",
+      recordNumber: "Hospital no.",
+      endorsement: "Endorsement",
+      patientsHeading: "Patients on this ward",
+      medicine: "Medicine",
+      doctor: "Doctor",
+    });
+    expect(us).toEqual({
+      ward: "Unit",
+      bed: "Room",
+      recordNumber: "MRN",
+      endorsement: "Handoff",
+      patientsHeading: "Patients on this unit",
+      medicine: "Medication",
+      doctor: "Provider",
+    });
   });
 });

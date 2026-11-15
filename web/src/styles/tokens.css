@@ -92,8 +92,13 @@
 }
 
 :root {
-  --font-ui: "Atkinson Hyperlegible Next", system-ui, sans-serif;
-  --font-note: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+  --stack-ui: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --stack-note: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+
+  /* Line heights */
+  --lh-ui: 1.5;
+  --lh-tight: 1.25;
+  --lh-note: 2rem;
 
   /* Type scale (rem on a 16px root) */
   --fs-12: 0.75rem;
@@ -104,7 +109,8 @@
   --fs-24: 1.5rem;
   --fs-36: 2.25rem;
 
-  /* Spacing: 4, 8, 12, 16, 24, 32, 48, 64 px */
+  /* Spacing: 4, 8, 12, 16, 24, 32, 48, 64 px at a 16 px root. rem on purpose: it grows with the
+     user's font-size setting. */
   --sp-1: 0.25rem;
   --sp-2: 0.5rem;
   --sp-3: 0.75rem;
@@ -153,8 +159,8 @@
   --color-shift-red: var(--shift-red);
   --color-shift-on: var(--shift-on);
 
-  --font-ui: var(--font-ui);
-  --font-note: var(--font-note);
+  --font-ui: var(--stack-ui);
+  --font-note: var(--stack-note);
 
   --text-12: var(--fs-12);
   --text-14: var(--fs-14);

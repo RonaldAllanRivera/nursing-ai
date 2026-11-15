@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../api/schema";
 import { formatDate, formatShiftRange, formatTime } from "./format";
 
@@ -34,14 +34,12 @@ describe("formatTime", () => {
 });
 
 describe("formatShiftRange", () => {
-  const originalTz = process.env["TZ"];
   afterEach(() => {
-    if (originalTz === undefined) delete process.env["TZ"];
-    else process.env["TZ"] = originalTz;
+    vi.unstubAllEnvs();
   });
 
   it("formats a PH night shift range in Manila time from a US browser", () => {
-    process.env["TZ"] = la;
+    vi.stubEnv("TZ", la);
     const night = shift("2026-11-11T14:00:00Z", "2026-11-11T22:00:00Z", manila);
     expect(formatShiftRange(night, { locale: "en-PH", clock: "24h" })).toBe(
       "22:00 11 Nov to 06:00 12 Nov 2026",
