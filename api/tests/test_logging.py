@@ -1,18 +1,23 @@
 """Logs are JSON lines with an allowlist of keys, a request id, and never any text of the record."""
 
+import asyncio
+import gc
 import json
 import logging
+import logging.config
 from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
+import structlog
 from fastapi import FastAPI
-from nursing_api.logging import ALLOWED_KEYS
+from nursing_api.app import create_app
+from nursing_api.logging import ALLOWED_KEYS, LIBRARY_EVENT, QUIET_LOGGERS, configure_logging
 from nursing_core.db import create_engine, ping
 from nursing_core.demo import load_demo_cases
 
-from .helpers import PH_STAFF, STAFF_NURSE, forbidden_words, sign_in
+from .helpers import PH_STAFF, STAFF_NURSE, forbidden_words, leaked, sign_in
 from .test_problems import throwaway_app
 
 
@@ -106,9 +111,13 @@ async def test_logs_never_contain_note_text_or_names(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     del app
-    for name in ("", "nursing_api", "nursing_core", "uvicorn", "fastapi", "starlette"):
-        logging.getLogger(name).setLevel(logging.DEBUG)
+    for name in list(logging.root.manager.loggerDict):
+        pinned = any(name == pin or name.startswith(pin + ".") for pin in QUIET_LOGGERS)
+        if not pinned and isinstance(logging.root.manager.loggerDict[name], logging.Logger):
+            caplog.set_level(logging.DEBUG, logger=name)
     caplog.set_level(logging.DEBUG)
+    for pin in QUIET_LOGGERS:
+        assert logging.getLogger(pin).getEffectiveLevel() >= logging.WARNING
     cases = load_demo_cases()
     assert {case.facility_key for case in cases} == {"ph-demo", "us-demo"}
     for case in cases:
@@ -124,8 +133,95 @@ async def test_logs_never_contain_note_text_or_names(
         assert unknown.status_code == 404
     captured = capfd.readouterr()
     everything = (caplog.text + captured.out + captured.err).lower()
-    assert "request" in captured.out  # something was logged, so the check below means something
+    assert "request" in [line.get("event") for line in json_lines(captured.out)]
     assert caplog.records
-    for case in cases:
-        for word in forbidden_words(case):
-            assert word not in everything, f"{case.key} leaked a forbidden string"
+    assert leaked(everything, cases) == []
+    # The check can fail: a planted leak through a project logger is caught.
+    planted = forbidden_words(cases[0])
+    logging.getLogger("nursing_core.planted").warning(max(planted, key=len))
+    assert leaked(caplog.text + capfd.readouterr().out, cases)
+
+
+CANARY = "zebracanary patient Qorvex Dramblin"
+
+
+@pytest.mark.asyncio
+async def test_keys_off_the_allowlist_are_dropped_on_both_paths(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+    structlog.get_logger("t").info("structlog event", patient_name=CANARY)
+    logging.getLogger("nursing_core.t").warning("stdlib event", extra={"patient_name": CANARY})
+    out = capfd.readouterr().out
+    assert CANARY not in out
+    assert "patient_name" not in out
+    events = [line["event"] for line in json_lines(out)]
+    assert events == ["structlog event", "stdlib event"]
+
+
+@pytest.mark.asyncio
+async def test_a_stdlib_message_never_has_its_arguments_filled_in(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+    logging.getLogger("nursing_core.t").warning("filled %s", CANARY)
+    logging.getLogger("some.library").warning("filled %s", CANARY)
+    out = capfd.readouterr().out
+    assert CANARY not in out
+    assert [line["event"] for line in json_lines(out)] == ["filled %s", LIBRARY_EVENT]
+
+
+@pytest.mark.asyncio
+async def test_an_unretrieved_task_exception_is_logged_without_its_text(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+
+    async def fail() -> None:
+        raise ValueError(CANARY)
+
+    task = asyncio.ensure_future(fail())
+    await asyncio.sleep(0)
+    del task
+
+    gc.collect()
+    out = capfd.readouterr()
+    assert CANARY not in out.out + out.err
+    lines = json_lines(out.out)
+    assert lines
+    assert {line["event"] for line in lines} == {LIBRARY_EVENT}
+
+
+@pytest.mark.asyncio
+async def test_uvicorn_error_logs_come_through_the_allowlist(
+    database_url: str, capfd: pytest.CaptureFixture[str]
+) -> None:
+    import uvicorn.config
+    from nursing_api.settings import Settings
+
+    names = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    saved = {
+        name: (logging.getLogger(name).handlers[:], logging.getLogger(name).propagate)
+        for name in names
+    }
+    try:
+        logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)  # what uvicorn does first
+        create_app(Settings(database_url=database_url))  # then it calls the factory
+        capfd.readouterr()
+        try:
+            raise RuntimeError(CANARY)
+        except RuntimeError:
+            logging.getLogger("uvicorn.error").error(
+                "Exception in ASGI application\n", exc_info=True
+            )
+        captured = capfd.readouterr()
+    finally:
+        for name, (handlers, propagate) in saved.items():
+            logging.getLogger(name).handlers[:] = handlers
+            logging.getLogger(name).propagate = propagate
+        configure_logging()
+    assert CANARY not in captured.out + captured.err
+    assert "Traceback" not in captured.out + captured.err
+    [line] = json_lines(captured.out)
+    assert line["event"] == LIBRARY_EVENT
+    assert line["error_class"] == "RuntimeError"

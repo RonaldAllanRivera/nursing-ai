@@ -92,3 +92,9 @@ def forbidden_words(case: DemoCase) -> set[str]:
     text = case.rough_note.text.lower()
     windows = {text[i : i + 20] for i in range(max(len(text) - 19, 1))}
     return words | windows
+
+
+def leaked(text: str, cases: list[DemoCase]) -> list[str]:
+    """The forbidden strings of every case that appear (case-insensitively) in `text`."""
+    lowered = text.lower()
+    return [word for case in cases for word in forbidden_words(case) if word in lowered]
