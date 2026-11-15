@@ -106,6 +106,10 @@ class PreconditionRequired(Exception):
     """A header the change needs (If-Match or Idempotency-Key) is missing."""
 
 
+class ActionRefused(Exception):
+    """A line action that breaks a rule (answered 422). The message states the rule, never text."""
+
+
 def problem_response(
     status: int,
     code: ProblemCode,
@@ -158,6 +162,16 @@ async def _invalid(_request: Request, exc: Exception) -> JSONResponse:
     return problem_response(422, "invalid_request", "see errors", errors=errors or None)
 
 
+async def _action_refused(_request: Request, exc: Exception) -> JSONResponse:
+    message = str(exc)
+    return problem_response(
+        422,
+        "invalid_request",
+        "see errors",
+        errors=[FieldError(field="body.action", message=message)],
+    )
+
+
 # Each domain error and the problem it becomes. A problem never carries the error's message.
 _SIMPLE: dict[type[Exception], tuple[int, ProblemCode]] = {
     NotSignedIn: (401, "not_signed_in"),
@@ -191,6 +205,7 @@ def install_problems(app: FastAPI) -> None:
         app.add_exception_handler(error, _simple_handler(status, code))
     app.add_exception_handler(ReviewIncomplete, _review_incomplete)
     app.add_exception_handler(RequestValidationError, _invalid)
+    app.add_exception_handler(ActionRefused, _action_refused)
     plain_openapi = app.openapi
 
     def problem_openapi() -> dict[str, Any]:

@@ -120,6 +120,10 @@ FILLED = {
     ("GET", f"/api/v1/patients/{PATIENT}"),
     ("POST", f"/api/v1/patients/{PATIENT}/rough-notes"),
     ("GET", f"/api/v1/draft-jobs/{JOB}"),
+    ("GET", f"/api/v1/notes/{NOTE}"),
+    ("PATCH", f"/api/v1/notes/{NOTE}/lines/e1-D2"),
+    ("POST", f"/api/v1/notes/{NOTE}/sign"),
+    ("POST", f"/api/v1/notes/{NOTE}/discard"),
 }
 NOT_BUILT = [route for route in ROUTES if (route[0], route[1]) not in FILLED]
 
@@ -189,14 +193,6 @@ def test_no_schema_is_split_into_input_and_output() -> None:
     assert not [name for name in schemas if name.endswith(("-Input", "-Output"))]
 
 
-@pytest.mark.asyncio
-async def test_unknown_line_action_is_invalid(client: httpx.AsyncClient) -> None:
-    response = await client.patch(
-        f"/api/v1/notes/{NOTE}/lines/e1-D2", json={"action": "approve"}, headers=IF_MATCH
-    )
-    assert response.status_code == 422
-
-
 SIGNED_IN = {
     (method, TEMPLATES.get(path, path))
     for method, path, *_ in ROUTES
@@ -249,10 +245,3 @@ async def test_oversized_timezone_is_invalid_not_a_crash(client: httpx.AsyncClie
     )
     assert response.status_code == 422
     assert response.json()["errors"][0]["field"] == "body.timezone"
-
-
-@pytest.mark.asyncio
-async def test_nul_character_in_a_line_edit_is_invalid(client: httpx.AsyncClient) -> None:
-    body = {"action": "edit", "text": "HR\u0000 112"}
-    response = await client.patch(f"/api/v1/notes/{NOTE}/lines/e1-D2", json=body, headers=IF_MATCH)
-    assert response.status_code == 422

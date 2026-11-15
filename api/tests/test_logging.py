@@ -111,6 +111,35 @@ async def test_stdlib_loggers_pass_the_same_allowlist(
     assert set(lines[0]) <= ALLOWED_KEYS
 
 
+async def review_and_sign(client: httpx.AsyncClient, note_id: str) -> None:
+    """Edit one line (words of the nurse's own), confirm what still needs her, then sign."""
+    path = f"/api/v1/notes/{note_id}"
+    note = (await client.get(path)).json()
+    lines = [
+        line
+        for entry in note["draft"]["entries"]
+        for line in [entry["focus"], *entry["data"], *entry["action"], *entry["response"]]
+    ]
+    edited = await client.patch(
+        f"{path}/lines/{lines[1]['id']}",
+        json={"action": "edit", "text": "Resting quietly."},
+        headers={"If-Match": '"v1"'},
+    )
+    assert edited.status_code == 200
+    version = edited.json()["version"]
+    for line in lines:
+        if line["status"] != "source_found" and line["id"] != lines[1]["id"]:
+            confirmed = await client.patch(
+                f"{path}/lines/{line['id']}",
+                json={"action": "confirm"},
+                headers={"If-Match": f'"v{version}"'},
+            )
+            assert confirmed.status_code == 200
+            version = confirmed.json()["version"]
+    signed = await client.post(f"{path}/sign", headers={"If-Match": f'"v{version}"'})
+    assert signed.status_code == 200, signed.text
+
+
 @pytest.mark.asyncio
 async def test_logs_never_contain_note_text_or_names(
     app: FastAPI,
@@ -146,6 +175,7 @@ async def test_logs_never_contain_note_text_or_names(
         job = await client.get(f"/api/v1/draft-jobs/{posted.json()['id']}")
         assert job.json()["status"] == "succeeded"
         await client.get(f"/api/v1/patients/{case.patient_id}")
+        await review_and_sign(client, job.json()["note_id"])
         assert (await client.delete("/api/v1/session")).status_code == 204
     captured = capfd.readouterr()
     everything = (caplog.text + captured.out + captured.err).lower()
