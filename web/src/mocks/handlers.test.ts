@@ -160,3 +160,75 @@ describe("demo API mocks", () => {
     });
   });
 });
+
+describe("rough-note writes", () => {
+  const post = (patientId: string, key: string, text: string) =>
+    api.POST("/api/v1/patients/{patient_id}/rough-notes", {
+      params: { path: { patient_id: patientId }, header: { "Idempotency-Key": key } },
+      body: { text },
+    });
+  const notesOf = async (patientId: string) =>
+    (
+      await api.GET("/api/v1/patients/{patient_id}", {
+        params: { path: { patient_id: patientId } },
+      })
+    ).data?.notes ?? [];
+
+  it("adds one note to the patient and replays the same job for the same key and text", async () => {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    const patient = firstPatient("ph-demo");
+    const first = await post(patient.id, "k-a", "pt c/o hilo");
+    const again = await post(patient.id, "k-a", "pt c/o hilo");
+    expect(again.response.status).toBe(202);
+    expect(again.data?.id).toBe(first.data?.id);
+    const notes = await notesOf(patient.id);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.job.status).toBe("queued");
+    expect(notes[0]?.note_status).toBeNull();
+  });
+
+  it("answers 422 idempotency_key_reused for the same key with other text", async () => {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    const patient = firstPatient("ph-demo");
+    await post(patient.id, "k-b", "pt c/o hilo");
+    const other = await post(patient.id, "k-b", "pt c/o hilo since 2am");
+    expect(other.response.status).toBe(422);
+    expect(other.error?.code).toBe("idempotency_key_reused");
+    expect(await notesOf(patient.id)).toHaveLength(1);
+  });
+
+  it("answers 422 invalid_request for an empty or too long note", async () => {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    const patient = firstPatient("ph-demo");
+    expect((await post(patient.id, "k-c", "   ")).error?.code).toBe("invalid_request");
+    expect((await post(patient.id, "k-d", "a".repeat(4001))).response.status).toBe(422);
+    expect((await post(patient.id, "k-e", "a".repeat(4000))).response.status).toBe(202);
+  });
+
+  it("shows the note as a ready draft once the job has answered succeeded", async () => {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    const patient = firstPatient("ph-demo");
+    const jobId = (await post(patient.id, "k-f", "pt c/o hilo")).data?.id ?? "";
+    const poll = () =>
+      api.GET("/api/v1/draft-jobs/{job_id}", { params: { path: { job_id: jobId } } });
+    await poll();
+    await poll();
+    const [note] = await notesOf(patient.id);
+    expect(note?.job.status).toBe("succeeded");
+    expect(note?.note_status).toBe("draft");
+  });
+
+  it("starts every createHandlers() call from clean demo data", async () => {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    await post(firstPatient("ph-demo").id, "k-g", "pt c/o hilo");
+    server.resetHandlers();
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    expect(await notesOf(firstPatient("ph-demo").id)).toEqual([]);
+  });
+});

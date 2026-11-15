@@ -1,4 +1,6 @@
 import { Link } from "@tanstack/react-router";
+import { BedTab } from "../components/BedTab";
+import { SyntheticTag } from "../components/SyntheticTag";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useFacility } from "../facility/useFacility";
 import { formatShiftRange } from "../region/format";
@@ -67,15 +69,10 @@ export function PatientList() {
                   params={{ patientId: patient.id }}
                   className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-ink no-underline hover:bg-sunk"
                 >
-                  <span className="grid min-w-14 flex-none place-items-center rounded-control rounded-bl-[2px] bg-primary px-2 py-1 leading-none text-primary-ink">
-                    <span className="text-12 font-medium opacity-85">{w.bed}</span>
-                    <span className="text-21 font-bold">{patient.bed_label}</span>
-                  </span>
+                  <BedTab word={w.bed} label={patient.bed_label} />
                   <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
                     <span className="text-18 font-bold">{patient.display_name}</span>
-                    <span className="rounded-full border border-dashed border-rule-strong px-2 text-14 font-semibold text-ink-2">
-                      Synthetic
-                    </span>
+                    <SyntheticTag />
                   </span>
                   <span className="flex flex-wrap gap-x-4 text-ink-2">
                     <span>{`${String(patient.age)} ${patient.sex}`}</span>

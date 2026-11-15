@@ -13,7 +13,11 @@ export function createQueryClient() {
     }
   };
   const queryClient: QueryClient = new QueryClient({
-    defaultOptions: { queries: { staleTime: 5_000, refetchOnWindowFocus: false } },
+    defaultOptions: {
+      queries: { staleTime: 5_000, refetchOnWindowFocus: false },
+      // Only a mutation that opts into `retry` uses this: 0.5 s, then 1 s.
+      mutations: { retryDelay: (attempt) => (attempt === 0 ? 500 : 1000) },
+    },
     queryCache: new QueryCache({ onError: endSessionOn401 }),
     mutationCache: new MutationCache({ onError: endSessionOn401 }),
   });

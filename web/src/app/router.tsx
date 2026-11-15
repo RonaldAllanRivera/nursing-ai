@@ -7,6 +7,7 @@ import {
   redirect,
   type RouterHistory,
 } from "@tanstack/react-router";
+import { NotePage } from "../notes/NotePage";
 import { PatientList } from "../patients/PatientList";
 import { PatientPage } from "../patients/PatientPage";
 import { SettingsPage } from "../settings/SettingsPage";
@@ -77,6 +78,13 @@ const patientRoute = createRoute({
   component: PatientPage,
 });
 
+const noteRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/notes/$noteId",
+  beforeLoad: ({ context }) => requireNurse(context.queryClient),
+  component: NotePage,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
@@ -91,7 +99,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  appRoute.addChildren([patientsRoute, patientRoute, settingsRoute]),
+  appRoute.addChildren([patientsRoute, patientRoute, noteRoute, settingsRoute]),
 ]);
 
 /** Tests pass a memory history to mount any path; the app passes none (the browser's). */

@@ -32,11 +32,13 @@ function problem(status: number, code: ProblemCode, errors?: Schemas["FieldError
  * The P1 endpoints answered from the demo cases, with the state a session needs (who is signed
  * in, how often a job was polled). The web lane adds the write behaviours.
  */
-export function createHandlers(data: DemoApi = demoApi): HttpHandler[] {
+export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
+  // Writes change this copy, so every call (every test, every page load) starts clean.
+  const data = structuredClone(source);
   let personaId: string | null = null;
   let shiftOverride: Schemas["ShiftRef"] | null = null;
   const polls = new Map<string, number>();
-  const jobsByKey = new Map<string, string>();
+  const sent = new Map<string, { text: string; jobId: string }>();
 
   const session = () => {
     const found = personaId === null ? undefined : data.sessions[personaId];
@@ -121,17 +123,35 @@ export function createHandlers(data: DemoApi = demoApi): HttpHandler[] {
       return found ? HttpResponse.json(found) : problem(404, "not_found");
     }),
 
-    http.post<{ id: string }>("*/api/v1/patients/:id/rough-notes", ({ params, request }) => {
+    http.post<{ id: string }>("*/api/v1/patients/:id/rough-notes", async ({ params, request }) => {
       const current = session();
       if (!current) return problem(401, "not_signed_in");
       if (current.facility_key === null) return problem(403, "forbidden");
       const key = request.headers.get("Idempotency-Key");
       if (!key) return problem(428, "precondition_required");
-      const jobId = jobsByKey.get(key) ?? data.jobForPatient[params.id];
+      const detail = data.patientDetails[params.id];
+      if (!detail) return problem(404, "not_found");
+      const body = (await request.json()) as Schemas["RoughNoteIn"];
+      if (body.text.trim() === "" || Array.from(body.text).length > 4000) {
+        return problem(422, "invalid_request", [
+          { field: "body.text", message: "A note is 1 to 4000 characters." },
+        ]);
+      }
+      const earlier = sent.get(key);
+      if (earlier && earlier.text !== body.text) return problem(422, "idempotency_key_reused");
+      const jobId = earlier?.jobId ?? data.jobForPatient[params.id];
       const job = jobId === undefined ? undefined : data.jobs[jobId];
       if (!job) return problem(404, "not_found");
-      jobsByKey.set(key, job.id);
       const queued: Schemas["DraftJobOut"] = { ...job, status: "queued", note_id: null };
+      if (!earlier) {
+        sent.set(key, { text: body.text, jobId: job.id });
+        detail.notes.push({
+          rough_note_id: job.rough_note_id,
+          written_at: new Date().toISOString(),
+          note_status: null,
+          job: queued,
+        });
+      }
       return HttpResponse.json(queued, {
         status: 202,
         headers: { Location: `/api/v1/draft-jobs/${job.id}` },
@@ -144,6 +164,16 @@ export function createHandlers(data: DemoApi = demoApi): HttpHandler[] {
       if (!job) return problem(404, "not_found");
       const seen = (polls.get(job.id) ?? 0) + 1;
       polls.set(job.id, seen);
+      if (seen > 1) {
+        // Once it is done, the patient's notes list shows the draft as ready.
+        for (const detail of Object.values(data.patientDetails)) {
+          for (const note of detail.notes) {
+            if (note.job.id !== job.id) continue;
+            note.job = job;
+            note.note_status = job.status === "succeeded" ? "draft" : null;
+          }
+        }
+      }
       // The first poll still finds the job queued; after that the draft is ready.
       const answer: Schemas["DraftJobOut"] =
         seen === 1 ? { ...job, status: "queued", note_id: null } : job;

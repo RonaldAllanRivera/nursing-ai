@@ -12,7 +12,8 @@ export async function renderApp(path = "/") {
   const queryClient = createQueryClient();
   queryClient.setDefaultOptions({
     queries: { ...queryClient.getDefaultOptions().queries, retry: false },
-    mutations: { retry: false },
+    // A mutation that opts into `retry` (the rough note) still retries, with no waiting.
+    mutations: { retry: false, retryDelay: 0 },
   });
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createAppRouter({ history, queryClient });
