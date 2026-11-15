@@ -178,8 +178,11 @@ def _same_unit(drafted: WrittenUnit, written: WrittenUnit | None, units: UnitDef
     """Whether the unit a note writes after a value agrees with the one the line writes after it.
 
     A unit the alias table reads must be the note's unit, or the facility's default when the note
-    writes no unit at all. A dose or volume unit written on both sides must be the same unit.
+    writes no unit at all. A dose or volume unit written on both sides must be the same unit, and
+    so must its rate: a bolus of 1000 units is not 1000 units per hour.
     """
+    if written is not None and written.rate != drafted.rate:
+        return False
     if drafted.unit is not None:
         if written is None:
             if default_unit(drafted.unit, units) != drafted.unit:

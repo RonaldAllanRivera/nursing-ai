@@ -665,3 +665,45 @@ def test_checking_a_line_never_raises_on_arbitrary_text(
         line = _check(note, text, quotes, own=own, units=units)
         assert line.text == text
         assert recheck_line(line, text, prepare(note), units).text == text
+
+
+def _rate_status(note: str, text: str) -> DraftLine:
+    return _check(note, text, [note])
+
+
+def test_a_different_rate_unit_is_a_unit_mismatch_over_the_whole_rate() -> None:
+    line = _rate_status("heparin 1000 units/hr", "Heparin 1000 mL/hr.")
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    [mismatch] = line.number_mismatches
+    assert mismatch.kind is MismatchKind.UNIT
+    assert (mismatch.draft_text, mismatch.note_text) == ("1000 mL/hr", "1000 units/hr")
+    assert mismatch.draft_span == Span(start=8, end=18)
+    assert mismatch.note_span == Span(start=8, end=21)
+
+
+def test_rate_units_that_differ_are_flagged() -> None:
+    for note, text, on in [
+        ("dopamine 5 mcg/kg/min", "Dopamine 5 mg/kg/min.", "5 mg/kg/min"),
+        ("dopamine 5 mcg/kg/min", "Dopamine 5 mcg/min.", "5 mcg/min"),
+        ("heparin 1000 units/hr", "Heparin bolus 1000 units.", "1000 units"),
+        ("heparin 1000 u/h", "Heparin 1000 mL/h.", "1000 mL/h"),
+        ("30gtts/min", "30 gtts/hr.", "30 gtts/hr"),
+    ]:
+        line = _rate_status(note, text)
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+        [mismatch] = line.number_mismatches
+        assert mismatch.kind is MismatchKind.UNIT
+        assert mismatch.draft_text == on
+
+
+def test_a_volume_over_hours_is_checked_against_its_written_unit() -> None:
+    line = _rate_status("D5LR 1L/8hrs", "D5LR 1 mL over 8 hrs.")
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    [mismatch] = line.number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.UNIT, "1 mL")
+    assert _rate_status("D5LR 1L/8hrs", "D5LR 1 L over 8 hrs.").status is LineStatus.SOURCE_FOUND
+
+
+def test_the_same_rate_in_another_spelling_agrees() -> None:
+    for text in ["Heparin 1000 units/h.", "Heparin 1000 units/hr.", "Heparin 1000 U/hours."]:
+        assert _rate_status("heparin 1000 units/hr", text).status is LineStatus.SOURCE_FOUND

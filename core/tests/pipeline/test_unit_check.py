@@ -4,7 +4,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.domain.notes import Span
 from nursing_core.domain.units import Ucum
-from nursing_core.pipeline.unit_check import number_value, numbers_in, unit_after, unit_end_after
+from nursing_core.pipeline.unit_check import (
+    WrittenUnit,
+    number_value,
+    numbers_in,
+    unit_after,
+    unit_end_after,
+    written_unit,
+)
 
 
 def _unit(text: str, number: str) -> Ucum | None:
@@ -46,11 +53,14 @@ def test_unit_after_reads_the_alias_table_with_or_without_a_space() -> None:
         assert _unit(text, number) is unit, text
 
 
-def test_c_slash_o_and_ml_per_hour_are_not_units() -> None:
+def test_c_slash_o_is_shorthand_and_not_a_unit() -> None:
     assert _unit("BP 90/60 c/o dizzy", "60") is None
     assert _unit("BP 90/60 C/o dizzy", "60") is None
     assert _unit("2 Foley", "2") is None
-    assert _unit("100 mL/hr", "100") is None
+    assert _unit("T 38 c/o chills", "38") is None
+    assert _unit("2 f/u", "2") is None
+    assert _unit("5 u/a", "5") is None
+    assert _unit("1 c/w", "1") is None
     assert _unit("3 cc2", "3") is None
     assert _unit("5\nF", "5") is None
 
@@ -236,3 +246,53 @@ def test_numbers_and_their_values_never_raise_on_arbitrary_text(text: str) -> No
         assert text[span.start : span.end] == token
         number_value(token)
         unit_end_after(text, span)
+
+
+def _written(text: str, number: str) -> WrittenUnit | None:
+    start = text.index(number)
+    return written_unit(text, Span(start=start, end=start + len(number)))
+
+
+def test_a_unit_followed_by_a_slash_and_letters_is_a_rate() -> None:
+    assert _unit("100 mL/hr", "100") is Ucum.ML
+    rate = _written("heparin 1000 units/hr.", "1000")
+    assert rate is not None
+    assert (rate.compared, rate.rate, rate.end) == ("units", ("hour",), 21)
+    per_kg = _written("dopamine 5 mcg/kg/min", "5")
+    assert per_kg is not None
+    assert (per_kg.compared, per_kg.rate, per_kg.end) == ("mcg", ("kg", "minute"), 21)
+
+
+def test_rate_denominators_are_read_by_meaning() -> None:
+    for text, number, rate in [
+        ("100 mL/h", "100", ("hour",)),
+        ("100 mL/hrs", "100", ("hour",)),
+        ("100 mL/Hour", "100", ("hour",)),
+        ("5 mcg/mins", "5", ("minute",)),
+        ("1 g/d", "1", ("day",)),
+        ("1 L/h", "1", ("hour",)),
+        ("1000 u/h", "1000", ("hour",)),
+        ("5 mg/kgs/day", "5", ("kg", "day")),
+        ("5 mg/cc", "5", ("ml",)),
+        ("5 mg/dL", "5", ("dl",)),
+        ("1000 units", "1000", ()),
+    ]:
+        written = _written(text, number)
+        assert written is not None, text
+        assert written.rate == rate, text
+
+
+def test_a_slash_then_a_digit_or_a_space_ends_the_unit() -> None:
+    written = _written("D5LR 1L/8hrs", "1")
+    assert written is not None
+    assert (written.compared, written.rate, written.end) == ("l", (), 7)
+    assert [token for token, _ in numbers_in("D5LR 1L/8hrs")] == ["1", "8"]
+    spaced = _written("5 mg / kg", "5")
+    assert spaced is not None
+    assert spaced.rate == ()
+
+
+def test_one_letter_shorthand_has_no_unit_at_all() -> None:
+    for text, number in [("T 38 c/o chills", "38"), ("2 f/u", "2"), ("5 u/a", "5"), ("1 c/w", "1")]:
+        assert _written(text, number) is None, text
+    assert _written("1 U/A.", "1") is None

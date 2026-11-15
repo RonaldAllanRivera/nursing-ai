@@ -7,6 +7,12 @@ group it stands for, and a whole number with a proper fraction ("1½", "1 1/2", 
 unit ("D5LR", "q4h") belong to a word; "HR121bpm" and "BT37.9C" keep their numbers. The code never
 converts units. It only reads the few spellings below, so a unit the nurse didn't write can be
 told apart from one she did.
+
+A unit followed by "/" and letters is a rate: "units/hr" is units per hour and "mcg/kg/min" is mcg
+per kg per minute. Only "/" makes a rate ("per hour" is not read as one), and each denominator is
+kept by meaning ("h", "hr" and "hours" are one). A "/" followed by a digit or a space ends the unit
+("1L/8hrs" is the unit L, then the number 8). A one-letter unit, "/", one letter and then no
+letter or digit is clinical shorthand, not a unit ("c/o", "f/u", "u/a"); "u/h" and "g/d" are rates.
 """
 
 import re
@@ -95,6 +101,14 @@ _UNIT_SPELLINGS = frozenset(
     | {"bpm", "cpm", "mmhg", "lpm", "gtts", "kcal", "cm", "mm"}
     | {"degf", "degc", "fahrenheit", "celsius", "kilogram", "kilograms", "pound", "pounds"}
 )
+# Rate denominators compared by meaning. Any other letter run is compared by its folded spelling.
+_DENOMINATORS = {
+    **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), "hour"),
+    **dict.fromkeys(("min", "mins", "minute", "minutes"), "minute"),
+    **dict.fromkeys(("d", "day", "days"), "day"),
+    **dict.fromkeys(("kg", "kgs"), "kg"),
+}
+_TIME_LETTERS = "hd"  # the one-letter denominators that make "u/h" and "g/d" rates
 type NumberValue = tuple[str | Decimal, ...]
 _WINDOW = 24  # how many typed characters after a number are read for its unit
 
@@ -105,7 +119,8 @@ class WrittenUnit:
 
     unit: Ucum | None  # the unit the alias table reads, if it reads one
     compared: str | None  # the dose or volume unit compared by spelling, if one is written
-    end: int  # where the unit ends in the text
+    rate: tuple[str, ...]  # what it is per ("hour"; "kg", "minute"), empty when it is no rate
+    end: int  # where the unit, with its rate, ends in the text
 
 
 def numbers_in(text: str) -> list[tuple[str, Span]]:
@@ -203,11 +218,28 @@ def written_unit(text: str, number_span: Span) -> WrittenUnit | None:
         return None
     unit, unit_end = (None, number_span.end) if read is None else read
     spelling, spelling_end = (None, number_span.end) if spelled is None else spelled
+    rate, end = _rate_after(text, max(unit_end, spelling_end))
     return WrittenUnit(
         unit=unit,
         compared=None if spelling is None else _COMPARED_UNITS.get(spelling),
-        end=max(unit_end, spelling_end),
+        rate=rate,
+        end=end,
     )
+
+
+def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
+    """What the unit ending at `unit_end` is per ("/hr", "/kg/min"), and where the rate ends."""
+    folded, origin = _fold_after(text, unit_end)
+    rate: list[str] = []
+    position = 0
+    while folded.startswith("/", position):
+        letters = _LETTERS.match(folded, position + 1)
+        if letters is None:
+            break
+        spelling = letters.group().casefold()
+        rate.append(_DENOMINATORS.get(spelling) or _COMPARED_UNITS.get(spelling) or spelling)
+        position = letters.end()
+    return tuple(rate), unit_end if not rate else origin[position - 1] + 1
 
 
 def _spelling_after(text: str, number_span: Span) -> tuple[str, int] | None:
@@ -237,7 +269,7 @@ def _fold_after(text: str, start: int) -> tuple[str, list[int]]:
 def _read_unit(folded: str) -> tuple[Ucum, int] | None:
     """The unit at the start of the folded characters after a number, and where it ends."""
     if folded.startswith("#"):
-        return (Ucum.LB, 1) if _word_ends(folded, 1) else None
+        return (Ucum.LB, 1) if _word_ends(folded, 1) and folded[1:2] != "/" else None
     start = len(folded) - len(folded.lstrip(" \t"))
     if folded.startswith("°", start):
         letter = start + 1 + len(folded[start + 1 :]) - len(folded[start + 1 :].lstrip(" "))
@@ -254,6 +286,25 @@ def _read_unit(folded: str) -> tuple[Ucum, int] | None:
 
 
 def _word_ends(folded: str, stop: int) -> bool:
-    """A unit isn't followed by a letter, a digit or a slash ("c/o", "2 Foley", "100 mL/hr")."""
+    """A unit isn't followed by a letter or a digit ("2 Foley"), or by one-letter shorthand.
+
+    A "/" after the unit is allowed: it starts a rate ("100 mL/hr"), unless the unit is one letter
+    and the "/" is followed by one letter more, as in "c/o", "f/u" and "u/a".
+    """
     following = folded[stop : stop + 1]
-    return not (following.isalnum() or following == "/")
+    if following.isalnum():
+        return False
+    return following != "/" or not _is_shorthand(folded, stop)
+
+
+def _is_shorthand(folded: str, stop: int) -> bool:
+    """One letter, "/", one letter, then no letter or digit; "u/h" and "g/d" are rates instead."""
+    unit_is_one_letter = folded[stop - 1].isalpha() and not (
+        stop >= 2 and folded[stop - 2].isalpha()
+    )
+    second = _LETTERS.match(folded, stop + 1)
+    if not unit_is_one_letter or second is None or len(second.group()) != 1:
+        return False
+    return (
+        second.group().casefold() not in _TIME_LETTERS and not folded[second.end() :][:1].isdigit()
+    )
