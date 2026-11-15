@@ -1,22 +1,4 @@
-mock_provider "aws" {
-  mock_resource "aws_s3_bucket" {
-    defaults = {
-      arn = "arn:aws:s3:::mock-bucket"
-    }
-  }
-
-  mock_resource "aws_cloudfront_distribution" {
-    defaults = {
-      arn = "arn:aws:cloudfront::123456789012:distribution/MOCKDIST"
-    }
-  }
-
-  mock_resource "aws_cloudfront_origin_access_control" {
-    defaults = {
-      id = "MOCKOAC"
-    }
-  }
-}
+mock_provider "aws" {}
 
 override_resource {
   target = aws_s3_bucket.site
@@ -106,6 +88,21 @@ run "bucket_not_public" {
   }
 
   assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.site.policy).Statement : s.Principal if s.Effect == "Deny"][0] == "*" && [for s in jsondecode(aws_s3_bucket_policy.site.policy).Statement : s.Action if s.Effect == "Deny"][0] == "s3:*"
+    error_message = "The TLS deny must apply to every principal and every S3 action."
+  }
+
+  assert {
+    condition     = contains([for s in jsondecode(aws_s3_bucket_policy.site.policy).Statement : s.Resource if s.Effect == "Deny"][0], aws_s3_bucket.site.arn) && contains([for s in jsondecode(aws_s3_bucket_policy.site.policy).Statement : s.Resource if s.Effect == "Deny"][0], "${aws_s3_bucket.site.arn}/*")
+    error_message = "The TLS deny must cover the bucket and its objects."
+  }
+
+  assert {
+    condition     = length([for s in jsondecode(aws_s3_bucket_policy.site.policy).Statement : s if s.Effect == "Deny"]) == 1
+    error_message = "The policy must have exactly one Deny."
+  }
+
+  assert {
     condition     = aws_s3_bucket_policy.site.bucket == aws_s3_bucket.site.id
     error_message = "The policy must be on the site bucket."
   }
@@ -143,7 +140,7 @@ run "cloudfront_reads_through_oac_over_https" {
   }
 
   assert {
-    condition     = output.domain_name == "d111111abcdef8.cloudfront.net" && output.distribution_id == "EDISTRIBUTION1" && output.bucket_name == "demo-web-bucket"
+    condition     = output.domain_name == "d111111abcdef8.cloudfront.net" && output.distribution_id == "EDISTRIBUTION1" && output.bucket_name == "demo-web-bucket" && output.bucket_arn == "arn:aws:s3:::demo-web-bucket" && output.distribution_arn == "arn:aws:cloudfront::123456789012:distribution/EDISTRIBUTION1"
     error_message = "Outputs must come from the distribution and bucket."
   }
 }
@@ -213,6 +210,8 @@ run "spa_rewrite_on_the_web_paths_only" {
 }
 
 run "no_api_behaviour_without_an_api_domain" {
+  command = plan
+
   assert {
     condition     = length(aws_cloudfront_distribution.site.ordered_cache_behavior) == 0
     error_message = "No ordered behaviours without an API domain."
@@ -221,5 +220,29 @@ run "no_api_behaviour_without_an_api_domain" {
   assert {
     condition     = length(aws_cloudfront_distribution.site.origin) == 1
     error_message = "Only the bucket origin without an API domain."
+  }
+}
+
+run "api_origin_with_a_scheme_is_refused" {
+  command = plan
+
+  variables {
+    api_origin_domain = "https://abc123.execute-api.ap-southeast-2.amazonaws.com"
+  }
+
+  expect_failures = [var.api_origin_domain]
+}
+
+run "old_site_files_expire" {
+  command = plan
+
+  assert {
+    condition     = one(aws_s3_bucket_lifecycle_configuration.site.rule).status == "Enabled" && one(one(aws_s3_bucket_lifecycle_configuration.site.rule).noncurrent_version_expiration).noncurrent_days == 30
+    error_message = "Noncurrent versions must expire after 30 days."
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_lifecycle_configuration.site.rule).abort_incomplete_multipart_upload).days_after_initiation == 7
+    error_message = "Incomplete multipart uploads must be aborted after 7 days."
   }
 }

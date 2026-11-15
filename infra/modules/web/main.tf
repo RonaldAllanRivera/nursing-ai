@@ -26,6 +26,29 @@ resource "aws_s3_bucket_versioning" "site" {
   }
 }
 
+# Versioning keeps replaced files, so old versions expire after 30 days.
+resource "aws_s3_bucket_lifecycle_configuration" "site" {
+  bucket = aws_s3_bucket.site.id
+
+  # Versioning must be on before noncurrent versions can expire.
+  depends_on = [aws_s3_bucket_versioning.site]
+
+  rule {
+    id     = "expire-old-site-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 # Objects are encrypted with SSE-S3 (AES-256), which is free. A customer managed
 # KMS key costs $1 a month, and the bucket only holds the public web build.
 #trivy:ignore:AWS-0132
@@ -125,9 +148,7 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   JS
 }
 
-# A WAF costs at least $5 a month, which is out of scope for a demo. The
-# default cloudfront.net certificate's minimum TLS version is set by AWS; a
-# custom domain brings an ACM certificate with TLSv1.2_2021.
+# A WAF costs at least $5 a month, which is out of scope for a demo.
 #trivy:ignore:AWS-0011
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
@@ -192,6 +213,8 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
+  # The default cloudfront.net certificate's minimum TLS version is set by AWS;
+  # a custom domain brings an ACM certificate with TLSv1.2_2021.
   viewer_certificate {
     cloudfront_default_certificate = true
   }
