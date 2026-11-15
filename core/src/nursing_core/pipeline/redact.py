@@ -38,7 +38,6 @@ _STATES = re.findall(
 # Codes that are also everyday clinical abbreviations: a number after them is not a ZIP.
 _CLINICAL_CODES = set(re.findall(r"[A-Z]{2}", "CO CT ID IN LA MD ME MS NC OK OR PA SC"))
 _ZIP_STATE_CODES = [s for s in _STATES if s not in _CLINICAL_CODES]
-_MAX_PASSES = 5
 # Highest precedence first: ties between hits of equal width go to the earlier kind.
 _KINDS = [
     "PATIENT",
@@ -239,8 +238,9 @@ def _identity_hits(text: str, identity: PatientIdentity) -> list[_Hit]:
     regex = _identity_regex(terms)
     plain = _fold(masked)
     hits = _postal_hits(plain, identity)
-    # Names joined by an invisible character ("Ann<ZWSP>Bo") only match when it counts as a
-    # space; a name split by one ("Te<SHY>o") only matches when it counts as nothing. Try both.
+    # Names joined by an invisible character ("Teodora<ZWSP>Ramil") only match when it counts as
+    # a space; a name split by one ("Teo<SHY>dora") only matches when it counts as nothing.
+    # Try both.
     for folded in (plain, _fold(masked, format_as_space=True)):
         for m in regex.finditer(folded.text):
             kind = terms[(m.lastindex or 1) - 1][1]
@@ -280,15 +280,24 @@ _PHONE = "|".join(
         r"0\d-\d{4}-\d{4}",
     ]
 )
-_PHONE_CUE = r"(?:tel|phone|ph|mobile|cell|contact|call)(?:\s*(?:no\b\.?|number|#))?"
+_PHONE_CUE_WORD = r"(?<![A-Za-z])(?:tel|phone|ph|mobile|cell|contact|call|number)(?![A-Za-z])"
+_PHONE_CUE = re.compile(_PHONE_CUE_WORD, re.IGNORECASE)
+# A cue right before the number, with its "no.", "number" or "#": "Tel. no.", "phone: no.".
+_PHONE_CUE_BEFORE = rf"{_PHONE_CUE_WORD}[.:]?(?:\s*(?:no\b\.?|number|#))?[.:]?\s*"
+# Digits in groups of 3-3-4 separated by spaces are also doses and volumes: a phone cue must come
+# earlier on the same line (see _spaced_phone_hits).
+_SPACED_PHONE = re.compile(r"(?<!\d)\d{3} \d{3} \d{4}(?!\d)")
 _DATE = "|".join(
     [
         r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)",
         r"(?<![\d/-])\d{1,2}([/-])\d{1,2}\1(?:\d{4}|\d{2})(?![\d/-])",
-        rf"{_DAY}\s+(?:{_ANY_YEAR_MONTH})(?!\w)(?:{_YEAR})?",
-        rf"{_DAY}\s+(?:{_WITH_YEAR_MONTH})(?!\w){_ANY_YEAR}",
+        rf"{_DAY}\s+(?:of\s+)?(?:{_ANY_YEAR_MONTH})(?!\w)(?:{_YEAR})?",
+        rf"{_DAY}\s+(?:of\s+)?(?:{_WITH_YEAR_MONTH})(?!\w){_ANY_YEAR}",
         rf"(?<!\w)(?:{_ANY_YEAR_MONTH})\s+{_DAY}(?:{_YEAR})?",
         rf"(?<!\w)(?:{_WITH_YEAR_MONTH})\s+{_DAY}{_ANY_YEAR}",
+        # "11.12.2026" (a full year, so "1.5.10" stays a number) and "2026/11/12"
+        r"(?<![\d.])\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}(?!\d)(?!\.\d)",
+        r"(?<![\d/])(?:19|20)\d{2}/(?:1[0-2]|0?[1-9])/(?:3[01]|[12]\d|0?[1-9])(?![\d/])",
     ]
 )
 _ZIP_STATES = "|".join(_ZIP_STATE_CODES)
@@ -302,19 +311,21 @@ _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
     ("URL", re.compile(r"(?<!\w)(?:https?://|www\.)\S*[^\s.,;:)]", re.IGNORECASE), 0),
     ("IP", re.compile(rf"(?<![\d.])(?:{_OCTET}\.){{3}}{_OCTET}(?!\d)(?!\.\d)"), 0),
     ("SSN", re.compile(r"(?<![\d-])\d{3}-\d{2}-\d{4}(?!\d)(?!-\d)"), 0),
+    # Nine digits with no dashes are an SSN only right after "SSN".
+    ("SSN", re.compile(r"(?<![A-Za-z])SSN\s*(?:#|no\.?)?[.:]?\s*(\d{9})(?!\d)", re.I), 1),
     ("PHONE", re.compile(rf"(?<![\w+])(?:{_PHONE})(?!\d)"), 0),
-    # Digits in groups of 3-3-4 separated by spaces are also doses and volumes: a phone cue first.
-    (
-        "PHONE",
-        re.compile(rf"(?<![A-Za-z]){_PHONE_CUE}[.:]?\s*(\d{{3}} \d{{3}} \d{{4}})(?!\d)", re.I),
-        1,
-    ),
+    # A 4-4 landline ("8555 0134") looks like two clock times, so its cue must come right before.
+    ("PHONE", re.compile(rf"{_PHONE_CUE_BEFORE}(\d{{4}} \d{{4}})(?!\d)", re.I), 1),
     ("DATE", re.compile(_DATE), 0),
     ("ZIP", re.compile(rf"(?<![A-Za-z])(?:{_ZIP_STATES}),?\s+(\d{{5}}(?:-\d{{4}})?)(?!\d)"), 1),
 ]
 _AGE_UNIT = r"(?:y/o|y\.o\.?|yo|years?|yrs?)(?!\w)"
-# "PIV age: 96 hrs" is how long a line has been in, not a person's age.
-_NOT_A_DURATION = r"(?!\s*(?:hrs?|hours?|h|days?|d|mins?|minutes?|weeks?|wks?|months?|mos?)(?!\w))"
+# "PIV age: 96 hrs" is how long a line has been in, not a person's age. A one-letter "h" or "d"
+# followed by "/" or by "." and a letter is shorthand instead ("91 h/o", "91 d/c", "91 h.o.").
+_NOT_A_DURATION = (
+    r"(?!\s*(?:(?:hrs?|hours?|days?|mins?|minutes?|weeks?|wks?|months?|mos?)(?!\w)"
+    r"|[hd](?![\w/])(?!\.\w)))"
+)
 _AGE = re.compile(
     rf"(?<![\d.])(\d{{2,3}})(?=\s*-?\s*{_AGE_UNIT})|(?<!\w)aged?\s*:?\s*(\d{{2,3}})(?!\d){_NOT_A_DURATION}",
     re.IGNORECASE,
@@ -322,11 +333,22 @@ _AGE = re.compile(
 
 
 def _pattern_hits(text: str) -> list[_Hit]:
-    return [
+    hits = [
         _Hit(m.start(group), m.end(group), kind)
         for kind, pattern, group in _PATTERNS
         for m in pattern.finditer(text)
     ]
+    return [*hits, *_spaced_phone_hits(text)]
+
+
+def _spaced_phone_hits(text: str) -> list[_Hit]:
+    """Spaced 3-3-4 digit groups with a phone cue anywhere earlier on the same line."""
+    hits: list[_Hit] = []
+    for m in _SPACED_PHONE.finditer(text):
+        line_start = max(text.rfind("\n", 0, m.start()), text.rfind("\r", 0, m.start())) + 1
+        if _PHONE_CUE.search(text, line_start, m.start()):
+            hits.append(_Hit(m.start(), m.end(), "PHONE"))
+    return hits
 
 
 def _cover(group: list[_Hit]) -> _Hit:
@@ -398,7 +420,7 @@ def _substitute(text: str, hits: list[_Hit], ages: list[tuple[int, int]], book: 
 
 
 def _find_hits(text: str, identity: PatientIdentity, *, skip_tokens: bool) -> list[_Hit]:
-    """Identifiers and patterns, merged; on a repeat pass, never anything touching a token."""
+    """Identifiers and patterns, merged; on a repeat pass, never anything overlapping a token."""
     hits = [*_identity_hits(text, identity), *_pattern_hits(text)]
     if skip_tokens:
         tokens = [m.span() for m in _TOKEN_SHAPE.finditer(text)]
@@ -409,18 +431,16 @@ def _find_hits(text: str, identity: PatientIdentity, *, skip_tokens: bool) -> li
 def redact(text: str, identity: PatientIdentity) -> Redacted:
     """Replace identifiers with `[KIND_n]` tokens; each distinct spelling gets its own token.
 
-    The note is then searched again, a few times at most, because replacing one identifier can
-    leave another that was glued to it standing on its own.
+    The note is then searched again until nothing is found, because replacing one identifier can
+    leave another that was glued to it standing on its own. That always ends: a repeat pass only
+    replaces text outside every token with a token, and tokens can't overlap, so each pass leaves
+    less text outside a token than the one before.
     """
     book = _TokenBook(text)
     hits = _find_hits(text, identity, skip_tokens=False)
     current = _substitute(text, hits, _age_spans(text, hits), book)
-    again = _find_hits(current, identity, skip_tokens=True)
-    passes = 0
-    while again and passes < _MAX_PASSES:
+    while again := _find_hits(current, identity, skip_tokens=True):
         current = _substitute(current, again, [], book)
-        again = _find_hits(current, identity, skip_tokens=True)
-        passes += 1
     return Redacted(current, book.mapping)
 
 

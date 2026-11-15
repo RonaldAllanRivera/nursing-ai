@@ -591,10 +591,26 @@ def test_a_spaced_ph_number_needs_a_mobile_prefix() -> None:
 
 
 @pytest.mark.parametrize(
-    "note", ["PIV age: 96 hrs", "line age 96 hrs", "age 96 hours", "age 120 days", "age 96 h"]
+    "note",
+    ["PIV age: 96 hrs", "line age 96 hrs", "age 96 hours", "age 120 days", "age 96 h", "age 96 h."],
 )
 def test_age_followed_by_a_duration_is_not_an_age(note: str) -> None:
     assert redact(note, PERPETUA).text == note
+
+
+@pytest.mark.parametrize(
+    ("note", "expected"),
+    [
+        ("Age: 91 h/o HTN", "Age: 90+ h/o HTN"),
+        ("age 91 d/c", "age 90+ d/c"),
+        ("aged 91 d/t fall", "aged 90+ d/t fall"),
+        ("aged 91 h.o. CHF", "aged 90+ h.o. CHF"),
+    ],
+)
+def test_an_age_before_a_one_letter_shorthand_still_becomes_90_plus(
+    note: str, expected: str
+) -> None:
+    assert redact(note, PERPETUA).text == expected
 
 
 def test_age_labels_still_redact_without_a_duration() -> None:
@@ -609,3 +625,75 @@ def test_later_pass_tokens_skip_numbers_typed_in_the_original_note() -> None:
     out = redact(note, ident)
     assert out.text == "[PATIENT_2][EMAIL_1] [URL_1]"
     assert restore(out.text, out.mapping) == note
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "Tel. no. 415 555 0134",
+        "phone: no. 415 555 0134",
+        "son's number: 415 555 0134",
+        "Ramil (son) tel 415 555 0134",
+        "Contact: Ramil (son), 415 555 0134",
+    ],
+)
+def test_a_phone_cue_with_a_full_stop_or_earlier_on_the_line_counts(note: str) -> None:
+    out = redact(note, TEODORA)
+    assert "415 555 0134" not in out.text
+    assert "415 555 0134" in out.mapping.values()
+    assert restore(out.text, out.mapping) == note
+
+
+def test_every_spaced_phone_after_a_cue_on_its_line_is_redacted() -> None:
+    note = "tel 415 555 0134 or 415 555 0199\nI&O 240 120 1000"
+    out = redact(note, PERPETUA)
+    assert out.text == "tel [PHONE_1] or [PHONE_2]\nI&O 240 120 1000"
+
+
+def _without_tokens(text: str) -> str:
+    return re.sub(r"\[[A-Z_]+_\d+\]", "", text)
+
+
+def test_redaction_keeps_going_until_a_long_chain_of_glued_identifiers_is_gone() -> None:
+    probe = "Ramil415-555-0134Nov 12+63 917 555 0134Dec 4 +1 415 555 0199Jan 5+1 415 555 0199"
+    longer = "Ramil" + "".join(f"+1 415 555 01{n:02d}Jan {n + 1}" for n in range(10))
+    for note in (probe, longer):
+        out = redact(note, TEODORA)
+        assert "555" not in _without_tokens(out.text), out.text
+        assert not mentions_identity(out.text, TEODORA)
+        assert restore(out.text, out.mapping) == note
+
+
+@pytest.mark.parametrize(
+    ("note", "kind", "original"),
+    [
+        ("seen 11.12.2026 ok", "DATE", "11.12.2026"),
+        ("seen 2026/11/12 ok", "DATE", "2026/11/12"),
+        ("seen 12th of November ok", "DATE", "12th of November"),
+        ("seen November 12th ok", "DATE", "November 12th"),
+        ("SSN 900123456 ok", "SSN", "900123456"),
+        ("SSN: 900123456 ok", "SSN", "900123456"),
+        ("tel 8555 0134 ok", "PHONE", "8555 0134"),
+        ("Tel. no. 8555 0134 ok", "PHONE", "8555 0134"),
+    ],
+)
+def test_more_date_ssn_and_landline_shapes_are_redacted(
+    note: str, kind: str, original: str
+) -> None:
+    out = redact(note, PERPETUA)
+    assert out.mapping == {f"[{kind}_1]": original}
+    assert out.text == note.replace(original, f"[{kind}_1]")
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "Hgb 11.12 g/dL, plt 2026",
+        "VS at 0800 1200 1600",
+        "call bell within reach, VS 0800 1200",
+        "BP 120/80/60, 1999/13/40",
+        "ref 900123456 and 11.12.20261",
+    ],
+)
+def test_new_date_ssn_and_landline_shapes_leave_clinical_numbers_alone(note: str) -> None:
+    assert redact(note, PERPETUA).text == note
