@@ -7,7 +7,6 @@ say) can't make a number appear that the nurse didn't write.
 
 import re
 from dataclasses import dataclass
-from decimal import Decimal
 
 from nursing_core.domain.model_output import ModelLine
 from nursing_core.domain.notes import (
@@ -28,7 +27,7 @@ from nursing_core.domain.units import (
     UnitDefaults,
 )
 from nursing_core.pipeline.text import MatchText, find_span
-from nursing_core.pipeline.unit_check import number_value, numbers_in, unit_end_after
+from nursing_core.pipeline.unit_check import NumberValue, number_value, numbers_in, unit_end_after
 
 # The word right before a number; spaces and one ":" or "=" may sit between.
 _LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
@@ -43,7 +42,7 @@ _PRECEDENCE = (
 
 @dataclass(frozen=True, slots=True)
 class _NoteNumber:
-    value: tuple[Decimal, ...]
+    value: NumberValue
     text: str
     span: Span  # in the note as typed
     label: str | None
@@ -111,36 +110,47 @@ def _assess(
     found = [span for span in spans if span is not None]
     if len(found) < len(spans) or (not own_wording and not quotes):
         return LineStatus.NO_SOURCE, []
-    note_numbers = [n for span in found for n in _note_numbers(note.raw, span)]
+    note_numbers = _note_numbers(note.raw, found)
     mismatches = _mismatches(text, note_numbers, units)
     if mismatches:
         return LineStatus.NUMBER_MISMATCH, mismatches
     return (LineStatus.SUMMARY if own_wording else LineStatus.SOURCE_FOUND), []
 
 
-def _label_before(text: str, start: int) -> str | None:
-    match = _LABEL.search(text[:start])
+def _label_before(text: str) -> str | None:
+    """The word right before a number, given the text up to it."""
+    match = _LABEL.search(text)
     return None if match is None else match.group(1).casefold()
 
 
-def _note_numbers(raw: str, quote_span: Span) -> list[_NoteNumber]:
-    sliced = raw[quote_span.start : quote_span.end]
+def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
+    """The numbers of the typed note that overlap a found quote, each compared whole.
+
+    A quote that stops inside a number or its unit still brings in all of it; labels are read
+    only inside the quote.
+    """
     out: list[_NoteNumber] = []
-    for written, local in numbers_in(sliced):
-        span = Span(start=quote_span.start + local.start, end=quote_span.start + local.end)
-        unit = unit_end_after(raw, span)  # read in the whole note: the quote may stop before it
-        with_unit = Span(start=span.start, end=span.end if unit is None else unit[1])
-        out.append(
-            _NoteNumber(
-                value=number_value(written),
-                text=written,
-                span=span,
-                label=_label_before(sliced, local.start),
-                unit=None if unit is None else unit[0],
-                with_unit=with_unit,
-                typed_with_unit=raw[with_unit.start : with_unit.end],
+    tokens = numbers_in(raw)
+    for quote in quote_spans:
+        for written, span in tokens:
+            if span.start >= quote.end or span.end <= quote.start:
+                continue
+            unit = unit_end_after(raw, span)
+            with_unit = Span(start=span.start, end=span.end if unit is None else unit[1])
+            label = (
+                _label_before(raw[quote.start : span.start]) if span.start >= quote.start else None
             )
-        )
+            out.append(
+                _NoteNumber(
+                    value=number_value(written),
+                    text=written,
+                    span=span,
+                    label=label,
+                    unit=None if unit is None else unit[0],
+                    with_unit=with_unit,
+                    typed_with_unit=raw[with_unit.start : with_unit.end],
+                )
+            )
     return out
 
 
@@ -161,7 +171,7 @@ def _mismatches(
     for written, span in numbers_in(text):
         same_value = [n for n in note_numbers if n.value == number_value(written)]
         if not same_value:
-            label = _label_before(text, span.start)
+            label = _label_before(text[: span.start])
             paired = next((n for n in note_numbers if label and n.label == label), None)
             out.append(
                 NumberMismatch(

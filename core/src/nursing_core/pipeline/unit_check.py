@@ -19,8 +19,15 @@ _VULGAR_FRACTIONS = "".join(
     for code in range(0xA0, 0x2200)
     if re.fullmatch(rf"\d+{_FRACTION_SLASH}\d+", unicodedata.normalize("NFKC", chr(code)))
 )
+_SLASHES = f"/{_FRACTION_SLASH}\uff0f"  # a slash, the fraction slash and the full-width slash
 _PART = rf"\d+(?:\.\d+)?|(?<!\d)\.\d+|[{_VULGAR_FRACTIONS}]"
-_NUMBER = re.compile(rf"(?:{_PART})(?:/(?:{_PART}))*")
+_GROUP = rf"(?:{_PART})(?:[{_SLASHES}](?:{_PART}))*"
+# A whole number then a vulgar fraction ("1½"), or then one space and an n/m group ("1 1/2").
+_MIXED = rf"\d+(?:[{_VULGAR_FRACTIONS}]| \d+[{_SLASHES}]\d+)"
+_NUMBER = re.compile(rf"(?P<mixed>{_MIXED})|{_GROUP}")
+_MIXED_PARTS = re.compile(rf"(\d+)(?:([{_VULGAR_FRACTIONS}])| (\d+)[{_SLASHES}](\d+))")
+_WHOLE_NUMBER = re.compile(r"\d+")
+_LETTERS = re.compile(r"[^\W\d_]+")
 
 # Longest first, so "lbs" is tried before "lb". The degree alias is read apart (see _read_unit).
 _ALIASES: tuple[tuple[str, Ucum], ...] = (
@@ -35,26 +42,60 @@ _ALIASES: tuple[tuple[str, Ucum], ...] = (
     ("C", Ucum.CEL),
 )
 _DEGREE_UNITS = {"F": Ucum.DEG_F, "C": Ucum.CEL}
-_DEGREE_LOOKALIKES = {"º": "°", "˚": "°"}  # masculine ordinal, ring above
+# masculine ordinal, ring above, superscript zero
+_DEGREE_LOOKALIKES = {"\u00ba": "\u00b0", "\u02da": "\u00b0", "\u2070": "\u00b0"}
+# A letter run right after whole digits that is only a unit ("HR121bpm"): the digits are a number.
+_UNIT_SPELLINGS = frozenset(
+    {alias.casefold() for alias, _ in _ALIASES}
+    | {"bpm", "cpm", "mmhg", "mg", "mcg", "g", "l", "lpm", "u", "units", "iu", "meq", "mmol"}
+    | {"gtts", "kcal", "cm", "mm"}
+)
+type NumberValue = tuple[str | Decimal, ...]
 _WINDOW = 24  # how many typed characters after a number are read for its unit
 
 
 def numbers_in(text: str) -> list[tuple[str, Span]]:
-    """Every number or "/" group as written, with its span in `text`; words' digits are skipped."""
+    """Every number, "/" group or mixed number as written, with its span in `text`.
+
+    Digits that are part of a word ("D5LR", "q4h") are skipped.
+    """
     out: list[tuple[str, Span]] = []
-    for match in _NUMBER.finditer(text):
-        before = text[match.start() - 1 : match.start()] if match.start() else ""
-        after = text[match.end() : match.end() + 1]
-        if before.isalpha() and after.isalpha():
+    position = 0
+    while match := _NUMBER.search(text, position):
+        start, end = match.span()
+        if match.group("mixed") and not _proper_mixed(match.group()):
+            end = start + next(i for i, char in enumerate(match.group()) if not char.isdecimal())
+        position = end
+        if _in_a_word(text, start, end):
             continue
-        out.append((match.group(), Span(start=match.start(), end=match.end())))
+        out.append((text[start:end], Span(start=start, end=end)))
     return out
 
 
-def number_value(token: str) -> tuple[Decimal, ...]:
-    """The values of a token as written, in order, so "½", "1/2" and "1/2.0" are equal."""
+def _proper_mixed(token: str) -> bool:
+    parts = _MIXED_PARTS.fullmatch(token)
+    return parts is not None and (parts.group(2) is not None or int(parts[3]) < int(parts[4]))
+
+
+def _in_a_word(text: str, start: int, end: int) -> bool:
+    """Whole digits after a letter and followed by letters that aren't a unit belong to a word."""
+    if start == 0 or not text[start - 1].isalpha() or not _WHOLE_NUMBER.fullmatch(text[start:end]):
+        return False
+    letters = _LETTERS.match(text, end)
+    return letters is not None and letters.group().casefold() not in _UNIT_SPELLINGS
+
+
+def number_value(token: str) -> NumberValue:
+    """What a token stands for, so "½", "1/2" and "1/2.0" are equal and "1½" equals "1 1/2".
+
+    A mixed number is kept apart from a plain group or number of the same size.
+    """
+    mixed = _MIXED_PARTS.fullmatch(token)
+    if mixed:
+        fraction = number_value(mixed[2]) if mixed[2] else (Decimal(mixed[3]), Decimal(mixed[4]))
+        return ("mixed", Decimal(mixed[1]), *fraction)
     values: list[Decimal] = []
-    for part in token.split("/"):
+    for part in re.split("[/\uff0f]", token):
         folded = unicodedata.normalize("NFKC", part)
         values.extend(Decimal(piece) for piece in folded.split(_FRACTION_SLASH))
     return tuple(values)

@@ -313,7 +313,9 @@ def test_a_number_glued_to_a_label_still_counts() -> None:
 
 def test_a_draft_vulgar_fraction_is_a_number_to_check() -> None:
     line = _check("gave 1 tab", "Gave ½ tab.", ["gave 1 tab"])
+    assert line.status is LineStatus.NUMBER_MISMATCH
     [mismatch] = line.number_mismatches
+    assert mismatch.kind is MismatchKind.VALUE
     assert (mismatch.draft_text, mismatch.draft_span) == ("½", Span(start=5, end=6))
     assert (mismatch.note_text, mismatch.note_span) == ("1", Span(start=5, end=6))
 
@@ -374,3 +376,89 @@ def test_any_occurrence_with_the_right_unit_passes() -> None:
 
 def test_a_unit_outside_every_measure_has_no_default() -> None:
     assert default_unit(Ucum.PERCENT, PH) is None
+
+
+def test_a_value_glued_to_its_label_and_unit_is_still_checked() -> None:
+    cases = [
+        ("BT 37.4C", "BT37.9C.", PH, MismatchKind.VALUE),
+        ("BT 37.4", "BT37.4F.", PH, MismatchKind.UNIT),
+        ("HR 112 bpm", "HR121bpm.", PH, MismatchKind.VALUE),
+        ("BP 90/60 mmHg", "BP120/80mmHg.", PH, MismatchKind.VALUE),
+        ("wt 80 kg", "Wt80lb.", US_LB, MismatchKind.UNIT),
+    ]
+    for note, drafted, units, kind in cases:
+        line = _check(note, drafted, [note], units=units)
+        assert _kinds(line) == [kind], drafted
+        assert line.status is LineStatus.NUMBER_MISMATCH, drafted
+
+
+def test_an_edit_with_glued_values_is_checked() -> None:
+    note = prepare("BT 37.4C, HR 112 bpm")
+    line = _check("BT 37.4C, HR 112 bpm", "BT 37.4C, HR 112 bpm.", ["BT 37.4C, HR 112 bpm"])
+    edited = recheck_line(line, "BT37.9C, HR121bpm.", note, PH)
+    assert _kinds(edited) == [MismatchKind.VALUE, MismatchKind.VALUE]
+    assert [m.note_text for m in edited.number_mismatches] == ["37.4", "112"]
+
+
+def test_glued_note_and_spaced_line_pass_and_the_other_way_round() -> None:
+    cases = [
+        ("BT37.8C", "BT 37.8 °C"),
+        ("T37.8C", "T 37.8C"),
+        ("HR120bpm", "HR 120 bpm"),
+        ("wt80kg", "Wt 80 kg"),
+        ("BP90/60mmHg", "BP 90/60 mmHg"),
+        ("BT 37.8 C", "BT37.8C"),
+        ("HR 120 bpm", "HR120bpm"),
+    ]
+    for note, drafted in cases:
+        line = _check(note, drafted, [note])
+        assert line.status is LineStatus.SOURCE_FOUND, (note, drafted)
+
+
+def test_a_quote_that_stops_inside_a_group_brings_in_the_whole_group() -> None:
+    for quote in ("2 tab PO", "gave 1", "gave 1/"):
+        line = _check(
+            "gave 1/2 tab PO", "Gave 2 tabs PO." if quote[0] == "2" else "Gave 1 tab PO.", [quote]
+        )
+        assert line.source_quotes[0].span is not None, quote
+        assert line.status is LineStatus.NUMBER_MISMATCH, quote
+        assert _kinds(line) == [MismatchKind.VALUE], quote
+    line = _check("gave 1/2 tab PO", "Gave 1 tab PO.", ["gave 1"])
+    assert (line.number_mismatches[0].note_text, line.number_mismatches[0].note_span) == (
+        "1/2",
+        Span(start=5, end=8),
+    )
+
+
+def test_a_quote_that_stops_inside_a_group_still_passes_the_whole_group() -> None:
+    line = _check("gave 1/2 tab PO", "Gave 1/2 tab PO.", ["2 tab PO"])
+    assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_a_quote_that_stops_inside_a_word_has_no_number() -> None:
+    line = _check("D5LR running", "5 units insulin, D5 running.", ["D5"])
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    assert _kinds(line)[0] is MismatchKind.VALUE
+
+
+def test_a_mixed_number_is_not_matched_by_its_whole_part() -> None:
+    for note in ("gave 1\u00bd tab", "gave 1 1/2 tab"):
+        line = _check(note, "Gave 1 tab.", [note])
+        assert _kinds(line) == [MismatchKind.VALUE], note
+        assert line.number_mismatches[0].note_text is not None
+    assert _check("gave 1\u00bd tab", "Gave 1 1/2 tab.", ["gave 1\u00bd tab"]).status is (
+        LineStatus.SOURCE_FOUND
+    )
+    assert _check("gave 1\u00bd tab", "Gave 1.5 tab.", ["gave 1\u00bd tab"]).status is (
+        LineStatus.NUMBER_MISMATCH
+    )
+
+
+def test_a_fraction_slash_group_is_not_matched_by_a_whole_number() -> None:
+    line = _check("gave 1\u20442 tab", "Gave 2 tabs.", ["gave 1\u20442 tab"])
+    assert _kinds(line) == [MismatchKind.VALUE]
+
+
+def test_a_superscript_zero_degree_sign_is_a_unit() -> None:
+    line = _check("T 37.4", "T 37.4\u2070F.", ["T 37.4"])
+    assert _kinds(line) == [MismatchKind.UNIT]

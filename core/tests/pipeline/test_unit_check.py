@@ -96,8 +96,8 @@ def test_superscript_and_subscript_digits_are_not_numbers() -> None:
 
 
 def test_digits_with_letters_on_both_sides_are_part_of_a_word() -> None:
-    assert _tokens("D5LR, D5W, q4h, a1c") == []
-    assert _tokens("D5.5LR 7") == ["7"]
+    assert _tokens("D5LR, D5W, q4h") == []
+    assert _tokens("D5.5LR 7") == ["5.5", "7"]
 
 
 def test_digits_at_the_end_of_a_word_stay_numbers() -> None:
@@ -127,3 +127,45 @@ def test_hash_must_not_be_followed_by_a_letter_digit_or_slash() -> None:
     assert _unit("wt 176#/", "176") is None
     assert _unit("wt 176#", "176") is Ucum.LB
     assert _unit("wt 176# today", "176") is Ucum.LB
+
+
+def test_digits_between_a_label_and_a_unit_are_a_number() -> None:
+    assert _tokens("BT37.9C HR121bpm BP120/80mmHg Wt80lb RR20cpm B12mg") == [
+        "37.9",
+        "121",
+        "120/80",
+        "80",
+        "20",
+        "12",
+    ]
+    assert _tokens("SpO2 HR120 x4 W80KG") == ["2", "120", "4", "80"]
+
+
+def test_whole_digits_with_letters_that_are_not_a_unit_are_a_word() -> None:
+    assert _tokens("D5LR D5W q4h D5NS") == []
+
+
+def test_a_whole_number_with_a_fraction_is_one_mixed_number() -> None:
+    assert numbers_in("gave 1½ tab") == [("1½", Span(start=5, end=7))]
+    assert numbers_in("gave 1 1/2 tab") == [("1 1/2", Span(start=5, end=10))]
+    assert _tokens("2 3/2 x, 1 ½") == ["2", "3/2", "1", "½"]
+    assert _tokens("gave 1  1/2") == ["1", "1/2"]
+
+
+def test_a_mixed_number_equals_its_other_spelling_but_nothing_else() -> None:
+    assert number_value("1½") == number_value("1 1/2")
+    assert number_value("1½") != number_value("1.5")
+    assert number_value("1½") != number_value("1/2")
+    assert number_value("1½") != number_value("1")
+    assert number_value("1 1/2") != number_value("2 1/2")
+
+
+def test_the_fraction_slash_and_the_full_width_slash_join_a_group() -> None:
+    assert _tokens("1\u20442 and 1\uff0f2 and 90\uff0f60") == ["1\u20442", "1\uff0f2", "90\uff0f60"]
+    assert number_value("1\u20442") == number_value("1/2") == number_value("1\uff0f2")
+    assert number_value("1\u20442") == number_value("\u00bd")
+
+
+def test_superscript_zero_is_read_as_a_degree_sign() -> None:
+    assert _unit_end("T 37.4\u2070F", "37.4") == (Ucum.DEG_F, 8)
+    assert _unit_end("T 37.4\u2070 C", "37.4") == (Ucum.CEL, 9)
