@@ -12,7 +12,7 @@ variable "aws_profile" {
 }
 
 variable "environment" {
-  description = "Which environment this stack is: demo or prod. It names every resource and sets the app's APP_ENV."
+  description = "Which environment this stack is: demo or prod. It names every resource and sets the app's APP_ENV. Use one environment per AWS account: prod gets its own account, its own bootstrap and its own state bucket, because the state key, the account-wide monthly-guard budget, the brake and the AI-spend metric are all per account."
   type        = string
   default     = "demo"
 

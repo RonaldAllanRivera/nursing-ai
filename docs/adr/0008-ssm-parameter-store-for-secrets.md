@@ -47,7 +47,7 @@ All four secrets are SSM SecureString parameters under `/nursing-ai/<environment
 ## Consequences
 
 - Secrets cost $0 a month.
-- A secret is never on a command line or in shell history if the operator uses the hidden prompt
+- A secret is never typed on a command line or kept in shell history if the operator uses the hidden prompt
   shown in `infra/README.md`.
 - **No automatic rotation.** An RDS-managed Secrets Manager secret would rotate the password itself
   and could not drift from the cluster, at $0.40 a month per secret. Here, rotation is a manual

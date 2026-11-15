@@ -20,7 +20,13 @@ changes, and a deploy before they land will not serve requests:
 - Use a dual-stack client for SQS.
 - Use SQLAlchemy `NullPool` and a database connect timeout above 15 seconds, with retries, so the
   database can pause and wake.
-- Write the `AiSpendUsd` metric (namespace `NursingAI`) that the AI spend alarm watches.
+- Write the `AiSpendUsd` metric (namespace `NursingAI`) that the AI spend alarm watches, as an
+  embedded-metric-format log line with no dimensions. The worker role has no
+  `cloudwatch:PutMetricData`, and any dimension makes the alarm match nothing.
+- Read each secret with one `ssm:GetParameter` call per name, with decryption on. A batched
+  `GetParameters` call is refused.
+- Build absolute URLs, including Google's sign-in callback, from the site's address, never from the
+  request's Host header. Behind CloudFront the API sees the execute-api host.
 - Show a "waking" screen in the web app while the database resumes.
 
 ## What is in each folder
@@ -50,6 +56,9 @@ In `live/`, resource names come from `nursing-ai-<environment>`, for example `nu
 - An AWS account on a paid plan. A free-plan account only offers a limited Aurora option (outside
   your VPC, IPv4 only), which this design does not use (checked 2026-11-12).
 - An AWS CLI profile named `nursing-ai` for the one-time bootstrap from your own PC.
+- One environment per AWS account. Prod gets its own account, its own bootstrap and its own state
+  bucket, because the state key, the account-wide `monthly-guard` budget, the brake and the
+  AI-spend metric are all per account.
 - Terraform 1.11 or newer. Both roots and every module pin the AWS provider to exactly 6.71.0.
 
 ## One-time bootstrap
@@ -142,6 +151,15 @@ and needs no manual step. Each Lambda function will read its secrets once at col
 "App changes this stack needs"), so a new value will reach a running function after its next cold
 start.
 
+Changing any setting of an SSM parameter other than its tags makes the next apply fail, because the
+provider sends the write-only value only when the parameter's version changes. For the three
+hand-set secrets, raising the version would overwrite the real value with the placeholder. So after
+filling the secrets, run a plan and check that the parameters show no change, and never change
+those resources' settings without filling the secrets in again afterwards.
+
+On a prod environment, fill the prod secrets in the prod account (see "Before you start": one
+environment per AWS account).
+
 ### Rotating or recovering the database password
 
 The password is generated on each run and never stored in state. If an apply stops after the Aurora
@@ -190,7 +208,7 @@ no brake for the rest of that month, unless the action is Reset in the Budgets c
 The deny stops the functions' AWS API calls, such as SQS and SSM. It does not stop:
 
 - Invocations through the HTTP API. They keep arriving and keep running.
-- A password already in memory. A worker that is already running keeps the Anthropic key it read
+- A password already in memory. A worker that is already running will keep the Anthropic key it has read
   at cold start until it ends. A warm API function can still log in to the database with the
   password it holds.
 
@@ -207,6 +225,8 @@ The mocked tests cannot prove the alarm wiring. Open CloudWatch and check three 
 - Each alarm shows OK, not INSUFFICIENT_DATA for days.
 - The 5xx alarm's `ApiId` dimension is the HTTP API's ID.
 - The dead-letter alarm's `QueueName` dimension is the dead-letter queue's name.
+- The `AiSpendUsd` metric (namespace `NursingAI`) appears only after the first live job, so the AI
+  spend alarm has no data until then.
 
 Also confirm the alarm-topic email subscription and the budget emails (each must be accepted from
 the link in its first email).
