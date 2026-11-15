@@ -8,14 +8,19 @@ variable "subnet_ids" {
   type        = list(string)
 
   validation {
-    condition     = length(var.subnet_ids) >= 2
-    error_message = "Give at least two subnets: an Aurora subnet group needs two availability zones."
+    condition     = length(distinct(var.subnet_ids)) >= 2
+    error_message = "Give at least two different subnets: an Aurora subnet group needs two availability zones."
   }
 }
 
 variable "security_group_ids" {
-  description = "Security groups attached to the database cluster."
+  description = "Security groups attached to the database cluster. At least one: an empty list would fall back to the VPC's default group."
   type        = list(string)
+
+  validation {
+    condition     = length(var.security_group_ids) >= 1
+    error_message = "Give at least one security group: an empty list would fall back to the VPC's default group."
+  }
 }
 
 variable "engine_version" {
@@ -42,7 +47,7 @@ variable "master_username" {
 }
 
 variable "password_version" {
-  description = "Version of the generated master password. Raise it by one to rotate the password: the cluster and the stored database URL are then both rewritten with the same new value."
+  description = "Version of the generated master password. Raise it by one to rotate the password: the cluster and the stored database URL are then both rewritten with the same new value. Also raise it if an apply stops after the cluster is created but before the parameter is written, or if the parameter is ever recreated: each run generates a new password, so the stored URL would otherwise carry one the cluster never got, and nothing fails until the app cannot log in."
   type        = number
   default     = 1
 }

@@ -42,6 +42,9 @@ resource "aws_rds_cluster" "this" {
   skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name}-final"
   copy_tags_to_snapshot     = true
+
+  # Keeps pgvector equal to the local image; upgrades are a reviewed version bump.
+  auto_minor_version_upgrade = false
 }
 
 resource "aws_rds_cluster_instance" "writer" {
@@ -63,6 +66,10 @@ resource "aws_ssm_parameter" "database_url" {
   type        = "SecureString"
 
   # Write-only: rewritten together with the cluster password when password_version changes.
+  # Each run generates a new password and a resource being created always sends it. If an
+  # apply stops after the cluster is created but before this parameter is written, or the
+  # parameter is ever recreated, raise password_version in the next apply so both get the
+  # same new password; otherwise the stored URL has a password the cluster never got.
   value_wo         = "postgresql+asyncpg://${var.master_username}:${ephemeral.random_password.master.result}@${aws_rds_cluster.this.endpoint}:5432/${var.database_name}"
   value_wo_version = var.password_version
 }
