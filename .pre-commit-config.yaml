@@ -48,6 +48,13 @@ repos:
         entry: uv run actionlint
         language: system
         files: ^\.github/workflows/
+      # Formatting only: `make infra-check` runs the full Terraform gate (validate, test, lint, scan).
+      - id: terraform-fmt
+        name: terraform fmt check
+        entry: terraform fmt -check -recursive infra
+        language: system
+        files: ^infra/.*\.(tf|tfvars|tftest\.hcl)$
+        pass_filenames: false
       - id: staged-check
         name: staged check (private words, markers, paths)
         entry: uv run python scripts/staged_check.py

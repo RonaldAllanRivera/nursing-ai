@@ -117,6 +117,17 @@ def test_accept_binary_passes_the_file_to_the_script() -> None:
     assert "'web/public/fonts/a b.woff2'" in steps
 
 
+def test_infra_check_runs_the_terraform_check_script() -> None:
+    assert run_make("-n", "infra-check").stdout.splitlines() == ["infra/scripts/check.sh"]
+    help_line = next(line for line in run_make("help").stdout.splitlines() if "infra-check" in line)
+    assert "Terraform" in help_line
+
+
+def test_check_leaves_out_the_terraform_check() -> None:
+    # Its first run downloads several hundred MB of providers, so it is its own target.
+    assert "infra/scripts/check.sh" not in run_make("-n", "check").stdout
+
+
 def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path) -> None:
     # The Makefile puts .tools/bin first on PATH, so this pnpm stands in for the real one.
     fake_bin = fake_repo / ".tools" / "bin"

@@ -62,6 +62,32 @@ def test_e2e_mock_job_runs_the_mock_journeys_after_the_web_checks() -> None:
     assert upload["with"]["path"] == "web/playwright-report"
 
 
+def test_infra_workflow_checks_the_terraform_when_infra_changes() -> None:
+    path = ROOT / ".github" / "workflows" / "infra.yml"
+    workflow = _load(path)
+    # PyYAML reads the bare key `on` as the boolean True (YAML 1.1).
+    keys: dict[object, Any] = yaml.safe_load(path.read_text())
+    triggers: dict[str, Any] = keys[True]
+    # Never pull_request_target: a pull request's code must not run with the base repo's rights.
+    assert set(triggers) == {"push", "pull_request"}
+    for event in triggers.values():
+        assert "infra/**" in event["paths"]
+        assert ".github/workflows/infra.yml" in event["paths"]
+    assert list(workflow["jobs"]) == ["check"]
+    job = workflow["jobs"]["check"]
+    # No id-token: the check job can never get AWS credentials.
+    assert "permissions" not in job
+    setup = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("hashicorp/setup-terraform@")
+    )
+    assert setup["with"]["terraform_version"] == "1.17.2"
+    assert setup["with"]["terraform_wrapper"] is False
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+    assert runs.index("make tools") < runs.index("make infra-check")
+
+
 def test_dependabot_keeps_pgvector_at_a_version_aurora_offers() -> None:
     config = _load(ROOT / ".github" / "dependabot.yml")
     compose = next(u for u in config["updates"] if u["package-ecosystem"] == "docker-compose")

@@ -1,6 +1,7 @@
 """The commit-time check refuses private words, markers and stray paths without printing them."""
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -220,6 +221,30 @@ def test_public_check_runs_before_every_push() -> None:
     assert check["pass_filenames"] is False
     assert check["verbose"] is True
     assert [h["id"] for h in hooks if "pre-push" in h.get("stages", [])] == ["public-check"]
+
+
+def test_terraform_format_hook_runs_when_infra_terraform_changes() -> None:
+    hooks: list[dict[str, Any]] = hook_config()["repos"][0]["hooks"]
+    fmt = next(h for h in hooks if h["id"] == "terraform-fmt")
+    assert fmt["entry"] == "terraform fmt -check -recursive infra"
+    assert fmt["pass_filenames"] is False
+    # pre-commit runs a hook when re.search(files, path) matches a staged path. terraform fmt
+    # also formats variables and test files, so those must trigger it too.
+    files = re.compile(fmt["files"])
+    for path in (
+        "infra/live/main.tf",
+        "infra/live/prod.tfvars",
+        "infra/modules/web/tests/web.tftest.hcl",
+    ):
+        assert files.search(path), path
+    for path in (
+        "infra/README.md",
+        "infra/live/.terraform.lock.hcl",
+        "infra/live/terraform.tfvars.example",
+        "docs/adr/0005-lambda-for-compute.md",
+        "core/src/nursing_core/main.tf.py",
+    ):
+        assert not files.search(path), path
 
 
 def test_staged_path_with_a_word_refused(

@@ -1,0 +1,43 @@
+name: Infra
+
+# The Terraform gate, only when the Terraform or the tools it runs change. It never talks to AWS:
+# every test mocks the provider and the job has no cloud credentials. The plan and apply jobs
+# (through GitHub OIDC roles) come once the AWS account can create the OIDC provider.
+on:
+  push:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+      - "scripts/install-tools.sh"
+      - "scripts/tflint.pin"
+      - "scripts/trivy.pin"
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+      - "scripts/install-tools.sh"
+      - "scripts/tflint.pin"
+      - "scripts/trivy.pin"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The wrapper would capture terraform's output; the check script reads it itself.
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.2"
+          terraform_wrapper: false
+      - run: make tools
+      # tflint downloads its AWS ruleset from GitHub; the token avoids the anonymous rate limit.
+      - run: make infra-check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

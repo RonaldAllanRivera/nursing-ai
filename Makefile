@@ -22,7 +22,7 @@ export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 export PATH := $(CURDIR)/.tools/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e e2e-mock check-py check-web check actionlint gen-api openapi spend private-words accept-binary tools public-check public-check-ci hooks setup
+.PHONY: help ports up down dev e2e e2e-mock check-py check-web check actionlint infra-check gen-api openapi spend private-words accept-binary tools public-check public-check-ci hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -111,3 +111,8 @@ setup: ## Install everything, including the test browser (some PCs need their ow
 
 actionlint: ## Lint the GitHub Actions workflows
 	uv run actionlint
+
+# Not part of `check`: the first run downloads several hundred MB of Terraform providers. It needs
+# terraform on PATH and `make tools` (tflint, trivy), and never talks to AWS: the tests mock it.
+infra-check: ## Format, validate, test, lint and scan the Terraform
+	infra/scripts/check.sh
