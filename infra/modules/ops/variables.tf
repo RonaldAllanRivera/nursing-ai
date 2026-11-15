@@ -81,4 +81,9 @@ variable "ai_daily_spend_alarm_usd" {
   description = "Daily AI spend, in US dollars, at or above which the AI spend alarm fires."
   type        = number
   default     = 1
+
+  validation {
+    condition     = var.ai_daily_spend_alarm_usd > 0
+    error_message = "ai_daily_spend_alarm_usd must be above 0, or the alarm would never clear."
+  }
 }

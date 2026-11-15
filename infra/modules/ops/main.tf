@@ -77,7 +77,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
 
 resource "aws_cloudwatch_metric_alarm" "ai_spend" {
   alarm_name          = "${var.name}-ai-spend"
-  alarm_description   = "AI spend over one day reached the daily limit."
+  alarm_description   = "AI spend over the last day reached the alarm level."
   namespace           = var.ai_spend_metric_namespace
   metric_name         = var.ai_spend_metric_name
   statistic           = "Sum"

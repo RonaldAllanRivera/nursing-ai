@@ -79,8 +79,6 @@ run "logs_kept_14_days" {
 }
 
 run "alarms_cover_5xx_dlq_and_ai_spend" {
-  command = plan
-
   assert {
     condition     = aws_cloudwatch_metric_alarm.api_5xx.namespace == "AWS/ApiGateway" && aws_cloudwatch_metric_alarm.api_5xx.metric_name == "5xx" && aws_cloudwatch_metric_alarm.api_5xx.statistic == "Sum" && aws_cloudwatch_metric_alarm.api_5xx.threshold == 5 && aws_cloudwatch_metric_alarm.api_5xx.period == 300 && aws_cloudwatch_metric_alarm.api_5xx.evaluation_periods == 1 && aws_cloudwatch_metric_alarm.api_5xx.comparison_operator == "GreaterThanOrEqualToThreshold"
     error_message = "The 5xx alarm must be Sum >= 5 over 5 minutes."
@@ -115,14 +113,14 @@ run "alarms_cover_5xx_dlq_and_ai_spend" {
     condition     = alltrue([for a in [aws_cloudwatch_metric_alarm.api_5xx, aws_cloudwatch_metric_alarm.dlq_depth, aws_cloudwatch_metric_alarm.ai_spend] : a.treat_missing_data == "notBreaching"])
     error_message = "Missing data must not count as breaching."
   }
-}
 
-run "alarms_notify_the_topic" {
   assert {
     condition     = alltrue([for a in [aws_cloudwatch_metric_alarm.api_5xx, aws_cloudwatch_metric_alarm.dlq_depth, aws_cloudwatch_metric_alarm.ai_spend] : length(a.alarm_actions) == 1 && one(a.alarm_actions) == "arn:aws:sns:ap-southeast-2:123456789012:alarm-topic" && length(a.ok_actions) == 1 && one(a.ok_actions) == "arn:aws:sns:ap-southeast-2:123456789012:alarm-topic"])
     error_message = "Every alarm must notify the topic on alarm and on recovery."
   }
+}
 
+run "subscription_and_topic_output" {
   assert {
     condition     = aws_sns_topic_subscription.email.topic_arn == "arn:aws:sns:ap-southeast-2:123456789012:alarm-topic" && aws_sns_topic_subscription.email.protocol == "email" && aws_sns_topic_subscription.email.endpoint == "ops@example.com"
     error_message = "The email subscription must attach to the topic."
@@ -211,4 +209,61 @@ run "bad_email_is_refused" {
   }
 
   expect_failures = [var.alarm_email]
+}
+
+run "trailing_slash_path_is_refused" {
+  command = plan
+
+  variables {
+    parameter_path = "/nursing-ai/demo/"
+  }
+
+  expect_failures = [var.parameter_path]
+}
+
+run "path_without_leading_slash_is_refused" {
+  command = plan
+
+  variables {
+    parameter_path = "nursing-ai/demo"
+  }
+
+  expect_failures = [var.parameter_path]
+}
+
+run "zero_spend_alarm_level_is_refused" {
+  command = plan
+
+  variables {
+    ai_daily_spend_alarm_usd = 0
+  }
+
+  expect_failures = [var.ai_daily_spend_alarm_usd]
+}
+
+run "inputs_reach_their_resources" {
+  command = plan
+
+  variables {
+    log_retention_days        = 30
+    ai_daily_spend_alarm_usd  = 2.5
+    http_api_stage            = "live"
+    ai_spend_metric_namespace = "OtherSpace"
+    ai_spend_metric_name      = "OtherMetric"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_log_group.api.retention_in_days == 30 && aws_cloudwatch_log_group.worker.retention_in_days == 30 && aws_cloudwatch_log_group.api_access.retention_in_days == 30
+    error_message = "log_retention_days must reach all three log groups."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.ai_spend.threshold == 2.5 && aws_cloudwatch_metric_alarm.ai_spend.namespace == "OtherSpace" && aws_cloudwatch_metric_alarm.ai_spend.metric_name == "OtherMetric"
+    error_message = "The AI spend settings must reach the AI spend alarm."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.api_5xx.dimensions["Stage"] == "live"
+    error_message = "http_api_stage must reach the 5xx alarm."
+  }
 }
