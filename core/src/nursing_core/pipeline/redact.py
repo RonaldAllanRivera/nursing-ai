@@ -39,7 +39,6 @@ _STATES = re.findall(
 _CLINICAL_CODES = set(re.findall(r"[A-Z]{2}", "CO CT ID IN LA MD ME MS NC OK OR PA SC"))
 _ZIP_STATE_CODES = [s for s in _STATES if s not in _CLINICAL_CODES]
 _MAX_PASSES = 5
-_TOKEN_SHAPE = re.compile(r"\[[A-Z_]+_\d+\]")
 # Highest precedence first: ties between hits of equal width go to the earlier kind.
 _KINDS = [
     "PATIENT",
@@ -57,6 +56,8 @@ _KINDS = [
     "DATE",
     "ZIP",
 ]
+_TOKEN_SHAPE = re.compile(r"\[(?:" + "|".join(_KINDS) + r")_\d+\]")
+_ANY_TOKEN_SHAPE = re.compile(r"\[[A-Z_]+_\d+\]")
 # "Not touching a letter" (digits and underscores do not protect a name).
 _NOT_AFTER_LETTER = r"(?<![^\W\d_])"
 _NOT_BEFORE_LETTER = r"(?![^\W\d_])"
@@ -91,15 +92,19 @@ def _is_invisible(char: str) -> bool:
     return category.startswith("M") or category == "Cf"
 
 
-def _fold(raw: str) -> _Folded:
+def _fold(raw: str, *, format_as_space: bool = False) -> _Folded:
+    """Fold one code point at a time. Format characters vanish, or (format_as_space) separate."""
     chars: list[str] = []
     origin: list[int] = []
     for index, code_point in enumerate(raw):
         for part in unicodedata.normalize("NFKD", code_point):
             for char in unicodedata.normalize("NFKD", part.casefold()):
-                if not _is_invisible(char):
-                    chars.append(char.translate(_APOSTROPHES))
-                    origin.append(index)
+                if format_as_space and unicodedata.category(char) == "Cf":
+                    char = " "
+                elif _is_invisible(char):
+                    continue
+                chars.append(char.translate(_APOSTROPHES))
+                origin.append(index)
     return _Folded("".join(chars), origin, raw)
 
 
@@ -229,12 +234,17 @@ def _postal_hits(folded: _Folded, identity: PatientIdentity) -> list[_Hit]:
 
 def _identity_hits(text: str, identity: PatientIdentity) -> list[_Hit]:
     """Where the record's identifiers are; text shaped like a token is never matched."""
-    folded = _fold(_TOKEN_SHAPE.sub(lambda m: "\x00" * len(m.group()), text))
+    masked = _TOKEN_SHAPE.sub(lambda m: "\x00" * len(m.group()), text)
     terms = _identity_terms(identity)  # never empty: the birth date always yields terms
-    hits = _postal_hits(folded, identity)
-    for m in _identity_regex(terms).finditer(folded.text):
-        kind = terms[(m.lastindex or 1) - 1][1]
-        hits.append(_Hit(*_raw_span(folded, m.start(), m.end()), kind))
+    regex = _identity_regex(terms)
+    plain = _fold(masked)
+    hits = _postal_hits(plain, identity)
+    # Names joined by an invisible character ("Ann<ZWSP>Bo") only match when it counts as a
+    # space; a name split by one ("Te<SHY>o") only matches when it counts as nothing. Try both.
+    for folded in (plain, _fold(masked, format_as_space=True)):
+        for m in regex.finditer(folded.text):
+            kind = terms[(m.lastindex or 1) - 1][1]
+            hits.append(_Hit(*_raw_span(folded, m.start(), m.end()), kind))
     return hits
 
 
@@ -257,6 +267,7 @@ _WITH_YEAR_MONTH = f"{_UPPER_ABBREVIATIONS}|May|MAY"
 _DAY = r"(?<![\w/])(?<!\d\.)(?:3[01]|[12]\d|0?[1-9])(?:st|nd|rd|th)?(?![\w/])(?!\.\d)"
 # A year counts after a comma, or when only punctuation, a line break or the end follows it.
 _YEAR_NUMBER = r"(?:19|20)\d{2}(?!\d)"
+_ANY_YEAR = rf"(?:,\s+|\s+){_YEAR_NUMBER}"  # the forms that need a year keep it, whatever follows
 _YEAR = rf"(?:,\s+{_YEAR_NUMBER}|\s+{_YEAR_NUMBER}(?=[^\w\s]|[ \t]*(?:[\r\n]|\Z)))"
 _OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
 _PHONE = "|".join(
@@ -264,23 +275,23 @@ _PHONE = "|".join(
         r"\+\d{1,3}[ .-]?\(?\d{2,4}\)?[ .-]?\d{3,4}[ .-]?\d{3,4}",
         r"\(\d{2,4}\)\s?\d{3,4}[ .-]\d{4}",
         r"\d{3}[.-]\d{3}[.-]\d{4}",
-        r"0\d{3}[ .-]\d{3}[ .-]\d{4}",
+        r"09\d{2}[ .-]\d{3}[ .-]\d{4}",
         r"09\d{9}",
         r"0\d-\d{4}-\d{4}",
     ]
 )
-_PHONE_CUE = r"(?:tel|phone|ph|mobile|cell|contact|call)"
+_PHONE_CUE = r"(?:tel|phone|ph|mobile|cell|contact|call)(?:\s*(?:no\b\.?|number|#))?"
 _DATE = "|".join(
     [
         r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)",
         r"(?<![\d/-])\d{1,2}([/-])\d{1,2}\1(?:\d{4}|\d{2})(?![\d/-])",
         rf"{_DAY}\s+(?:{_ANY_YEAR_MONTH})(?!\w)(?:{_YEAR})?",
-        rf"{_DAY}\s+(?:{_WITH_YEAR_MONTH})(?!\w){_YEAR}",
+        rf"{_DAY}\s+(?:{_WITH_YEAR_MONTH})(?!\w){_ANY_YEAR}",
         rf"(?<!\w)(?:{_ANY_YEAR_MONTH})\s+{_DAY}(?:{_YEAR})?",
-        rf"(?<!\w)(?:{_WITH_YEAR_MONTH})\s+{_DAY}{_YEAR}",
+        rf"(?<!\w)(?:{_WITH_YEAR_MONTH})\s+{_DAY}{_ANY_YEAR}",
     ]
 )
-_ZIP_STATES = "|".join(s for s in _STATES if s not in _CLINICAL_CODES)
+_ZIP_STATES = "|".join(_ZIP_STATE_CODES)
 # (kind, pattern, group holding the match).
 _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
     (
@@ -302,8 +313,10 @@ _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
     ("ZIP", re.compile(rf"(?<![A-Za-z])(?:{_ZIP_STATES}),?\s+(\d{{5}}(?:-\d{{4}})?)(?!\d)"), 1),
 ]
 _AGE_UNIT = r"(?:y/o|y\.o\.?|yo|years?|yrs?)(?!\w)"
+# "PIV age: 96 hrs" is how long a line has been in, not a person's age.
+_NOT_A_DURATION = r"(?!\s*(?:hrs?|hours?|h|days?|d|mins?|minutes?|weeks?|wks?|months?|mos?)(?!\w))"
 _AGE = re.compile(
-    rf"(?<![\d.])(\d{{2,3}})(?=\s*-?\s*{_AGE_UNIT})|(?<!\w)aged?\s*:?\s*(\d{{2,3}})(?!\d)",
+    rf"(?<![\d.])(\d{{2,3}})(?=\s*-?\s*{_AGE_UNIT})|(?<!\w)aged?\s*:?\s*(\d{{2,3}})(?!\d){_NOT_A_DURATION}",
     re.IGNORECASE,
 )
 
@@ -348,7 +361,8 @@ def _age_spans(text: str, taken: list[_Hit]) -> list[tuple[int, int]]:
 class _TokenBook:
     """Hands out one token per distinct spelling and remembers what each one replaced."""
 
-    def __init__(self) -> None:
+    def __init__(self, original: str) -> None:
+        self._original = original
         self.mapping: dict[str, str] = {}
         self._by_spelling: dict[tuple[str, str], str] = {}
         self._counters: dict[str, int] = {}
@@ -358,7 +372,8 @@ class _TokenBook:
         if known is not None:
             return known
         n = self._counters.get(kind, 0) + 1
-        while f"[{kind}_{n}]" in taken_in:  # never reuse a token the nurse typed herself
+        while f"[{kind}_{n}]" in taken_in or f"[{kind}_{n}]" in self._original:
+            # never reuse a token the nurse typed herself
             n += 1
         self._counters[kind] = n
         token = f"[{kind}_{n}]"
@@ -382,24 +397,33 @@ def _substitute(text: str, hits: list[_Hit], ages: list[tuple[int, int]], book: 
     return "".join(out)
 
 
+def _find_hits(text: str, identity: PatientIdentity, *, skip_tokens: bool) -> list[_Hit]:
+    """Identifiers and patterns, merged; on a repeat pass, never anything touching a token."""
+    hits = [*_identity_hits(text, identity), *_pattern_hits(text)]
+    if skip_tokens:
+        tokens = [m.span() for m in _TOKEN_SHAPE.finditer(text)]
+        hits = [h for h in hits if not any(h.start < e and s < h.end for s, e in tokens)]
+    return _merge(hits)
+
+
 def redact(text: str, identity: PatientIdentity) -> Redacted:
     """Replace identifiers with `[KIND_n]` tokens; each distinct spelling gets its own token.
 
-    The record's identifiers are then looked for again in the result, a few times at most,
-    because replacing a pattern can leave a name that was glued to it standing on its own.
+    The note is then searched again, a few times at most, because replacing one identifier can
+    leave another that was glued to it standing on its own.
     """
-    book = _TokenBook()
-    hits = _merge([*_identity_hits(text, identity), *_pattern_hits(text)])
+    book = _TokenBook(text)
+    hits = _find_hits(text, identity, skip_tokens=False)
     current = _substitute(text, hits, _age_spans(text, hits), book)
-    again = _merge(_identity_hits(current, identity))
+    again = _find_hits(current, identity, skip_tokens=True)
     passes = 0
     while again and passes < _MAX_PASSES:
         current = _substitute(current, again, [], book)
-        again = _merge(_identity_hits(current, identity))
+        again = _find_hits(current, identity, skip_tokens=True)
         passes += 1
     return Redacted(current, book.mapping)
 
 
 def restore(text: str, mapping: dict[str, str]) -> str:
     """Put the exact original text back for every known token, in one pass."""
-    return _TOKEN_SHAPE.sub(lambda m: mapping.get(m.group(), m.group()), text)
+    return _ANY_TOKEN_SHAPE.sub(lambda m: mapping.get(m.group(), m.group()), text)

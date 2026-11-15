@@ -224,12 +224,21 @@ def test_month_words_never_swallow_clinical_numbers(note: str) -> None:
 
 @pytest.mark.parametrize(
     "note",
-    ["Nov 12", "12 Nov 2026", "NOV 12 2026", "November 12", "12 NOVEMBER", "May 4, 2026", "4 Sept"],
+    ["Nov 12", "NOV 12 2026", "November 12", "12 NOVEMBER", "May 4, 2026", "4 Sept", "12 NOV 2026"],
 )
 def test_month_name_dates_are_redacted(note: str) -> None:
-    out = redact(f"seen {note}.", PERPETUA)
-    assert out.text == "seen [DATE_1]."
+    out = redact(f"seen {note} ok", PERPETUA)
+    assert out.text == "seen [DATE_1] ok"
     assert out.mapping == {"[DATE_1]": note}
+    punctuated = redact(f"seen {note}.", PERPETUA)
+    assert punctuated.text == "seen [DATE_1]."
+
+
+def test_a_title_case_date_with_a_bare_year_keeps_the_year_rule() -> None:
+    assert redact("seen 12 Nov 2026.", PERPETUA).text == "seen [DATE_1]."
+    assert redact("seen 12 Nov 2026 ok", PERPETUA).text == "seen [DATE_1] 2026 ok"
+    assert redact("May 4 2026 VS taken", PERPETUA).text == "[DATE_1] VS taken"
+    assert redact("MAY 4 20 VS taken", PERPETUA).text == "MAY 4 20 VS taken"
 
 
 def test_a_name_glued_to_a_date_ssn_or_digits_is_still_redacted() -> None:
@@ -300,6 +309,12 @@ def test_overlapping_hits_merge_into_one_span() -> None:
     # a name that only partly overlaps a longer pattern never leaves characters behind
     out = redact("Ramil 2026-11-12 Dimaculangan2026-11-12", TEODORA)
     assert out.text == "[RELATIVE_1] [DATE_1] [PATIENT_1][DATE_1]"
+    record = _identity(record_number="SYN-2026")
+    both = redact("SYN-2026-11-12", record)
+    assert both.text == "[DATE_1]"
+    assert both.mapping == {"[DATE_1]": "SYN-2026-11-12"}
+    assert restore(both.text, both.mapping) == "SYN-2026-11-12"
+    assert not mentions_identity(both.text, record)
 
 
 def test_a_digit_postal_code_needs_address_context() -> None:
@@ -525,3 +540,72 @@ def test_age_after_a_label_with_a_colon() -> None:
 def test_a_term_ending_in_punctuation_matches_next_to_anything() -> None:
     ident = _identity(address="Vexlor St, Plimth.")
     assert redact("at Vexlor St, Plimth.ok", ident).text == "at [ADDRESS_1]ok"
+
+
+@pytest.mark.parametrize("note", ["[TEODORA_1]", "[RAMIL_1] at bedside", "[teodora_1]"])
+def test_only_real_token_kinds_are_masked(note: str) -> None:
+    out = redact(note, TEODORA)
+    assert "Teodora" not in out.text.title()
+    assert not mentions_identity(out.text, TEODORA)
+    assert mentions_identity(note, TEODORA)
+    assert restore(out.text, out.mapping) == note
+
+
+def test_phone_glued_to_a_name_is_redacted_after_the_name_is_replaced() -> None:
+    out = redact("Ramil415-555-0134 and Ramil09175550134", TEODORA)
+    assert out.text == "[RELATIVE_1][PHONE_1] and [RELATIVE_1][PHONE_2]"
+    assert restore(out.text, out.mapping) == "Ramil415-555-0134 and Ramil09175550134"
+
+
+def test_a_typed_token_next_to_a_phone_is_left_alone() -> None:
+    note = "Ramil[PHONE_1]415-555-0134"
+    out = redact(note, TEODORA)
+    assert out.text == "[RELATIVE_1][PHONE_1][PHONE_2]"
+    assert out.mapping["[PHONE_2]"] == "415-555-0134"
+    assert restore(out.text, out.mapping) == note
+
+
+@pytest.mark.parametrize(
+    "note",
+    ["Teodora\u200bRamil", "Dora\u00adTeodora", "Ramil\u2060Dimaculangan", "Ramil\u200d\u200bDora"],
+)
+def test_two_names_joined_by_an_invisible_character_are_both_redacted(note: str) -> None:
+    out = redact(note, TEODORA)
+    assert "[" in out.text
+    assert not mentions_identity(out.text, TEODORA)
+    assert restore(out.text, out.mapping) == note
+
+
+@pytest.mark.parametrize(
+    "cue", ["Phone number:", "Tel no.", "Contact #:", "tel number", "Mobile No:", "cell #"]
+)
+def test_the_phone_cue_may_carry_no_number_or_hash(cue: str) -> None:
+    out = redact(f"{cue} 415 555 0134 ok", PERPETUA)
+    assert out.text == f"{cue} [PHONE_1] ok"
+
+
+def test_a_spaced_ph_number_needs_a_mobile_prefix() -> None:
+    assert redact("0800 240 1200 mL", PERPETUA).text == "0800 240 1200 mL"
+    assert redact("call 0917 555 0134", PERPETUA).text == "call [PHONE_1]"
+    assert redact("0917 555 0134", PERPETUA).text == "[PHONE_1]"
+
+
+@pytest.mark.parametrize(
+    "note", ["PIV age: 96 hrs", "line age 96 hrs", "age 96 hours", "age 120 days", "age 96 h"]
+)
+def test_age_followed_by_a_duration_is_not_an_age(note: str) -> None:
+    assert redact(note, PERPETUA).text == note
+
+
+def test_age_labels_still_redact_without_a_duration() -> None:
+    assert (
+        redact("Age: 91, age 91, age 91 years", PERPETUA).text == "Age: 90+, age 90+, age 90+ years"
+    )
+
+
+def test_later_pass_tokens_skip_numbers_typed_in_the_original_note() -> None:
+    ident = _identity(given_name="Qorv\u00e9", middle_name=None, family_name="Vexlor", suffix=None)
+    note = "Qorv\u00e9zyx@example.com https://example.com/[PATIENT_1]"
+    out = redact(note, ident)
+    assert out.text == "[PATIENT_2][EMAIL_1] [URL_1]"
+    assert restore(out.text, out.mapping) == note
