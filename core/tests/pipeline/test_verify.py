@@ -1,5 +1,7 @@
 """Deciding each line's status from its quotes, numbers and units."""
 
+from hypothesis import given
+from hypothesis import strategies as st
 from nursing_core.demo import DEMO_FACILITIES, load_demo_cases
 from nursing_core.domain.model_output import ModelLine
 from nursing_core.domain.notes import (
@@ -481,3 +483,164 @@ def test_a_degree_lookalike_after_a_glued_value_is_still_checked() -> None:
     for drafted in ("T38\u00baC.", "T38\u02daC.", "T38\u2070C."):
         line = _check("T 39 C", drafted, ["T 39 C"])
         assert _kinds(line) == [MismatchKind.VALUE], drafted
+
+
+def test_a_number_with_thousands_separators_is_compared_whole() -> None:
+    for note, drafted in (
+        ("heparin 5,000 units SC", "Heparin 5 units SC given."),
+        ("IVF PNSS 1,000 mL", "IVF PNSS 1 mL"),
+        ("enoxaparin 4,000 units", "enoxaparin 4 units"),
+        ("heparin 5,000 units", "Heparin 5,000,000 units"),
+        ("WBC 12,500", "WBC 12"),
+    ):
+        line = _check(note, drafted, [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, drafted)
+        assert _kinds(line) == [MismatchKind.VALUE], (note, drafted)
+    [mismatch] = _check("WBC 12,500", "WBC 12", ["WBC 12,500"]).number_mismatches
+    assert (mismatch.note_text, mismatch.note_span) == ("12,500", Span(start=4, end=10))
+    for drafted in ("Heparin 5000 units", "Heparin 5,000 units"):
+        line = _check("heparin 5,000 units", drafted, ["heparin 5,000 units"])
+        assert line.status is LineStatus.SOURCE_FOUND, drafted
+
+
+def test_a_unit_spelling_the_table_does_not_read_still_counts_as_written() -> None:
+    for note in ("IVF D5LR 1L", "IVF 1 L"):
+        line = _check(note, "IVF 1 mL.", [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, note
+        assert _kinds(line) == [MismatchKind.UNIT], note
+    line = _check("IVF D5LR 1L", "IVF D5LR 1 mL.", ["IVF D5LR 1L"])
+    assert (line.number_mismatches[0].note_text, line.number_mismatches[0].note_span) == (
+        "1L",
+        Span(start=9, end=11),
+    )
+    assert _check("drank 600 cc", "Drank 600 mL.", ["drank 600 cc"]).status is (
+        LineStatus.SOURCE_FOUND
+    )
+    assert _check("drank 600", "Drank 600 mL.", ["drank 600"]).status is LineStatus.SOURCE_FOUND
+
+
+def test_digits_inside_a_word_must_appear_whole_in_a_quote() -> None:
+    line = _check("paracetamol q4h PRN", "Paracetamol q6h PRN.", ["paracetamol q4h PRN"])
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    [mismatch] = line.number_mismatches
+    assert mismatch.kind is MismatchKind.VALUE
+    assert (mismatch.draft_text, mismatch.draft_span) == ("q6h", Span(start=12, end=15))
+    assert (mismatch.note_text, mismatch.note_span) == (None, None)
+    line = _check("IVF D5W", "IVF D10W.", ["IVF D5W"])
+    assert [m.draft_text for m in line.number_mismatches] == ["D10W"]
+    line = _check("HR 121 bpm RR 20", "HR121bpmRR20.", ["HR 121 bpm RR 20"])
+    assert [m.draft_text for m in line.number_mismatches] == ["HR121bpmRR20"]
+    line = _check("q4h", "q4hr.", ["q4h"])
+    assert [m.draft_text for m in line.number_mismatches] == ["q4hr"]
+    for note, drafted in (
+        ("paracetamol q4h PRN", "Paracetamol q4h PRN."),
+        ("d5lr running", "D5LR running."),
+    ):
+        assert _check(note, drafted, [note]).status is LineStatus.SOURCE_FOUND, drafted
+
+
+def test_number_words_must_appear_whole_in_a_quote() -> None:
+    for drafted, word in (("Gave two tabs.", "two"), ("Gave half a tab.", "half")):
+        line = _check("gave 1 tab", drafted, ["gave 1 tab"])
+        assert line.status is LineStatus.NUMBER_MISMATCH, drafted
+        [mismatch] = line.number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE
+        assert (mismatch.draft_text, mismatch.draft_span) == (
+            word,
+            Span(start=5, end=5 + len(word)),
+        )
+        assert (mismatch.note_text, mismatch.note_span) == (None, None)
+    line = _check("two tabs given", "Two tabs given.", ["two tabs given"])
+    assert line.status is LineStatus.SOURCE_FOUND
+    assert _check("seen by staff", "Seen by someone.", ["seen by staff"]).status is (
+        LineStatus.SOURCE_FOUND
+    )
+
+
+def test_more_unit_spellings_are_checked_against_the_note() -> None:
+    for drafted in ("T 37.4 degrees Fahrenheit", "T 37.4 deg F"):
+        line = _check("BT 37.4", drafted, ["BT 37.4"])
+        assert _kinds(line) == [MismatchKind.UNIT], drafted
+        assert line.number_mismatches[0].draft_text == drafted[2:]
+    assert _kinds(_check("wt 80", "Weight 80 pounds", ["wt 80"])) == [MismatchKind.UNIT]
+    assert _kinds(_check("Wt 81 lbs", "Wt 81 kgs", ["Wt 81 lbs"])) == [MismatchKind.UNIT]
+    assert _check("BT 37.4", "T 37.4 degrees Celsius", ["BT 37.4"]).status is (
+        LineStatus.SOURCE_FOUND
+    )
+
+
+def test_dose_units_written_on_both_sides_must_agree() -> None:
+    line = _check("cefuroxime 1 g", "Cefuroxime 1 mg given.", ["cefuroxime 1 g"])
+    assert _kinds(line) == [MismatchKind.UNIT]
+    [mismatch] = line.number_mismatches
+    assert (mismatch.draft_text, mismatch.draft_span) == ("1 mg", Span(start=11, end=15))
+    assert (mismatch.note_text, mismatch.note_span) == ("1 g", Span(start=11, end=14))
+    for note, drafted in (
+        ("1 g", "1 gm"),
+        ("10 units", "10 U"),
+        ("10 unit", "10 u"),
+        ("10 IU", "10 iu"),
+        ("5 mcg", "5 \u00b5g"),
+        ("5 ug", "5 mcg"),
+        ("2 mEq", "2 meq"),
+        ("2 mmol", "2 mmol"),
+        ("1 L", "1 l"),
+        ("cefuroxime 1", "1 g"),
+    ):
+        assert _check(note, drafted, [note]).status is LineStatus.SOURCE_FOUND, (note, drafted)
+    for note, drafted in (
+        ("10 units", "10 mL"),
+        ("10 IU", "10 units"),
+        ("2 mmol", "2 mEq"),
+        ("5 mcg", "5 mg"),
+        ("IVF 1 mL", "IVF 1 L"),
+    ):
+        line = _check(note, drafted, [note])
+        assert _kinds(line) == [MismatchKind.UNIT], (note, drafted)
+
+
+def test_a_value_must_match_a_number_that_follows_the_same_label() -> None:
+    line = _check("HR 112 RR 20", "HR 20, RR 112.", ["HR 112 RR 20"])
+    assert _kinds(line) == [MismatchKind.VALUE, MismatchKind.VALUE]
+    assert [(m.draft_text, m.note_text) for m in line.number_mismatches] == [
+        ("20", "112"),
+        ("112", "20"),
+    ]
+    assert line.number_mismatches[0].note_span == Span(start=3, end=6)
+    ok = _check("HR 112 RR 20", "HR 112, RR 20.", ["HR 112 RR 20"])
+    assert ok.status is LineStatus.SOURCE_FOUND
+    unlabelled = _check("HR 112 RR 20", "Pulse 112, breathing 20.", ["HR 112 RR 20"])
+    assert unlabelled.status is LineStatus.SOURCE_FOUND
+
+
+def test_more_spacings_and_an_ampersand_make_a_mixed_number_in_the_note() -> None:
+    for note in (
+        "GAVE 1 AND 1/2 TAB",
+        "gave 1 & 1/2 tab",
+        "gave 1  \u00bd tab",
+        "gave 1\t\u00bd tab",
+        "gave 1 and\u00a01/2 tab",
+    ):
+        line = _check(note, "Gave 1 tab.", [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, note
+        assert _kinds(line) == [MismatchKind.VALUE], note
+
+
+@st.composite
+def _notes_and_lines(draw: st.DrawFn) -> tuple[str, str, list[str], bool]:
+    note = draw(st.text())
+    start = draw(st.integers(min_value=0, max_value=len(note)))
+    end = draw(st.integers(min_value=start, max_value=len(note)))
+    piece = st.one_of(st.just(note[start:end]), st.text())
+    return note, draw(piece), draw(st.lists(piece, max_size=3)), draw(st.booleans())
+
+
+@given(_notes_and_lines())
+def test_checking_a_line_never_raises_on_arbitrary_text(
+    case: tuple[str, str, list[str], bool],
+) -> None:
+    note, text, quotes, own = case
+    for units in (PH, US_LB):
+        line = _check(note, text, quotes, own=own, units=units)
+        assert line.text == text
+        assert recheck_line(line, text, prepare(note), units).text == text

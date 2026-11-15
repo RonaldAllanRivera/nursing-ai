@@ -1,5 +1,7 @@
 """Finding numbers in a line and reading the unit written right after one."""
 
+from hypothesis import given
+from hypothesis import strategies as st
 from nursing_core.domain.notes import Span
 from nursing_core.domain.units import Ucum
 from nursing_core.pipeline.unit_check import number_value, numbers_in, unit_after, unit_end_after
@@ -149,7 +151,7 @@ def test_a_whole_number_with_a_fraction_is_one_mixed_number() -> None:
     assert numbers_in("gave 1½ tab") == [("1½", Span(start=5, end=7))]
     assert numbers_in("gave 1 1/2 tab") == [("1 1/2", Span(start=5, end=10))]
     assert _tokens("2 3/2 x, 1-1/2") == ["2", "3/2", "1", "1/2"]
-    assert _tokens("gave 1  1/2") == ["1", "1/2"]
+    assert _tokens("gave 1  1/2") == ["1  1/2"]
 
 
 def test_a_mixed_number_equals_its_other_spelling_but_nothing_else() -> None:
@@ -183,3 +185,54 @@ def test_a_spaced_or_worded_fraction_after_a_whole_number_is_a_mixed_number() ->
 def test_a_degree_lookalike_is_not_a_letter_after_digits() -> None:
     assert _tokens("T38\u00baC. T38\u02daC T38\u2070C") == ["38", "38", "38"]
     assert _tokens("Wt81kgs") == ["81"]
+
+
+def test_a_number_with_thousands_separators_is_one_number() -> None:
+    assert numbers_in("heparin 5,000 units") == [("5,000", Span(start=8, end=13))]
+    assert _tokens("WBC 12,500 and 5,000,000 and 1,000.5") == ["12,500", "5,000,000", "1,000.5"]
+    assert number_value("5,000") == number_value("5000")
+    assert number_value("5,000,000") == number_value("5000000")
+    assert number_value("1,000.5") == number_value("1000.5")
+    assert number_value("12,500") != number_value("12")
+
+
+def test_a_comma_that_is_not_a_thousands_separator_splits_numbers() -> None:
+    assert _tokens("5,0001 and 37,5 and 12,34") == ["5", "0001", "37", "5", "12", "34"]
+
+
+def test_more_spacings_and_an_ampersand_join_a_mixed_number() -> None:
+    for written in ("1 AND 1/2", "1 & 1/2", "1  \u00bd", "1\t\u00bd", "1 and\u00a01/2", "1  1/2"):
+        text = f"GAVE {written} TAB"
+        assert numbers_in(text) == [(written, Span(start=5, end=5 + len(written)))], written
+        assert number_value(written) == number_value("1\u00bd"), written
+
+
+def test_more_spellings_of_weight_and_temperature_units_are_read() -> None:
+    cases = {
+        "wt 80 kgs": Ucum.KG,
+        "wt 80 kilogram": Ucum.KG,
+        "wt 80 Kilograms": Ucum.KG,
+        "wt 80 pound": Ucum.LB,
+        "wt 80 POUNDS": Ucum.LB,
+        "wt 80 Fahrenheit": Ucum.DEG_F,
+        "wt 80 deg F": Ucum.DEG_F,
+        "wt 80 degF": Ucum.DEG_F,
+        "wt 80 degrees F": Ucum.DEG_F,
+        "wt 80 degrees Fahrenheit": Ucum.DEG_F,
+        "wt 80 Celsius": Ucum.CEL,
+        "wt 80 deg C": Ucum.CEL,
+        "wt 80 degrees c": Ucum.CEL,
+        "wt 80 DEGREES CELSIUS": Ucum.CEL,
+    }
+    for text, unit in cases.items():
+        assert _unit(text, "80") is unit, text
+    for text in ("wt 80 pounded", "wt 80 deg Fx", "wt 80 degrees", "wt 80 f", "wt 80 kgsx"):
+        assert _unit(text, "80") is None, text
+
+
+@given(st.text())
+def test_numbers_and_their_values_never_raise_on_arbitrary_text(text: str) -> None:
+    for token, span in numbers_in(text):
+        assert text[span.start : span.end] == token
+        number_value(token)
+        unit_end_after(text, span)

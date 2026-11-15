@@ -30,7 +30,9 @@ def prepare(raw: str) -> MatchText:
     """Normalise one code point at a time so each result character has one raw origin.
 
     Known limit: a precomposed letter ("\u00f1") and its decomposed form don't match each other.
-    That error is towards "not found", which is safe.
+    That error is towards "not found", which is safe. NFKC also folds "\u00bd" to "1\u20442" and
+    "10\u00b3" to "103" in the matching text, so numbers are read from the typed text, never from
+    this one.
     """
     chars: list[str] = []
     origin: list[int] = []

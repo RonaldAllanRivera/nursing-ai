@@ -3,7 +3,8 @@
 Numbers are read from the note as typed, never from the normalised matching text, so a character
 the matcher folds (a typed "½", say) can't make a number appear that the nurse didn't write. A
 number counts for a quote when it overlaps the quote and is compared whole; labels are read only
-inside the quote, and a unit is read right after the number even past the quote's end.
+inside the quote, and a unit is read right after the number even past the quote's end. A word
+whose number can't be compared by value ("q4h", "D5W", "two") must appear whole in a found quote.
 """
 
 import re
@@ -28,7 +29,14 @@ from nursing_core.domain.units import (
     UnitDefaults,
 )
 from nursing_core.pipeline.text import MatchText, find_span
-from nursing_core.pipeline.unit_check import NumberValue, number_value, numbers_in, unit_end_after
+from nursing_core.pipeline.unit_check import (
+    NumberValue,
+    WrittenUnit,
+    number_value,
+    numbers_in,
+    words_with_numbers,
+    written_unit,
+)
 
 # The word right before a number; spaces and one ":" or "=" may sit between.
 _LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
@@ -47,7 +55,7 @@ class _NoteNumber:
     text: str
     span: Span  # in the note as typed
     label: str | None
-    unit: Ucum | None
+    unit: WrittenUnit | None  # the unit written after it, if any
     with_unit: Span  # the number and the unit written after it, in the note as typed
     typed_with_unit: str
 
@@ -112,7 +120,8 @@ def _assess(
     if len(found) < len(spans) or (not own_wording and not quotes):
         return LineStatus.NO_SOURCE, []
     note_numbers = _note_numbers(note.raw, found)
-    mismatches = _mismatches(text, note_numbers, units)
+    quote_texts = [note.raw[span.start : span.end] for span in found]
+    mismatches = _mismatches(text, note_numbers, quote_texts, units)
     if mismatches:
         return LineStatus.NUMBER_MISMATCH, mismatches
     return (LineStatus.SUMMARY if own_wording else LineStatus.SOURCE_FOUND), []
@@ -136,8 +145,8 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
         for written, span in tokens:
             if span.start >= quote.end or span.end <= quote.start:
                 continue
-            unit = unit_end_after(raw, span)
-            with_unit = Span(start=span.start, end=span.end if unit is None else unit[1])
+            unit = written_unit(raw, span)
+            with_unit = Span(start=span.start, end=span.end if unit is None else unit.end)
             label = (
                 _label_before(raw[quote.start : span.start]) if span.start >= quote.start else None
             )
@@ -147,7 +156,7 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
                     text=written,
                     span=span,
                     label=label,
-                    unit=None if unit is None else unit[0],
+                    unit=unit,
                     with_unit=with_unit,
                     typed_with_unit=raw[with_unit.start : with_unit.end],
                 )
@@ -165,15 +174,50 @@ def default_unit(unit: Ucum, units: UnitDefaults) -> Ucum | None:
     return None
 
 
+def _same_unit(drafted: WrittenUnit, written: WrittenUnit | None, units: UnitDefaults) -> bool:
+    """Whether the unit a note writes after a value agrees with the one the line writes after it.
+
+    A unit the alias table reads must be the note's unit, or the facility's default when the note
+    writes no unit at all. A dose or volume unit written on both sides must be the same unit.
+    """
+    if drafted.unit is not None:
+        if written is None:
+            if default_unit(drafted.unit, units) != drafted.unit:
+                return False
+        elif written.unit != drafted.unit:
+            return False
+    return (
+        drafted.compared is None or written is None or written.compared in (None, drafted.compared)
+    )
+
+
+def _in_a_quote(word: str, quote_texts: list[str]) -> bool:
+    """Whether the word appears whole, in any case, in one of the quotes as typed."""
+    pattern = re.compile(rf"(?<![^\W_]){re.escape(word.casefold())}(?![^\W_])")
+    return any(pattern.search(quote.casefold()) for quote in quote_texts)
+
+
 def _mismatches(
-    text: str, note_numbers: list[_NoteNumber], units: UnitDefaults
+    text: str, note_numbers: list[_NoteNumber], quote_texts: list[str], units: UnitDefaults
 ) -> list[NumberMismatch]:
-    out: list[NumberMismatch] = []
+    out = [
+        NumberMismatch(
+            kind=MismatchKind.VALUE,
+            draft_text=word,
+            draft_span=span,
+            note_text=None,
+            note_span=None,
+        )
+        for word, span in words_with_numbers(text)
+        if not _in_a_quote(word, quote_texts)
+    ]
     for written, span in numbers_in(text):
-        same_value = [n for n in note_numbers if n.value == number_value(written)]
+        # A label the quotes use for some number says which of their numbers this one must be.
+        label = _label_before(text[: span.start])
+        labelled = [n for n in note_numbers if label is not None and n.label == label]
+        same_value = [n for n in labelled or note_numbers if n.value == number_value(written)]
         if not same_value:
-            label = _label_before(text[: span.start])
-            paired = next((n for n in note_numbers if label and n.label == label), None)
+            paired = labelled[0] if labelled else None
             out.append(
                 NumberMismatch(
                     kind=MismatchKind.VALUE,
@@ -184,21 +228,17 @@ def _mismatches(
                 )
             )
             continue
-        drafted = unit_end_after(text, span)
-        if drafted is None:
-            continue
-        unit, unit_end = drafted
-        default = default_unit(unit, units)
-        if any(n.unit == unit or (n.unit is None and default == unit) for n in same_value):
+        drafted = written_unit(text, span)
+        if drafted is None or any(_same_unit(drafted, n.unit, units) for n in same_value):
             continue
         first = same_value[0]
         out.append(
             NumberMismatch(
                 kind=MismatchKind.UNIT,
-                draft_text=text[span.start : unit_end],
-                draft_span=Span(start=span.start, end=unit_end),
+                draft_text=text[span.start : drafted.end],
+                draft_span=Span(start=span.start, end=drafted.end),
                 note_text=first.typed_with_unit,
                 note_span=first.with_unit,
             )
         )
-    return out
+    return sorted(out, key=lambda mismatch: mismatch.draft_span.start)
