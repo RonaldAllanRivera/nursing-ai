@@ -68,22 +68,34 @@ resource "aws_route_table_association" "private" {
 }
 
 resource "aws_security_group" "app" {
-  name        = "${var.name}-app"
+  name_prefix = "${var.name}-app-"
   description = "The Lambda functions: outbound HTTPS over IPv6 and the database, nothing inbound"
   vpc_id      = aws_vpc.this.id
 
   tags = {
     Name = "${var.name}-app"
   }
+
+  # A replacement must create the new group first: a group in use by Lambda
+  # network interfaces cannot be deleted until they move.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_security_group" "db" {
-  name        = "${var.name}-db"
+  name_prefix = "${var.name}-db-"
   description = "The Aurora cluster: reachable only from the app security group"
   vpc_id      = aws_vpc.this.id
 
   tags = {
     Name = "${var.name}-db"
+  }
+
+  # A replacement must create the new group first: a group in use by Lambda
+  # network interfaces cannot be deleted until they move.
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
