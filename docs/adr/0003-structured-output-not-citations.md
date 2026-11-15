@@ -21,21 +21,24 @@ The model API offers two ways to get structure and sources:
   the redacted note (known identifiers replaced by tokens), not the note the nurse typed.
 - **Structured output.** The model returns JSON that follows a schema. Each line has its text, its
   source quotes as plain strings and an `own_wording` flag. The schema is the same for every
-  patient and holds no patient data in an enum, a const or a pattern, because the API caches
-  schemas apart from the messages.
+  patient and holds no patient data in an enum, a const or a pattern: the API caches each compiled
+  schema for up to 24 hours, apart from the messages, so patient data in a schema would outlive
+  the request.
 
 ## Decision
 
 We use structured output and check the quotes ourselves.
 
 - **The shape is the schema's job.** The provider sends the schema built from the `ModelFdarDraft`
-  model as a JSON-schema output format. It calls `messages.create` and validates the text itself,
-  not `messages.parse`, because `parse` validates before the stop reason can be read, so a refusal
-  would show up as "invalid output" instead of "the model refused".
+  model as a JSON-schema output format. It calls `messages.create`, not `messages.parse`, and
+  validates the text itself, because `parse` validates before the stop reason can be read, so a
+  refusal would show up as "invalid output" instead of "the model refused".
 - **Quotes are plain text.** After the answer comes back, code restores the identifier tokens, then
-  finds each quote in the note the nurse typed. Matching ignores case, spacing, curly quotes and
-  Unicode forms, keeps a map back to the typed characters, and never matches inside a longer word
-  or number. The result is stored as code-point spans into the typed note.
+  finds each quote in the note the nurse typed. Matching ignores case, spacing and curly quotes,
+  folds compatibility forms such as full-width letters, keeps a map back to the typed characters,
+  and never matches inside a longer word or number. A composed accent and its decomposed form
+  still don't match each other, an error towards "not found". The result is stored as code-point
+  spans into the typed note.
 - **Numbers and units are read by code.** Every number in a line is compared by value with the
   numbers in its source, and every unit is compared through an alias table. Code never converts
   units.
@@ -44,13 +47,15 @@ We use structured output and check the quotes ourselves.
 
 ## Consequences
 
-- The schema guarantees the draft's shape, so no code parses free text into sections.
+- The schema guarantees the draft's shape for every answer the model finishes, so no code parses
+  free text into sections.
 - The quote check is plain code, covered by unit and property tests, and the demo cases pin its
   output. We can test it without calling the model.
 - A quote the model paraphrases or invents finds no match and the line is flagged `no_source`
   instead of being trusted.
 - The same check runs for the fake, replay and live providers, and would run for a provider on
-  another platform, because it depends only on the schema and the typed note.
+  another platform, because it uses no feature of the model API, only the answer in the schema's
+  shape, the typed note and the facility's settings.
 - A meaning error, such as the right words read the wrong way, isn't caught for each draft. It is
   left to evaluation against the gold set.
 
