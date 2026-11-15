@@ -8,6 +8,21 @@ Terraform for the app's AWS hosting in Sydney (`ap-southeast-2`). The decisions 
 
 The code is tested against a mocked provider. Nothing in this folder has been applied to AWS yet.
 
+## App changes this stack needs (not built yet)
+
+The stack is written for an app that does not exist in this form yet. The app will need these
+changes, and a deploy before they land will not serve requests:
+
+- Run behind the Lambda Web Adapter, with the server listening on port 8080.
+- Serve the `/events` route only when `APP_ROLE=worker`, so the public API never exposes it.
+- Read its secrets from SSM Parameter Store once, at cold start, using the
+  `<SETTING>_SSM_PARAMETER` names it is given, through a dual-stack client.
+- Use a dual-stack client for SQS.
+- Use SQLAlchemy `NullPool` and a database connect timeout above 15 seconds, with retries, so the
+  database can pause and wake.
+- Write the `AiSpendUsd` metric (namespace `NursingAI`) that the AI spend alarm watches.
+- Show a "waking" screen in the web app while the database resumes.
+
 ## What is in each folder
 
 | Folder | What it is |
@@ -27,7 +42,8 @@ No AWS account ID, email address or GitHub user name is written in the code. The
 variables that have no default. Copy `terraform.tfvars.example` to `terraform.tfvars` (git-ignored)
 in `bootstrap/` and in `live/`, and fill them in.
 
-Resource names come from `nursing-ai-<environment>`, for example `nursing-ai-demo`.
+In `live/`, resource names come from `nursing-ai-<environment>`, for example `nursing-ai-demo`.
+`bootstrap/` names its resources from `nursing-ai`, for example the `nursing-ai` image repository.
 
 ## Before you start
 
@@ -88,7 +104,9 @@ That is only safe if you set up two things in GitHub by hand:
   images and read Lambda configuration. That is fine only while no secret is baked into an image or
   a Lambda environment variable. Secrets live in SSM SecureStrings.
 - **Deploys** run in the `production` environment and assume the `deploy` role. CI builds the image,
-  pushes it to the registry (the `repository_url` output of `bootstrap`), then applies `live`:
+  pushes it to the registry (the `repository_url` output of `bootstrap`), then applies `live`.
+  The job runs after the `production` environment's reviewer approves, so CI adds `-auto-approve`
+  (or applies a reviewed saved plan). The command is:
 
   ```sh
   cd infra/live
@@ -111,8 +129,8 @@ back. You overwrite each one by hand. Read the value from a hidden prompt, so it
 the command line or kept in shell history:
 
 ```sh
-read -rs VALUE
-aws ssm put-parameter --profile nursing-ai \
+read -rsp 'Value: ' VALUE; echo
+aws ssm put-parameter --profile nursing-ai --region ap-southeast-2 \
   --name /nursing-ai/demo/anthropic-api-key \
   --type SecureString --overwrite --value "$VALUE"
 unset VALUE
@@ -120,23 +138,29 @@ unset VALUE
 
 Repeat for `google-client-id` and `google-client-secret`, with `prod` in the path for the prod
 environment. The database URL (`/nursing-ai/<environment>/database-url`) is written by Terraform
-and needs no manual step. Each Lambda function reads its secrets once at cold start, so a new
-value reaches a running function after its next cold start.
+and needs no manual step. Each Lambda function will read its secrets once at cold start (see
+"App changes this stack needs"), so a new value will reach a running function after its next cold
+start.
 
 ### Rotating or recovering the database password
 
 The password is generated on each run and never stored in state. If an apply stops after the Aurora
 cluster is created but before the `database-url` parameter is written, or the parameter is ever
 recreated, the stored URL has a password the cluster never got. The app then cannot log in. Raise
-`database_password_version` by one in the next apply (`-var="database_password_version=2"`). The
-cluster and the parameter both get the same new password. The same bump rotates the password on
-purpose.
+the default of `database_password_version` by one in `infra/live/variables.tf`, in a reviewed pull
+request (or set it in the deploy workflow), so that every apply sees the new value. The cluster and
+the parameter both get the same new password. The same bump rotates the password on purpose. Never
+lower the value: CI does not pass it, so a lower default would rotate the password again on the
+next deploy and leave warm functions with a stale URL.
 
 ## Running the checks
 
 ```sh
+make tools
 infra/scripts/check.sh
 ```
+
+`make tools` installs the pinned `tflint` and `trivy` into `.tools/bin` once.
 
 It runs `terraform fmt -check`, `terraform init -backend=false`, `validate` and `test` in both
 roots and every module, `tflint`, and `trivy config` for HIGH and CRITICAL findings. It also fails
@@ -215,6 +239,9 @@ Assumptions:
 | `ops` | Three alarms (10 are free), SNS email, three log groups (5 GB a month free). Standard SSM parameters are free. | $0 |
 | `brake` | A budget action (the first two are free), one IAM policy and role. | $0 |
 | **Total** | | **about $3 to $7** |
+
+The rows add up to a little under the total. It is rounded up to cover the lines that were not
+priced: S3 storage, Aurora backup and I/O.
 
 What moves the total:
 

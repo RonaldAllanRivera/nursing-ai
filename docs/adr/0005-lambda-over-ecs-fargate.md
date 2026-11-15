@@ -21,11 +21,13 @@ We build one container image and run it as two AWS Lambda functions, `<name>-api
 `<name>-worker`.
 
 - Both functions use the image through the Lambda Web Adapter. The adapter lets an ordinary web
-  server on port 8080 run on Lambda without changes to the code.
+  server on port 8080 run on Lambda with little change to the code. The app does not run this way
+  yet: it will need to listen on port 8080 behind the adapter (see "App changes this stack needs"
+  in `infra/README.md`).
 - `APP_ROLE=api` makes the first function serve the public API. `APP_ROLE=worker` makes the second
   serve the `/events` route that the queue sends jobs to. The adapter is told to pass queue events
-  to `/events` (`AWS_LWA_PASS_THROUGH_PATH`). The route exists only when `APP_ROLE=worker`, so the
-  public API cannot serve it.
+  to `/events` (`AWS_LWA_PASS_THROUGH_PATH`). The app must add that route only when
+  `APP_ROLE=worker`, so the public API cannot serve it.
 - The adapter checks that the server is ready by opening a TCP connection to port 8080. An HTTP
   readiness check would call a health route that pings the database, and every cold start would
   then wake the database.
@@ -40,8 +42,8 @@ We build one container image and run it as two AWS Lambda functions, `<name>-api
   Prices read 2026-11-12, Sydney.
 - There is no load balancer, no server to patch and no cluster to size.
 - A cold start loads a container image, so the first request after a quiet period is slow. The web
-  app shows a "waking" screen and retries.
-- The API function has a 29-second timeout, which is the longest an HTTP API waits. Long work goes
+  app will show a "waking" screen and retry.
+- The API function has a 29-second timeout, just under the 30 seconds an HTTP API waits. Long work goes
   through the queue to the worker (a 120-second timeout by default).
 - Both functions join the VPC to reach the database. That is why the network has no internet route
   except IPv6 (see ADR 0006).

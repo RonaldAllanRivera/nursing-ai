@@ -62,10 +62,11 @@ subnet and cost about $3 to $5 a month plus $3.65 for the address, and we would 
 - The network has no fixed hourly cost. Data sent to the internet is billed per GB after the free
   allowance, as it would be with any route.
 - Adding a service that has no IPv6 address is a design decision, not a one-line change.
-- The app depends on dual-stack endpoint names. A client built without them fails to reach SQS or
+- The app must use dual-stack endpoint names. A client built without them fails to reach SQS or
   SSM, and the smoke test exists to catch that.
-- A VPC function that goes unused for about 14 days can lose its network interface, and the next
-  call is slow while a new one is made. The web app's retry screen covers this.
+- A VPC function that goes unused for about 14 days can have its network interface reclaimed. The
+  function then goes Inactive, and its first invocation fails while it returns to Pending. The
+  app's retries must cover this.
 - The database is not reachable from the internet at all.
 
 ## Alternatives considered
@@ -74,7 +75,7 @@ subnet and cost about $3 to $5 a month plus $3.65 for the address, and we would 
   services. About $46.72 a month before any traffic, which is many times the whole target.
 - **fck-nat.** Far cheaper than a NAT gateway, but it is a server we patch and watch, it is a
   single machine, and it still needs a billed IPv4 address. We keep it as the fallback.
-- **Public subnets for the functions.** No NAT needed, but every function would need a public IPv4
-  address (billed by the hour). It widens the attack surface for no gain.
+- **Public subnets for the functions.** A Lambda function in a public subnet never gets a public
+  IPv4 address, so it would have no internet access at all. This does not work.
 - **VPC endpoints** for SQS and SSM. They fix AWS services only. They bill per hour, and the
   Anthropic API and Google would still need a way out.

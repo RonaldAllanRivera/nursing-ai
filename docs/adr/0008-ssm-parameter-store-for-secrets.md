@@ -30,13 +30,14 @@ All four secrets are SSM SecureString parameters under `/nursing-ai/<environment
   reaches the state or the plan.
 - The other three are created with a write-only placeholder. The operator then overwrites each
   with `aws ssm put-parameter --overwrite`, reading the value from a hidden prompt. Terraform never
-  reads these values back. The check script refuses a plaintext `value`, `master_password` or
-  `insecure_value` argument anywhere in the code.
+  reads these values back. The check script refuses a `master_password` or `insecure_value`
+  argument anywhere in the code, and a plaintext `value` inside any SSM parameter.
 - The Lambda functions get only the parameter names, as environment variables such as
   `ANTHROPIC_API_KEY_SSM_PARAMETER`. They never get a secret value in an environment variable,
   because those sit in state and in the console in plain text.
-- Each function reads its secrets once, at cold start, and keeps them in memory. Each read is one
-  decryption request, so the count stays inside the free allowance (20,000 a month, then $0.03 per
+- Each function will read its secrets once, at cold start, and keep them in memory. The app does
+  not do this yet. Each read is one decryption request, so the count will stay inside the free
+  allowance (20,000 a month, then $0.03 per
   10,000).
 - IAM limits who can read what. Only the worker role can read the Anthropic key. Only the API role
   can read the Google settings and send to the queue.
@@ -55,7 +56,7 @@ All four secrets are SSM SecureString parameters under `/nursing-ai/<environment
   after the cluster is created but before the URL is written, or if the parameter is ever
   recreated. If it is forgotten, the stored URL carries a password the cluster never got, and the
   app cannot log in.
-- A rotated secret reaches a running function only after its next cold start.
+- A rotated secret will reach a running function only after its next cold start.
 - The read-only plan role used for pull requests is denied SecureString decryption. It must run
   `terraform plan -refresh=false`, because the AWS provider decrypts every parameter it refreshes
   (see `infra/README.md`).

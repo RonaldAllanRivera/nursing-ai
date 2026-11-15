@@ -10,7 +10,7 @@ Accepted
 
 The app needs PostgreSQL 17 with the pgvector extension. Local development and tests use the
 image `pgvector/pgvector:0.8.2-pg17-bookworm`, so the cloud database should run the same pgvector
-version. The code also relies on triggers and PL/pgSQL.
+version.
 
 Use is bursty, so a database that bills all month for a few hours of use is wasteful. Prices read
 2026-11-12, Sydney.
@@ -37,12 +37,12 @@ auto-pause turned on.
 
 - **No RDS Proxy.** The proxy keeps connections open, and Aurora does not pause while any
   connection is open, even an idle one.
-- **No connection pool in the app.** It uses SQLAlchemy `NullPool`: open a connection, use it,
-  close it. A pool held by a warm Lambda would keep the database awake. One open connection can
+- **No connection pool in the app.** The app will use SQLAlchemy `NullPool`: open a connection,
+  use it, close it. A pool held by a warm Lambda would keep the database awake. One open connection can
   keep it on around the clock: about 730 hours at $0.20, close to $146 a month.
-- **Waking takes time.** A resume from a pause can take longer than 15 seconds. The app sets a
-  connect timeout above 15 seconds and retries. The web app shows a "waking" screen until the first
-  query succeeds.
+- **Waking takes time.** A resume from a pause can take longer than 15 seconds. The app must set a
+  connect timeout above 15 seconds and retry. The web app will show a "waking" screen until the
+  first query succeeds.
 - A quiet month costs a few dollars of capacity. A busy day costs more. The worst case for capacity
   is $0.20 an hour.
 - The database lives in private subnets and has no public address.
@@ -51,7 +51,10 @@ auto-pause turned on.
 ## Alternatives considered
 
 - **RDS for PostgreSQL, `db.t4g.micro`.** About $0.025 an hour, about $18 a month always on, plus
-  storage. Aurora is cheaper while it is awake under about 105 hours a month. A pilot that keeps
+  storage. Aurora compute alone, at $0.20 an hour, equals that in about 90 hours awake ($18 divided
+  by $0.20). Counting the RDS instance's own storage as well, the break-even is about 105 hours a
+  month. The RDS storage price was not read for this record, so treat 105 as an estimate and 90 as
+  the firm figure. Aurora is cheaper while it is awake for less than that. A pilot that keeps
   the database busy all day should add a provisioned instance to the same cluster.
 - **A hosted Postgres such as Supabase.** The Free plan pauses a project after a week without use
   and has no backups. Pro starts at $25 a month. It also lives outside our VPC, which changes the
