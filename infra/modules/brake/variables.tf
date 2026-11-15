@@ -30,6 +30,11 @@ variable "lambda_roles" {
     condition     = alltrue([for r in var.lambda_roles : startswith(r.arn, "arn:aws") && strcontains(r.arn, ":role/")])
     error_message = "Every lambda_roles arn must be an IAM role ARN (it starts with arn:aws and contains :role/)."
   }
+
+  validation {
+    condition     = alltrue([for r in var.lambda_roles : endswith(r.arn, ":role/${r.name}") || endswith(r.arn, "/${r.name}")])
+    error_message = "Every lambda_roles name must be the role name at the end of its arn, so the brake role is allowed to touch the role the budget action names."
+  }
 }
 
 variable "notify_email" {

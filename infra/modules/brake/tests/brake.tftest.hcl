@@ -181,8 +181,8 @@ run "brake_role_can_only_attach_the_deny_policy" {
   }
 
   assert {
-    condition     = jsondecode(aws_iam_role.brake.assume_role_policy).Statement[0].Condition == { StringEquals = { "aws:SourceAccount" = "123456789012" } }
-    error_message = "The trust must be limited to this account with aws:SourceAccount."
+    condition     = jsondecode(aws_iam_role.brake.assume_role_policy).Statement[0].Condition == { StringEquals = { "aws:SourceAccount" = "123456789012" }, ArnLike = { "aws:SourceArn" = "arn:aws:budgets::123456789012:budget/*" } }
+    error_message = "The trust must be limited to this account and its budgets with aws:SourceAccount and aws:SourceArn."
   }
 
   assert {
@@ -259,4 +259,70 @@ run "rejects_a_zero_threshold" {
   }
 
   expect_failures = [var.threshold_percent]
+}
+
+run "budget_name_can_be_changed" {
+  command = plan
+
+  variables {
+    budget_name = "other-budget"
+  }
+
+  assert {
+    condition     = aws_budgets_budget_action.brake.budget_name == "other-budget"
+    error_message = "budget_name must reach the action."
+  }
+}
+
+run "rejects_a_role_whose_name_and_arn_disagree" {
+  command = plan
+
+  variables {
+    lambda_roles = [{ name = "a", arn = "arn:aws:iam::123456789012:role/b" }]
+  }
+
+  expect_failures = [var.lambda_roles]
+}
+
+run "accepts_a_role_with_a_path" {
+  command = plan
+
+  variables {
+    lambda_roles = [{ name = "a", arn = "arn:aws:iam::123456789012:role/app/a" }]
+  }
+
+  assert {
+    condition     = one(aws_budgets_budget_action.brake.definition[0].iam_action_definition[0].roles) == "a"
+    error_message = "A role ARN with a path must be accepted."
+  }
+}
+
+run "rejects_an_arn_without_the_arn_aws_prefix" {
+  command = plan
+
+  variables {
+    lambda_roles = [{ name = "x", arn = "iam:role/x" }]
+  }
+
+  expect_failures = [var.lambda_roles]
+}
+
+run "rejects_an_arn_without_role_segment" {
+  command = plan
+
+  variables {
+    lambda_roles = [{ name = "x", arn = "arn:aws:iam::123456789012:user/x" }]
+  }
+
+  expect_failures = [var.lambda_roles]
+}
+
+run "rejects_an_invalid_name" {
+  command = plan
+
+  variables {
+    name = "Bad_Name"
+  }
+
+  expect_failures = [var.name]
 }
