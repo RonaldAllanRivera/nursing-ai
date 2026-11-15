@@ -49,6 +49,19 @@ def test_public_check_job_runs_the_ci_mode() -> None:
     assert "make public-check" not in runs
 
 
+def test_e2e_mock_job_runs_the_mock_journeys_after_the_web_checks() -> None:
+    job = _load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]["e2e-mock"]
+    assert job["needs"] == "web"
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+    assert "pnpm exec playwright install --with-deps chromium" in runs
+    assert "make e2e-mock" in runs
+    upload = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["if"] == "failure()"
+    assert upload["with"]["path"] == "web/playwright-report"
+
+
 def test_dependabot_keeps_pgvector_at_a_version_aurora_offers() -> None:
     config = _load(ROOT / ".github" / "dependabot.yml")
     compose = next(u for u in config["updates"] if u["package-ecosystem"] == "docker-compose")

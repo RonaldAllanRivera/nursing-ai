@@ -115,3 +115,16 @@ def test_accept_binary_passes_the_file_to_the_script() -> None:
     steps = run_make("-n", "accept-binary", "FILE=web/public/fonts/a b.woff2").stdout
     assert "scripts/reviewed_binaries.py" in steps
     assert "'web/public/fonts/a b.woff2'" in steps
+
+
+def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path) -> None:
+    # The Makefile puts .tools/bin first on PATH, so this pnpm stands in for the real one.
+    fake_bin = fake_repo / ".tools" / "bin"
+    fake_bin.mkdir(parents=True)
+    pnpm = fake_bin / "pnpm"
+    pnpm.write_text('#!/bin/sh\necho "WEB_PORT=$WEB_PORT pnpm $*"\n')
+    pnpm.chmod(0o755)
+    result = run_make("e2e-mock", "PORT_OFFSET=1", cwd=fake_repo)
+    assert result.returncode == 0, result.stderr
+    # One command and no `up`: the mock API runs in the browser, so no stack starts.
+    assert result.stdout.splitlines() == ["WEB_PORT=5183 pnpm -C web e2e:mock"]

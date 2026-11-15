@@ -22,7 +22,7 @@ export COMPOSE_PROJECT_NAME WEB_PORT API_PORT DB_PORT
 export PATH := $(CURDIR)/.tools/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e check-py check-web check actionlint gen-api openapi spend private-words accept-binary tools public-check public-check-ci hooks setup
+.PHONY: help ports up down dev e2e e2e-mock check-py check-web check actionlint gen-api openapi spend private-words accept-binary tools public-check public-check-ci hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -45,6 +45,10 @@ dev: up ## Start Postgres and the API, then the web app (Ctrl+C stops the web ap
 # The stack stays up afterwards: the caller runs `make down`.
 e2e: up ## Start the stack, then run the Playwright tests
 	pnpm -C web e2e
+
+# The mock API runs in the browser, so no stack starts; Vite serves on WEB_PORT (from PORT_OFFSET).
+e2e-mock: ## Run the Playwright journeys against the mock API (no stack needed)
+	pnpm -C web e2e:mock
 
 check-py: ## Python checks: ruff, pyright, pytest with coverage
 	uv run ruff check
