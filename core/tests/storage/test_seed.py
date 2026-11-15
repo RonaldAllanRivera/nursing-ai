@@ -176,6 +176,39 @@ async def test_seed_keeps_an_admins_facility_edit(seeded: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
+async def test_seed_does_not_bring_back_a_shift_the_admin_removed(seeded: AsyncEngine) -> None:
+    facilities = PgFacilityRepository(seeded, CLOCK)
+    current = await facilities.get_facility("ph-demo")
+    admin = next(p for p in DEMO_PERSONAS if p.role is Role.ADMIN)
+    day, night = current.profile.shifts[0], current.profile.shifts[2]
+    two_shifts = current.profile.model_copy(
+        update={
+            "shifts": [
+                day.model_copy(
+                    update={
+                        "code": "D",
+                        "label": "D",
+                        "ends_local": night.starts_local.replace(hour=18),
+                    }
+                ),
+                night.model_copy(
+                    update={
+                        "code": "N",
+                        "label": "N",
+                        "starts_local": night.starts_local.replace(hour=18),
+                    }
+                ),
+            ]
+        }
+    )
+    await facilities.update_facility("ph-demo", two_shifts, 1, admin.id)
+    await seed(seeded, CLOCK)
+    after = await facilities.get_facility("ph-demo")
+    assert [s.code for s in after.profile.shifts] == ["D", "N"]
+    assert after.version == 2
+
+
+@pytest.mark.asyncio
 async def test_seed_patient_counts_wards_and_synthetic_marks(seeded: AsyncEngine) -> None:
     patients = PgPatientRepository(seeded, CLOCK)
     ph = await patients.list_patients("ph-demo")

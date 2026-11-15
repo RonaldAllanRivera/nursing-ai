@@ -300,6 +300,20 @@ async def _add(conn: AsyncConnection, table: Table, rows: list[dict[str, Any]]) 
         await conn.execute(insert(table).on_conflict_do_nothing(), rows)
 
 
+async def _add_parents(
+    conn: AsyncConnection, table: Table, rows: list[dict[str, Any]]
+) -> set[UUID]:
+    """Like `_add`, and returns the ids of the rows this call created (not the ones already there).
+
+    A child row (a shift, a relative) is written only for a parent created now: otherwise an
+    admin's edit to the children would be topped up with whatever the preset has that they removed.
+    """
+    created = await conn.execute(
+        insert(table).values(rows).on_conflict_do_nothing().returning(table.c.id)
+    )
+    return set(created.scalars())
+
+
 async def seed(engine: AsyncEngine, clock: Clock) -> None:
     """Write the demo facilities, staff and patients that are not already there."""
     now = clock.now()
@@ -307,7 +321,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
     facility_ids = {p.key: _id("facility", p.key) for p in DEMO_FACILITIES}
     async with engine.begin() as conn:
         # The facility is written before its users: facility.updated_by points at a user later.
-        await _add(
+        new_facilities = await _add_parents(
             conn,
             tables.facility,
             [
@@ -325,7 +339,12 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
         await _add(
             conn,
             tables.shift_definition,
-            [row for p in DEMO_FACILITIES for row in shift_rows(facility_ids[p.key], p.shifts)],
+            [
+                row
+                for p in DEMO_FACILITIES
+                for row in shift_rows(facility_ids[p.key], p.shifts)
+                if facility_ids[p.key] in new_facilities
+            ],
         )
         await _add(
             conn,
@@ -340,6 +359,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
                     "settings": p.model_dump(mode="json", exclude={"key"}),
                 }
                 for p in DEMO_FACILITIES
+                if facility_ids[p.key] in new_facilities
             ],
         )
         await _add(
@@ -381,7 +401,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
             ],
         )
         everyone = [(key, s) for key, group in stays.items() for s in group]
-        await _add(
+        new_patients = await _add_parents(
             conn,
             tables.patient,
             [
@@ -415,6 +435,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
                     "relation": relative.relation,
                 }
                 for _, s in everyone
+                if s.patient_id in new_patients
                 for position, relative in enumerate(s.identity.relatives)
             ],
         )
@@ -430,6 +451,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
                     "discharged_at": None,
                 }
                 for index, (key, s) in enumerate(everyone)
+                if s.patient_id in new_patients
             ],
         )
         await _add(
@@ -442,6 +464,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
                     "updated_at": now,
                 }
                 for _, s in everyone
+                if s.patient_id in new_patients
             ],
         )
 
