@@ -390,3 +390,51 @@ async def test_any_other_sdk_error_is_unavailable_without_retry_or_its_text(
     assert _LEAKY not in str(raised)
     assert raised.__cause__ is None
     assert raised.__suppress_context__
+
+
+_UNREADABLE_BODIES = [
+    "not json",
+    "[]",
+    '"text"',
+    "null",
+    "42",
+    "{}",
+    '{"content": 5, "stop_reason": "end_turn", "note": "SYNTHETIC-LEAK"}',
+    '{"content": [5], "stop_reason": "end_turn", "note": "SYNTHETIC-LEAK"}',
+    '{"content": [], "stop_reason": "end_turn", "model": "SYNTHETIC-LEAK"}',
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", _UNREADABLE_BODIES)
+async def test_an_unreadable_200_answer_is_unavailable_without_retry_or_its_text(
+    body: str,
+) -> None:
+    server = _Server(
+        httpx2.Response(200, content=body, headers={"content-type": "application/json"})
+    )
+    raised: BaseException | None = None
+    try:
+        await _provider(server).draft_fdar(_request())
+    except Exception as caught:  # the test is that only ProviderUnavailable comes out
+        raised = caught
+    assert type(raised) is ProviderUnavailable
+    assert str(raised) == "the AI service call failed"
+    assert len(server.bodies) == 1
+    for shown in (str(raised), repr(raised)):
+        assert body not in shown
+        assert "SYNTHETIC-LEAK" not in shown
+    assert raised.__cause__ is None
+    assert raised.__context__ is None
+    assert raised.__suppress_context__
+
+
+@pytest.mark.asyncio
+async def test_a_message_without_usage_is_unavailable() -> None:
+    response = _message()
+    body = json.loads(response.content)
+    del body["usage"]
+    server = _Server(httpx2.Response(200, json=body))
+    with pytest.raises(ProviderUnavailable, match="the AI service call failed"):
+        await _provider(server).draft_fdar(_request())
+    assert len(server.bodies) == 1

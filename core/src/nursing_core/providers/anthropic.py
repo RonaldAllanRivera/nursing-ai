@@ -7,6 +7,7 @@ a spend limit, and never lets the key, the note or the model's words into an err
 import asyncio
 import random
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from time import perf_counter
 
 import anthropic
@@ -64,6 +65,37 @@ def _user_text(request: DraftRequest) -> str:
     )
 
 
+@dataclass(frozen=True)
+class _Message:
+    """What the provider needs from an answer, as plain values."""
+
+    stop_reason: str | None
+    text: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_creation: int
+    cache_read: int
+
+
+def _read_message(response: anthropic.types.Message) -> _Message | None:
+    """Read the answer's fields once, or None if it isn't a message. The SDK builds the answer
+    without checking its shape, so a 200 that isn't a message fails here, and only here."""
+    try:
+        usage = response.usage
+        return _Message(
+            stop_reason=response.stop_reason,
+            text="".join(block.text for block in response.content if block.type == "text"),
+            model=response.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_creation=usage.cache_creation_input_tokens or 0,
+            cache_read=usage.cache_read_input_tokens or 0,
+        )
+    except (AttributeError, TypeError):
+        return None
+
+
 class AnthropicProvider:
     def __init__(
         self,
@@ -90,6 +122,7 @@ class AnthropicProvider:
         attempt = 0
         while True:
             wait: float | None = None
+            unreadable = False
             try:
                 response = await self._client.messages.create(
                     model=self.model,
@@ -109,12 +142,16 @@ class AnthropicProvider:
                 wait = _retry_after(error.response)
             except anthropic.APIConnectionError:
                 pass
+            except ValueError:
+                unreadable = True  # a 200 body that isn't JSON; never retried
             except anthropic.APIError:
                 # Anything else from the SDK, such as an answer it couldn't read; never retried.
                 raise ProviderUnavailable("the AI service call failed") from None
             else:
                 latency_ms = round((perf_counter() - started) * 1000)
                 return self._result(request, response, latency_ms)
+            if unreadable:
+                raise ProviderUnavailable("the AI service call failed") from None
             if attempt >= _MAX_RETRIES:
                 raise ProviderUnavailable("the AI service is unavailable")
             await self._sleep(_backoff(attempt) if wait is None else wait)
@@ -123,28 +160,32 @@ class AnthropicProvider:
     def _result(
         self, request: DraftRequest, response: anthropic.types.Message, latency_ms: int
     ) -> ProviderResult:
-        if response.stop_reason == "refusal":
+        message = _read_message(response)
+        if message is None:
+            # Raised outside the except, so the unreadable answer isn't kept as the context.
+            raise ProviderUnavailable("the AI service call failed") from None
+        if message.stop_reason == "refusal":
             raise ModelRefused("the model declined this request")
-        if response.stop_reason == "max_tokens":
+        if message.stop_reason == "max_tokens":
             raise InvalidModelOutput("the model's answer was cut off")
-        text = "".join(block.text for block in response.content if block.type == "text")
         try:
-            output = ModelFdarDraft.model_validate_json(text)
+            output = ModelFdarDraft.model_validate_json(message.text)
         except ValidationError:
             raise InvalidModelOutput("the model's answer did not match the draft schema") from None
-        usage = response.usage
-        cache_creation = usage.cache_creation_input_tokens or 0
-        cache_read = usage.cache_read_input_tokens or 0
         return ProviderResult(
             output=output,
             generation=GenerationInfo(
                 provider="anthropic",
-                model=response.model,
+                model=message.model,
                 prompt_version=request.prompt_version,
-                input_tokens=usage.input_tokens + cache_creation + cache_read,
-                output_tokens=usage.output_tokens,
+                input_tokens=message.input_tokens + message.cache_creation + message.cache_read,
+                output_tokens=message.output_tokens,
                 cost_usd=cost_usd(
-                    self.model, usage.input_tokens, usage.output_tokens, cache_creation, cache_read
+                    self.model,
+                    message.input_tokens,
+                    message.output_tokens,
+                    message.cache_creation,
+                    message.cache_read,
                 ),
                 latency_ms=latency_ms,
             ),
