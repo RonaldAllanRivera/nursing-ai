@@ -20,17 +20,24 @@ from nursing_core.domain.notes import (
     NoteStatus,
     RoughNote,
 )
+from nursing_core.domain.patient import PatientIdentity, Relative
 from nursing_core.domain.users import Role
 from nursing_core.storage import tables
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 NOW = datetime(2026, 11, 12, 8, 0, tzinfo=UTC)
+# Stored by position; their names sort the other way round, so a name sort would be caught.
+RELATIVES = [
+    Relative(name="Zed Relative", relation="son"),
+    Relative(name="Abe Relative", relation="spouse"),
+]
 
 
 @dataclass(frozen=True)
 class World:
     case: DemoCase
+    identity: PatientIdentity
     profile: FacilityProfile
     facility_id: UUID
     ward_id: UUID
@@ -131,7 +138,7 @@ async def build_world(engine: AsyncEngine) -> World:
     nurse = next(p for p in DEMO_PERSONAS if p.role is Role.STAFF_NURSE and p.facility_key)
     admin = next(p for p in DEMO_PERSONAS if p.role is Role.ADMIN)
     facility_id, ward_id, bed_id = uuid4(), uuid4(), uuid4()
-    identity = case.patient
+    identity = case.patient.model_copy(update={"relatives": RELATIVES})
     async with engine.begin() as conn:
         await conn.execute(insert(tables.facility).values(**_facility_values(profile, facility_id)))
         await conn.execute(
@@ -231,6 +238,7 @@ async def build_world(engine: AsyncEngine) -> World:
         )
     return World(
         case=case,
+        identity=identity,
         profile=profile,
         facility_id=facility_id,
         ward_id=ward_id,

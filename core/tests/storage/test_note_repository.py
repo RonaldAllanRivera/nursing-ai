@@ -57,8 +57,18 @@ async def test_rough_note_round_trips_with_its_shift_and_a_queued_job(engine: As
 
     stored, job = await repo.add_rough_note(rough, "key-1", HASH_A)
 
-    assert stored == rough
-    assert await repo.get_rough_note(rough.id) == rough
+    again, again_job = await repo.add_rough_note(rough_note(world), "key-1", HASH_A)
+    fetched = await repo.get_rough_note(rough.id)
+
+    assert rough.written_at.utcoffset() != timedelta(0)  # the input is not in UTC
+    for seen in (stored, again, fetched):
+        assert seen == rough
+        assert seen.written_at.utcoffset() == timedelta(0)
+        assert seen.shift.starts_at.utcoffset() == timedelta(0)
+        assert seen.shift.ends_at.utcoffset() == timedelta(0)
+    assert again_job == job
+    for instant in (job.created_at, job.updated_at):
+        assert instant.utcoffset() == timedelta(0)
     assert (job.status, job.failure, job.note_id) == (JobStatus.QUEUED, None, None)
     assert job.rough_note_id == rough.id
     assert await repo.get_job(job.id) == job

@@ -137,28 +137,24 @@ class PgNoteRepository:
                     **_shift_columns(note.shift),
                 )
                 .on_conflict_do_nothing(index_elements=["author_id", "idempotency_key"])
-                .returning(_ROUGH.c.id)
+                .returning(*_ROUGH.c)
             )
-            if inserted.first() is not None:
-                job = DraftJob(
-                    id=uuid4(),
-                    rough_note_id=note.id,
-                    status=JobStatus.QUEUED,
-                    failure=None,
-                    note_id=None,
-                    created_at=now,
-                    updated_at=now,
-                )
-                await conn.execute(
-                    insert(_JOB).values(
-                        id=job.id,
-                        rough_note_id=job.rough_note_id,
-                        status=job.status.value,
-                        created_at=now,
-                        updated_at=now,
+            stored = inserted.one_or_none()
+            if stored is not None:
+                job_row = (
+                    await conn.execute(
+                        insert(_JOB)
+                        .values(
+                            id=uuid4(),
+                            rough_note_id=note.id,
+                            status=JobStatus.QUEUED.value,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        .returning(*_JOB.c)
                     )
-                )
-                return note, job
+                ).one()
+                return _rough_note(stored), _job(job_row)
             # The key was used before (maybe a moment ago, by a request still committing).
             existing = (
                 await conn.execute(

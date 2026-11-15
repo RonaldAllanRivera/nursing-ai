@@ -14,7 +14,7 @@ from nursing_core.storage.repositories import PgFacilityRepository, PgPatientRep
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .world import NOW, add_patient, build_world
+from .world import NOW, RELATIVES, add_patient, build_world
 
 CLOCK = FixedClock(datetime(2026, 11, 12, 9, 0, tzinfo=UTC))
 
@@ -145,8 +145,9 @@ async def test_get_patient_returns_identity_context_and_facility(engine: AsyncEn
 
     assert isinstance(record, PatientRecord)
     assert record.encounter_id == world.encounter_id
-    assert record.identity == case.patient
-    assert [r.name for r in record.identity.relatives] == [r.name for r in case.patient.relatives]
+    assert record.identity == world.identity
+    assert record.identity.relatives == RELATIVES
+    assert [r.name for r in record.identity.relatives] == ["Zed Relative", "Abe Relative"]
     assert record.context == case.context
     assert record.facility == world.profile
     assert record.summary == PatientSummary(
