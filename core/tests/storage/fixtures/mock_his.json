@@ -1,0 +1,49 @@
+{
+  "synthetic": true,
+  "facility_key": "ph-demo",
+  "patients": [
+    {
+      "record_number": "SYN-PH-0004",
+      "context": {
+        "allergies": ["shellfish (hives)"],
+        "code_status": "Full code",
+        "lines_tubes": [
+          {"kind": "IV line", "description": "PIV, right hand", "aliases": ["IV", "PIV"]}
+        ],
+        "medicines_due": [
+          {
+            "name": "Paracetamol",
+            "dose": "500 mg",
+            "route": "PO",
+            "due_at": "2026-11-12T10:00:00+08:00",
+            "aliases": ["paracetamol"]
+          }
+        ],
+        "pending_tests": [],
+        "latest_vitals": {
+          "taken_at": "2026-11-12T06:00:00+08:00",
+          "temperature": {"value": "36.8", "unit": "Cel"},
+          "pulse": {"value": "78", "unit": "/min"},
+          "resp_rate": {"value": "16", "unit": "/min"},
+          "bp_systolic": {"value": "118", "unit": "mm[Hg]"},
+          "bp_diastolic": {"value": "74", "unit": "mm[Hg]"},
+          "spo2": {"value": "98", "unit": "%"},
+          "weight": {"value": "61.5", "unit": "kg"}
+        },
+        "fall_risk": null
+      }
+    },
+    {
+      "record_number": "SYN-PH-0005",
+      "context": {
+        "allergies": [],
+        "code_status": "Full code",
+        "lines_tubes": [],
+        "medicines_due": [],
+        "pending_tests": [],
+        "latest_vitals": null,
+        "fall_risk": {"scale": "Morse", "score": 20, "high": false}
+      }
+    }
+  ]
+}
