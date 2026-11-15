@@ -124,7 +124,7 @@ async def test_replay_mode_without_a_recording_fails_with_replay_missing(
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
     ):
         await sign_in(client, PH_STAFF)
-        job = await post_and_finish(app, client)
+        job = await post_and_finish(app, client, text="unrecorded note, replay test")
     assert (job["status"], job["failure"]) == ("failed", "replay_missing")
 
 
