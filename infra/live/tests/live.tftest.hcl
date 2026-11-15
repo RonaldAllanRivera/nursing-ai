@@ -1,9 +1,12 @@
 # Every module sits under one mocked AWS provider; the random provider is real.
 # A mock gives every resource of a type the same computed values, so the
-# overrides give each role and parameter its own value (the role overrides sit
-# in the runs for the demo environment, since a role's ARN ends with its name).
-# A wiring mistake, such as a role's name paired with the other role's ARN,
-# then fails instead of passing by construction.
+# overrides give each role and secret parameter its own ARN. Without them a
+# swapped pair would pass because both items look alike. The checks that bite
+# are the ones the modules make on their inputs: the brake wants each role's
+# name to end its ARN, and compute wants each parameter's ARN to end with its
+# name. A role's ARN override names the demo roles, so the prod run (plan
+# mode, where override values for computed attributes are not used) is not
+# affected by it.
 mock_provider "aws" {
   mock_resource "aws_vpc" {
     defaults = {
@@ -34,6 +37,20 @@ mock_provider "aws" {
     defaults = {
       arn = "arn:aws:sns:ap-southeast-2:123456789012:mock"
     }
+  }
+}
+
+override_resource {
+  target = module.compute.aws_iam_role.api
+  values = {
+    arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-api"
+  }
+}
+
+override_resource {
+  target = module.compute.aws_iam_role.worker
+  values = {
+    arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-worker"
   }
 }
 
@@ -91,27 +108,15 @@ variables {
 # is what rejects a wrong one (the brake checks that each role's name belongs
 # to its ARN; the web module refuses an API address that has a scheme).
 
-# This run goes first: runs share state, and a role's ARN left over from a
-# demo run would not match the prod role names.
 run "names_follow_a_prod_environment" {
   command = plan
 
+  # Its own state, so nothing a demo run left behind (such as a role ARN)
+  # reaches it.
+  state_key = "prod"
+
   variables {
     environment = "prod"
-  }
-
-  override_resource {
-    target = module.compute.aws_iam_role.api
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-prod-api"
-    }
-  }
-
-  override_resource {
-    target = module.compute.aws_iam_role.worker
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-prod-worker"
-    }
   }
 
   assert {
@@ -129,33 +134,11 @@ run "names_follow_a_prod_environment" {
 }
 
 run "stack_wires_together" {
-  override_resource {
-    target = module.compute.aws_iam_role.api
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-api"
-    }
-  }
-
-  override_resource {
-    target = module.compute.aws_iam_role.worker
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-worker"
-    }
-  }
-
-  # Apply mode: the roles and parameters carry distinct overrides, and the
-  # brake's validation fails unless each role's name matches its own ARN.
+  # Apply mode: the brake and compute validations run on the overridden (and so
+  # distinct) role and parameter ARNs, which exist only after apply.
   assert {
     condition     = length(module.brake.target_role_names) == 2 && module.brake.target_role_names == toset([module.compute.api_role_name, module.compute.worker_role_name])
     error_message = "the brake must target exactly compute's API role and worker role"
-  }
-  assert {
-    condition     = length(module.brake.deny_policy_arn) > 0 && length(module.brake.brake_role_arn) > 0
-    error_message = "the brake must be planned with compute's two roles"
-  }
-  assert {
-    condition     = module.compute.api_role_arn != module.compute.worker_role_arn && endswith(module.compute.api_role_arn, ":role/${module.compute.api_role_name}") && endswith(module.compute.worker_role_arn, ":role/${module.compute.worker_role_name}")
-    error_message = "each role's name must belong to its own ARN"
   }
   assert {
     condition     = module.aurora.database_url_parameter_name == "/nursing-ai/demo/database-url"
@@ -170,26 +153,11 @@ run "stack_wires_together" {
     )
     error_message = "the secret parameters must live under the environment's path"
   }
-  assert {
-    condition     = length(module.ops.alarm_topic_arn) > 0 && length(module.ops.api_access_log_group_arn) > 0
-    error_message = "ops must be planned"
-  }
 }
 
 run "lambdas_log_to_the_groups_ops_made" {
-  override_resource {
-    target = module.compute.aws_iam_role.api
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-api"
-    }
-  }
-
-  override_resource {
-    target = module.compute.aws_iam_role.worker
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-worker"
-    }
-  }
+  # Plan mode: every value here comes from configuration.
+  command = plan
 
   # Ops makes each log group from the function name the locals gave it; the
   # function itself is named by compute. The two must agree, or the function
@@ -217,20 +185,6 @@ run "lambdas_log_to_the_groups_ops_made" {
 }
 
 run "site_routes_api_calls_to_the_http_api" {
-  override_resource {
-    target = module.compute.aws_iam_role.api
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-api"
-    }
-  }
-
-  override_resource {
-    target = module.compute.aws_iam_role.worker
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-worker"
-    }
-  }
-
   # The web module only creates its /api/* behaviour and origin when it is
   # given an API host, and it refuses a host that carries https://. The run
   # passing means the root hands it the bare host from compute's endpoint.
@@ -253,19 +207,7 @@ run "site_routes_api_calls_to_the_http_api" {
 }
 
 run "names_follow_the_environment" {
-  override_resource {
-    target = module.compute.aws_iam_role.api
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-api"
-    }
-  }
-
-  override_resource {
-    target = module.compute.aws_iam_role.worker
-    values = {
-      arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-worker"
-    }
-  }
+  command = plan
 
   assert {
     condition     = module.compute.api_function_name == "nursing-ai-demo-api" && module.compute.worker_function_name == "nursing-ai-demo-worker"

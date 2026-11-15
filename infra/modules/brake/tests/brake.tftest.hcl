@@ -328,7 +328,7 @@ run "rejects_an_invalid_name" {
 }
 
 run "target_role_names_are_exposed" {
-  command = apply
+  command = plan
 
   assert {
     condition     = output.target_role_names == toset(["nursing-ai-test-api", "nursing-ai-test-worker"])

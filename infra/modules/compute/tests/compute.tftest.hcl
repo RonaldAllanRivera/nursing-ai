@@ -346,10 +346,21 @@ run "swapped_parameter_arn_and_name_is_refused" {
     database_url_parameter_name = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/database-url"
   }
 
+  # The name is refused for not starting with /. The ARN's own checks are not
+  # reported then: the ARN is checked against the name, which is invalid.
   expect_failures = [
-    var.database_url_parameter_arn,
     var.database_url_parameter_name,
   ]
+}
+
+run "parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    database_url_parameter_arn = "/nursing-ai/test/database-url"
+  }
+
+  expect_failures = [var.database_url_parameter_arn]
 }
 
 run "log_groups_are_exposed_by_function" {
@@ -359,4 +370,14 @@ run "log_groups_are_exposed_by_function" {
     condition     = output.function_log_groups == { api = "/aws/lambda/nursing-ai-test-api", worker = "/aws/lambda/nursing-ai-test-worker" }
     error_message = "function_log_groups must give each function's own log group."
   }
+}
+
+run "parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    anthropic_api_key_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-id"
+  }
+
+  expect_failures = [var.anthropic_api_key_parameter_arn]
 }

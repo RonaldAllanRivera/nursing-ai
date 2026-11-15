@@ -248,7 +248,7 @@ run "old_site_files_expire" {
 }
 
 run "api_origin_is_exposed_only_when_the_route_is_on" {
-  command = apply
+  command = plan
 
   variables {
     api_origin_domain = "abc123.execute-api.ap-southeast-2.amazonaws.com"
@@ -261,7 +261,7 @@ run "api_origin_is_exposed_only_when_the_route_is_on" {
 }
 
 run "no_api_origin_without_an_api_domain" {
-  command = apply
+  command = plan
 
   assert {
     condition     = output.api_origin_domain == null

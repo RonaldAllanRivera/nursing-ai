@@ -79,6 +79,11 @@ variable "database_url_parameter_arn" {
     condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.database_url_parameter_arn))
     error_message = "database_url_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
   }
+
+  validation {
+    condition     = endswith(var.database_url_parameter_arn, ":parameter${var.database_url_parameter_name}")
+    error_message = "database_url_parameter_arn must be the ARN of the parameter named database_url_parameter_name."
+  }
 }
 
 variable "database_url_parameter_name" {
@@ -98,6 +103,11 @@ variable "anthropic_api_key_parameter_arn" {
   validation {
     condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.anthropic_api_key_parameter_arn))
     error_message = "anthropic_api_key_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
+
+  validation {
+    condition     = endswith(var.anthropic_api_key_parameter_arn, ":parameter${var.anthropic_api_key_parameter_name}")
+    error_message = "anthropic_api_key_parameter_arn must be the ARN of the parameter named anthropic_api_key_parameter_name."
   }
 }
 
@@ -119,6 +129,11 @@ variable "google_client_id_parameter_arn" {
     condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.google_client_id_parameter_arn))
     error_message = "google_client_id_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
   }
+
+  validation {
+    condition     = endswith(var.google_client_id_parameter_arn, ":parameter${var.google_client_id_parameter_name}")
+    error_message = "google_client_id_parameter_arn must be the ARN of the parameter named google_client_id_parameter_name."
+  }
 }
 
 variable "google_client_id_parameter_name" {
@@ -138,6 +153,11 @@ variable "google_client_secret_parameter_arn" {
   validation {
     condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.google_client_secret_parameter_arn))
     error_message = "google_client_secret_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
+
+  validation {
+    condition     = endswith(var.google_client_secret_parameter_arn, ":parameter${var.google_client_secret_parameter_name}")
+    error_message = "google_client_secret_parameter_arn must be the ARN of the parameter named google_client_secret_parameter_name."
   }
 }
 
