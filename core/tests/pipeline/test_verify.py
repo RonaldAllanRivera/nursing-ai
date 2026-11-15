@@ -462,3 +462,22 @@ def test_a_fraction_slash_group_is_not_matched_by_a_whole_number() -> None:
 def test_a_superscript_zero_degree_sign_is_a_unit() -> None:
     line = _check("T 37.4", "T 37.4\u2070F.", ["T 37.4"])
     assert _kinds(line) == [MismatchKind.UNIT]
+
+
+def test_a_spaced_or_worded_mixed_number_is_not_matched_by_its_whole_part() -> None:
+    for note in (
+        "gave 1 \u00bd tab",
+        "gave 1\u00a0\u00bd tab",
+        "gave 1 and 1/2 tab",
+        "gave 1 and \u00bd tab",
+    ):
+        line = _check(note, "Gave 1 tab.", [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, note
+        assert _kinds(line) == [MismatchKind.VALUE], note
+        assert _check(note, "Gave 1\u00bd tab.", [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_degree_lookalike_after_a_glued_value_is_still_checked() -> None:
+    for drafted in ("T38\u00baC.", "T38\u02daC.", "T38\u2070C."):
+        line = _check("T 39 C", drafted, ["T 39 C"])
+        assert _kinds(line) == [MismatchKind.VALUE], drafted

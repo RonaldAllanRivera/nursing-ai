@@ -1,8 +1,9 @@
 """Deciding each draft line's status from its quotes, numbers and units.
 
-Numbers, units and labels are read only from the typed slices of the note that the found quotes
-cover, never from the normalised matching text, so a character the matcher folds (a typed "½",
-say) can't make a number appear that the nurse didn't write.
+Numbers are read from the note as typed, never from the normalised matching text, so a character
+the matcher folds (a typed "½", say) can't make a number appear that the nurse didn't write. A
+number counts for a quote when it overlaps the quote and is compared whole; labels are read only
+inside the quote, and a unit is read right after the number even past the quote's end.
 """
 
 import re

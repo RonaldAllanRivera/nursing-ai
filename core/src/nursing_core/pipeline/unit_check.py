@@ -1,8 +1,10 @@
 """Numbers and the units written right after them.
 
 A number is read with its context: ".5" is 0.5, numbers joined by "/" ("1/2", "90/60") are one
-group, a vulgar fraction ("½") is the group it stands for, and digits with a letter on both sides
-("D5LR", "q4h") belong to a word. The code never converts units. It only reads the few spellings
+group, a vulgar fraction ("½") is the group it stands for, and a whole number with a fraction
+("1½", "1 1/2", "1 and ½") is one mixed number. Whole digits after a letter and followed by letters
+that are not a unit ("D5LR", "q4h") belong to a word; "HR121bpm" and "BT37.9C" keep their numbers.
+The code never converts units. It only reads the few spellings
 below, so a unit the nurse didn't write can be told apart from one she did.
 """
 
@@ -22,10 +24,14 @@ _VULGAR_FRACTIONS = "".join(
 _SLASHES = f"/{_FRACTION_SLASH}\uff0f"  # a slash, the fraction slash and the full-width slash
 _PART = rf"\d+(?:\.\d+)?|(?<!\d)\.\d+|[{_VULGAR_FRACTIONS}]"
 _GROUP = rf"(?:{_PART})(?:[{_SLASHES}](?:{_PART}))*"
-# A whole number then a vulgar fraction ("1½"), or then one space and an n/m group ("1 1/2").
-_MIXED = rf"\d+(?:[{_VULGAR_FRACTIONS}]| \d+[{_SLASHES}]\d+)"
+# A whole number then a vulgar fraction ("1½", "1 ½"), or then a space or " and " and an n/m group
+# ("1 1/2", "1 and 1/2"). A space may be a no-break space.
+_JOIN = r"(?:[ \u00a0]| and )"
+_MIXED = rf"\d+(?:{_JOIN}?[{_VULGAR_FRACTIONS}]|{_JOIN}\d+[{_SLASHES}]\d+)"
 _NUMBER = re.compile(rf"(?P<mixed>{_MIXED})|{_GROUP}")
-_MIXED_PARTS = re.compile(rf"(\d+)(?:([{_VULGAR_FRACTIONS}])| (\d+)[{_SLASHES}](\d+))")
+_MIXED_PARTS = re.compile(
+    rf"(\d+)(?:{_JOIN}?([{_VULGAR_FRACTIONS}])|{_JOIN}(\d+)[{_SLASHES}](\d+))"
+)
 _WHOLE_NUMBER = re.compile(r"\d+")
 _LETTERS = re.compile(r"[^\W\d_]+")
 
@@ -44,10 +50,11 @@ _ALIASES: tuple[tuple[str, Ucum], ...] = (
 _DEGREE_UNITS = {"F": Ucum.DEG_F, "C": Ucum.CEL}
 # masculine ordinal, ring above, superscript zero
 _DEGREE_LOOKALIKES = {"\u00ba": "\u00b0", "\u02da": "\u00b0", "\u2070": "\u00b0"}
+_LOOKALIKE_TABLE = str.maketrans(_DEGREE_LOOKALIKES)
 # A letter run right after whole digits that is only a unit ("HR121bpm"): the digits are a number.
 _UNIT_SPELLINGS = frozenset(
     {alias.casefold() for alias, _ in _ALIASES}
-    | {"bpm", "cpm", "mmhg", "mg", "mcg", "g", "l", "lpm", "u", "units", "iu", "meq", "mmol"}
+    | {"bpm", "cpm", "mmhg", "mg", "mcg", "g", "l", "lpm", "u", "units", "iu", "meq", "mmol", "kgs"}
     | {"gtts", "kcal", "cm", "mm"}
 )
 type NumberValue = tuple[str | Decimal, ...]
@@ -81,7 +88,7 @@ def _in_a_word(text: str, start: int, end: int) -> bool:
     """Whole digits after a letter and followed by letters that aren't a unit belong to a word."""
     if start == 0 or not text[start - 1].isalpha() or not _WHOLE_NUMBER.fullmatch(text[start:end]):
         return False
-    letters = _LETTERS.match(text, end)
+    letters = _LETTERS.match(text[end : end + _WINDOW].translate(_LOOKALIKE_TABLE))
     return letters is not None and letters.group().casefold() not in _UNIT_SPELLINGS
 
 

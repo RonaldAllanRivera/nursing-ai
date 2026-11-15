@@ -148,7 +148,7 @@ def test_whole_digits_with_letters_that_are_not_a_unit_are_a_word() -> None:
 def test_a_whole_number_with_a_fraction_is_one_mixed_number() -> None:
     assert numbers_in("gave 1½ tab") == [("1½", Span(start=5, end=7))]
     assert numbers_in("gave 1 1/2 tab") == [("1 1/2", Span(start=5, end=10))]
-    assert _tokens("2 3/2 x, 1 ½") == ["2", "3/2", "1", "½"]
+    assert _tokens("2 3/2 x, 1-1/2") == ["2", "3/2", "1", "1/2"]
     assert _tokens("gave 1  1/2") == ["1", "1/2"]
 
 
@@ -169,3 +169,17 @@ def test_the_fraction_slash_and_the_full_width_slash_join_a_group() -> None:
 def test_superscript_zero_is_read_as_a_degree_sign() -> None:
     assert _unit_end("T 37.4\u2070F", "37.4") == (Ucum.DEG_F, 8)
     assert _unit_end("T 37.4\u2070 C", "37.4") == (Ucum.CEL, 9)
+
+
+def test_a_spaced_or_worded_fraction_after_a_whole_number_is_a_mixed_number() -> None:
+    for written in ("1 \u00bd", "1\u00a0\u00bd", "1 and 1/2", "1 and \u00bd"):
+        text = f"gave {written} tab"
+        assert numbers_in(text) == [(written, Span(start=5, end=5 + len(written)))], written
+        assert number_value(written) == number_value("1\u00bd"), written
+    assert number_value("1 and 1/2") != number_value("1 and 2/3")
+    assert _tokens("1 and 3/2") == ["1", "3/2"]
+
+
+def test_a_degree_lookalike_is_not_a_letter_after_digits() -> None:
+    assert _tokens("T38\u00baC. T38\u02daC T38\u2070C") == ["38", "38", "38"]
+    assert _tokens("Wt81kgs") == ["81"]
