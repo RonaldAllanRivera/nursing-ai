@@ -11,12 +11,24 @@ class ChecklistWords:
     given: list[str]
     held: list[str]
     refused: list[str]
+    # Before a given, held or refused word in its clause, these say it hasn't happened yet.
+    not_yet: list[str]
 
 
 # Every facility uses every word. Treat this constant as read-only.
 DEFAULT_WORDS = ChecklistWords(
-    dizzy=["hilo", "nahihilo", "nahilo", "dizzy", "dizziness", "lightheaded", "light-headed"],
-    confused=["confused", "confusion", "disoriented", "nalilito"],
+    dizzy=[
+        "hilo",
+        "nahihilo",
+        "nahilo",
+        "dizzy",
+        "dizziness",
+        "lightheaded",
+        "light-headed",
+        "light headed",
+        "lightheadedness",
+    ],
+    confused=["confused", "confusion", "disoriented", "disorientation", "nalilito"],
     safety=[
         "side rails up",
         "siderails up",
@@ -32,4 +44,5 @@ DEFAULT_WORDS = ChecklistWords(
     given=["given", "administered", "binigay", "ibinigay"],
     held=["held", "withheld", "on hold"],
     refused=["refused", "declined", "tumanggi"],
+    not_yet=["not", "not yet", "to be", "will be", "hindi", "hindi pa", "di pa", "wala pa"],
 )

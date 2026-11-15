@@ -50,17 +50,23 @@ def _find_any(note: MatchText, phrases: Iterable[str]) -> list[Span]:
 _LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 _ALWAYS_END = frozenset(";?!:\u3002\u3001\u2014\u2192")
 _SPACED = frozenset("/|\u2022")
-_CLOSERS = frozenset("\"')]\u201d\u2019")
+_CLOSERS = frozenset("\"')]}\u201d\u2019\u300d\u300f")
 _EN_DASH = "\u2013"
 
 
 def _clause_ends(raw: str) -> list[int]:
     """Offsets in the typed text of the characters that end a clause, in ascending order.
 
-    A clause ends at a line break, at ; ? ! : , and their full-width forms, at an ellipsis, an
-    em dash, an arrow, a "." that ends a sentence, and at a dash run, slash, bar or bullet with
-    spaces on both sides. An en dash ends one unless it sits between digits. A "," between
-    digits, a "." inside a number and a "." in an abbreviation such as "p.o." do not end one.
+    A clause ends at a line break; at ; ? ! : , and their full-width forms, except a "," between
+    digits ("5,000"); at an ellipsis, an em dash or an arrow ("→"); at an en dash, except
+    between digits (a range); at a run of hyphens with whitespace on both sides (" - ", " -- ",
+    " -> "); and at a slash, bar or bullet with whitespace on both sides.
+
+    A "." ends a clause when whitespace, the end or a letter comes next, right after it or after
+    a run of closing quotes and brackets ("due.)"). It doesn't when a digit comes next ("0.5"),
+    nor before a letter when exactly one letter that doesn't follow a digit comes right before it
+    ("p.o", "c.given"; "q8h.Given" still ends one). The last "." of a dotted abbreviation
+    ("p.o.") ends a clause only when whitespace and then an upper-case letter come next.
     Characters are judged after the same per-code-point folding the matcher uses.
     """
     folds = [unicodedata.normalize("NFKC", code_point) for code_point in raw]
@@ -73,7 +79,7 @@ def _ends_clause(raw: str, folds: list[str], index: int) -> bool:
         return True
     if fold == ",":
         return not (_is_digit(folds, index - 1) and _is_digit(folds, index + 1))
-    if raw[index] == _EN_DASH:
+    if fold == _EN_DASH:
         return not (_is_digit(folds, index - 1) and _is_digit(folds, index + 1))
     if fold in _SPACED:
         return _is_space(folds, index - 1) and _is_space(folds, index + 1)
@@ -120,7 +126,10 @@ def _ends_sentence(raw: str, folds: list[str], index: int) -> bool:
         return _upper_case_follows(raw, after)
     if not _is_letter(folds, after):
         return False
-    return closed or not (_is_letter(folds, index - 1) and not _is_letter(folds, index - 2))
+    one_letter = _is_letter(folds, index - 1) and not (
+        _is_letter(folds, index - 2) or _is_digit(folds, index - 2)
+    )
+    return closed or not one_letter
 
 
 def _ends_abbreviation(folds: list[str], index: int) -> bool:
@@ -142,10 +151,19 @@ def _earliest(spans: list[Span]) -> Span | None:
 
 
 def _recorded_in_a_clause(
-    note: MatchText, ends: list[int], aliases: list[str], words: list[str]
+    note: MatchText, ends: list[int], aliases: list[str], words: list[str], not_yet: list[str]
 ) -> bool:
+    """Whether an action word shares a clause with the medicine, with no word before it in that
+    clause that says it hasn't happened yet ("not given", "to be given", "hindi pa binigay")."""
     mentioned = {_clause_number(ends, s.start) for s in _find_any(note, aliases)}
-    return any(_clause_number(ends, s.start) in mentioned for s in _find_any(note, words))
+    negations = _find_any(note, not_yet)
+    for action in _find_any(note, words):
+        clause = _clause_number(ends, action.start)
+        if clause in mentioned and not any(
+            _clause_number(ends, n.start) == clause and n.end <= action.start for n in negations
+        ):
+            return True
+    return False
 
 
 def _item(
@@ -194,7 +212,7 @@ def missing_items_checklist(
     action_words = [*words.given, *words.held, *words.refused]
     for medicine in sorted(due, key=lambda m: m.due_at):
         recorded = any(
-            _recorded_in_a_clause(note, ends, medicine.aliases, action_words)
+            _recorded_in_a_clause(note, ends, medicine.aliases, action_words, words.not_yet)
             for note, ends in zip(notes, clause_ends, strict=True)
         )
         items.append(

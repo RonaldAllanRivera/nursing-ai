@@ -3,6 +3,8 @@
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.notes import ChecklistItem, ChecklistRule, Span
 from nursing_core.domain.patient import (
@@ -470,3 +472,92 @@ def test_a_full_stop_before_a_run_of_closers_ends_a_clause() -> None:
         "(Cefuroxime due.\u201d) Paracetamol given",
     ):
         assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+
+
+def test_wording_that_says_a_medicine_is_not_given_yet_does_not_clear_it() -> None:
+    for note in (
+        "Cefuroxime not yet given, pt NPO",
+        "Cefuroxime to be given at 1400",
+        "Cefuroxime will be given later",
+        "Cefuroxime not given",
+        "Cefuroxime hindi pa binigay",
+        "Cefuroxime di pa ibinigay",
+        "Cefuroxime wala pa binigay",
+        "CEFUROXIME NOT GIVEN",
+        "Hindi binigay ang Cefuroxime",
+        "Cefuroxime not given due to NPO",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+
+
+def test_a_not_yet_word_after_the_action_word_or_in_another_clause_does_not_count() -> None:
+    for note in (
+        "Cefuroxime given, pt not dizzy",
+        "Cefuroxime given not late",
+        "Cefuroxime held, not given",
+        "Cefuroxime taken to bed 4 and given",
+        "Cefuroxime given. Next dose to be given at 2200",
+    ):
+        assert not missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+
+
+def test_a_folded_en_dash_ends_a_clause() -> None:
+    note = "Cefuroxime due \ufe32 Paracetamol given"
+    assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing
+
+
+def test_one_letter_after_a_digit_before_a_glued_full_stop_ends_the_clause() -> None:
+    for note in (
+        "Cefuroxime due 1g.Paracetamol given",
+        "Cefuroxime due q8h.Paracetamol given",
+        "Cefuroxime due 2L.Paracetamol given",
+        "Cefuroxime due 0800H.Paracetamol given",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+    ctx = context(allergies=[], medicines=[medicine("Paracetamol", NOW - timedelta(hours=1))])
+    for note in ("Paracetamol p.o.given", "Paracetamol i.v.given", "Paracetamol c.given"):
+        assert not missing_items_checklist(ctx, [note], NOW)[0].missing, note
+
+
+def test_more_dizzy_and_confused_words_bring_in_fall_risk() -> None:
+    for note in ("Pt light headed.", "Lightheadedness noted.", "Disorientation at 0200."):
+        items = missing_items_checklist(context(allergies=[], fall_risk=LOW), [note], NOW)
+        assert [(i.rule, i.missing) for i in items] == [(ChecklistRule.FALL_RISK, True)], note
+
+
+def test_a_full_stop_before_a_curly_or_corner_bracket_ends_a_clause() -> None:
+    for note in (
+        "{Cefuroxime due.} Paracetamol given",
+        "\u300cCefuroxime due.\u300dParacetamol given",
+        "\u300eCefuroxime due.\u300f Paracetamol given",
+        "Cefuroxime (due.\uff5d Paracetamol given",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+
+
+_CHECKLIST_PIECES = st.one_of(
+    st.text(),
+    st.sampled_from(
+        ["Cefuroxime", "given", "not", "hindi pa", "to be", " ", ".", ",", "\u2013", "\ufe32",
+         "p.o.", "1g", "\u300d", "}", "\n", "-", " -> ", "dizzy", "bed alarm on", "foley", "CBC"]
+    ),
+)  # fmt: skip
+
+
+@given(st.lists(st.lists(_CHECKLIST_PIECES, max_size=8).map("".join), min_size=1, max_size=3))
+def test_the_checklist_and_its_clause_ends_never_raise_on_arbitrary_text(notes: list[str]) -> None:
+    ctx = context(
+        allergies=None,
+        lines=[line("Foley", "foley")],
+        medicines=[medicine("Cefuroxime", NOW - timedelta(hours=1))],
+        tests=[PendingTest(name="CBC", sent_at=None, aliases=["cbc"])],
+        fall_risk=HIGH,
+    )
+    items = missing_items_checklist(ctx, notes, NOW)
+    assert [item.rule for item in items] == [
+        ChecklistRule.ALLERGIES,
+        ChecklistRule.LINE_OR_TUBE,
+        ChecklistRule.MEDICINE_DUE,
+        ChecklistRule.PENDING_TEST,
+        ChecklistRule.FALL_RISK,
+    ]
