@@ -26,9 +26,21 @@ def _find_all(note: MatchText, phrase: str) -> list[Span]:
 
 
 def _touches_a_mark(text: str, start: int, end: int) -> bool:
-    """A combining mark next to the match makes it part of a longer word."""
-    neighbours = text[max(start - 1, 0) : start] + text[end : end + 1]
-    return any(unicodedata.category(char).startswith("M") for char in neighbours)
+    """A combining mark joins the match to a longer word only when it sits on a letter.
+
+    A mark before the match counts when its run of marks attaches to a letter; a mark after
+    it counts when the match ends in a letter. An emoji's variation selector is neither.
+    """
+    if end < len(text) and _is_mark(text[end]) and text[end - 1].isalpha():
+        return True
+    index = start - 1
+    while index >= 0 and _is_mark(text[index]):
+        index -= 1
+    return index < start - 1 and index >= 0 and text[index].isalpha()
+
+
+def _is_mark(char: str) -> bool:
+    return unicodedata.category(char).startswith("M")
 
 
 def _find_any(note: MatchText, phrases: Iterable[str]) -> list[Span]:
@@ -36,32 +48,66 @@ def _find_any(note: MatchText, phrases: Iterable[str]) -> list[Span]:
 
 
 _LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+_ALWAYS_END = frozenset(";?!:\u3002\u3001")
+_SPACED_DASHES = frozenset("-/\u2013\u2014")
+_CLOSERS = frozenset("\"')]\u201d\u2019")
 
 
 def _clause_ends(raw: str) -> list[int]:
     """Offsets in the typed text of the characters that end a clause, in ascending order.
 
-    A clause ends at a line break, at ";" or ",", and at "." followed by whitespace, the end of
-    the note or a letter, so "0.5 mg" stays whole. Characters are judged after the same
-    per-code-point folding the matcher uses, so full-width separators split too.
+    A clause ends at a line break, at ; ? ! : , and their full-width forms, at an ellipsis, at
+    a dash or slash with spaces on both sides, and at a "." that ends a sentence. A "," between
+    digits, a "." inside a number and a "." in an abbreviation such as "p.o." do not end one.
+    Characters are judged after the same per-code-point folding the matcher uses.
     """
-    ends: list[int] = []
-    for index, code_point in enumerate(raw):
-        folded = unicodedata.normalize("NFKC", code_point)
-        if (
-            code_point in _LINE_BREAKS
-            or folded in (";", ",")
-            or (folded == "." and _starts_new_clause(raw, index + 1))
-        ):
-            ends.append(index)
-    return ends
+    folds = [unicodedata.normalize("NFKC", code_point) for code_point in raw]
+    return [index for index in range(len(raw)) if _ends_clause(raw, folds, index)]
 
 
-def _starts_new_clause(raw: str, index: int) -> bool:
-    if index >= len(raw):
+def _ends_clause(raw: str, folds: list[str], index: int) -> bool:
+    fold = folds[index]
+    if raw[index] in _LINE_BREAKS or fold[-1:] in _ALWAYS_END or raw[index] in _ALWAYS_END:
         return True
-    following = unicodedata.normalize("NFKC", raw[index])
-    return following.isspace() or following.isalpha()
+    if fold == ",":
+        return not (_is_digit(folds, index - 1) and _is_digit(folds, index + 1))
+    if fold in _SPACED_DASHES or raw[index] in _SPACED_DASHES:
+        return _is_space(folds, index - 1) and _is_space(folds, index + 1)
+    if fold == ".":
+        return _ends_sentence(raw, folds, index)
+    return fold.endswith(".")
+
+
+def _is_digit(folds: list[str], index: int) -> bool:
+    return 0 <= index < len(folds) and folds[index].isdigit()
+
+
+def _is_space(folds: list[str], index: int) -> bool:
+    return 0 <= index < len(folds) and folds[index].isspace()
+
+
+def _is_letter(folds: list[str], index: int) -> bool:
+    return 0 <= index < len(folds) and folds[index].isalpha()
+
+
+def _ends_sentence(raw: str, folds: list[str], index: int) -> bool:
+    """Whether the "." at this offset ends a sentence rather than a number or abbreviation."""
+    after = index + 1
+    if after < len(raw) and raw[after] in _CLOSERS:
+        after += 1
+    if after >= len(raw) or _is_space(folds, after):
+        return not _ends_abbreviation(folds, index)
+    if after > index + 1 or not _is_letter(folds, after):
+        return False
+    letters = 0
+    while _is_letter(folds, index - 1 - letters):
+        letters += 1
+    return letters >= 2
+
+
+def _ends_abbreviation(folds: list[str], index: int) -> bool:
+    """A single letter, itself right after a "." ("p.o."), then this ".": not a sentence end."""
+    return _is_letter(folds, index - 1) and index >= 2 and folds[index - 2] == "."
 
 
 def _clause_number(ends: list[int], offset: int) -> int:
@@ -72,8 +118,9 @@ def _earliest(spans: list[Span]) -> Span | None:
     return min(spans, key=lambda s: (s.start, s.start - s.end), default=None)
 
 
-def _recorded_in_a_clause(note: MatchText, aliases: list[str], words: list[str]) -> bool:
-    ends = _clause_ends(note.raw)
+def _recorded_in_a_clause(
+    note: MatchText, ends: list[int], aliases: list[str], words: list[str]
+) -> bool:
     mentioned = {_clause_number(ends, s.start) for s in _find_any(note, aliases)}
     return any(_clause_number(ends, s.start) in mentioned for s in _find_any(note, words))
 
@@ -98,6 +145,7 @@ def missing_items_checklist(
         raise ValueError("last_note_at needs a timezone")
     notes = [prepare(text) for text in shift_note_texts]
     current = notes[-1]
+    clause_ends = [_clause_ends(note.raw) for note in notes]
 
     def mentioned(phrases: list[str]) -> bool:
         return any(_find_any(note, phrases) for note in notes)
@@ -123,7 +171,8 @@ def missing_items_checklist(
     action_words = [*words.given, *words.held, *words.refused]
     for medicine in sorted(due, key=lambda m: m.due_at):
         recorded = any(
-            _recorded_in_a_clause(note, medicine.aliases, action_words) for note in notes
+            _recorded_in_a_clause(note, ends, medicine.aliases, action_words)
+            for note, ends in zip(notes, clause_ends, strict=True)
         )
         items.append(
             _item(

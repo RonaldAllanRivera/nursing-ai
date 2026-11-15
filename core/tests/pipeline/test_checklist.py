@@ -342,3 +342,73 @@ def test_more_safety_phrases_clear_fall_risk() -> None:
 
 def test_a_recorded_allergy_list_is_not_flagged() -> None:
     assert missing_items_checklist(context(allergies=["Zyxquil"]), ["x"], NOW) == []
+
+
+def one_due_medicine() -> PatientContext:
+    return context(allergies=[], medicines=[medicine("Cefuroxime", NOW - timedelta(hours=1))])
+
+
+def test_more_separators_end_a_clause_so_another_medicines_word_does_not_clear_it() -> None:
+    for note in (
+        "Paracetamol given… cefuroxime due",
+        "Paracetamol given…cefuroxime due",
+        "Cefuroxime due? Paracetamol given.",
+        "Cefuroxime due! Paracetamol given",
+        "Cefuroxime: due. Paracetamol: given",
+        "Cefuroxime due - Paracetamol given",
+        "Cefuroxime due / Paracetamol given",
+        "Cefuroxime due \u2013 Paracetamol given",
+        '"Cefuroxime due." Paracetamol given',
+        "(Cefuroxime due.) Paracetamol given.",
+        "Cefuroxime due。Paracetamol given",
+        "Cefuroxime due、Paracetamol given",
+        "Cefuroxime due\uff1f Paracetamol given",
+        "Cefuroxime due\u203c Paracetamol given",
+        "Cefuroxime due.Paracetamol given.",
+        "Paracetamol given: cefuroxime due",
+    ):
+        item = missing_items_checklist(one_due_medicine(), [note], NOW)[0]
+        assert item.missing, note
+        assert item.note_span is None, note
+
+
+def test_everyday_wording_does_not_split_a_clause() -> None:
+    ctx = context(
+        allergies=[],
+        medicines=[
+            medicine("Heparin", NOW - timedelta(hours=1)),
+            medicine("Paracetamol", NOW - timedelta(hours=1)),
+        ],
+    )
+    for note in (
+        "Heparin 5,000 units given. Paracetamol 500mg p.o. given",
+        "Heparin 5,000 units given, Paracetamol 500mg i.v. given",
+        "Heparin 5,000 units given, Paracetamol b.i.d. given",
+        "Heparin 5,000 units given, Paracetamol given at 6 a.m.",
+        "Heparin 5,000 units given, Paracetamol 0.5 g given",
+        "Heparin 5,000 units given, Paracetamol given re-check",
+    ):
+        assert [i.missing for i in missing_items_checklist(ctx, [note], NOW)] == [False, False], (
+            note
+        )
+
+
+def test_a_letter_after_a_one_letter_word_and_dot_still_splits() -> None:
+    note = "Cefuroxime due c. Paracetamol given"
+    assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing
+
+
+def test_an_emoji_variation_selector_does_not_hide_a_word() -> None:
+    for note in ("⚠️dizzy", "❗️nahihilo pt"):
+        items = missing_items_checklist(context(allergies=[], fall_risk=LOW), [note], NOW)
+        assert [(i.rule, i.missing) for i in items] == [(ChecklistRule.FALL_RISK, True)], note
+    ctx = context(allergies=[], medicines=[medicine("Paracetamol", NOW - timedelta(hours=1))])
+    note = "✅️Paracetamol given"
+    assert not missing_items_checklist(ctx, [note], NOW)[0].missing
+
+
+def test_a_mark_on_a_letter_still_joins_the_word_either_side() -> None:
+    ctx = context(allergies=[], lines=[line("Cafe tube", "cafe")])
+    assert missing_items_checklist(ctx, ["xécafe"], NOW)[0].missing
+    assert missing_items_checklist(ctx, ["café"], NOW)[0].missing
+    assert missing_items_checklist(ctx, ["cafe️ tube"], NOW)[0].missing
