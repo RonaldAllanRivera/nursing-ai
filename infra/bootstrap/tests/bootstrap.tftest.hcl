@@ -194,12 +194,27 @@ run "plan_role_trusts_only_pull_requests" {
     error_message = "plan role must carry ReadOnlyAccess"
   }
   assert {
-    condition = alltrue([
-      for s in jsondecode(aws_iam_role_policy.plan_state_access[0].policy).Statement :
-      s.Resource == "${aws_s3_bucket.state.arn}/*.tflock"
-      if contains(flatten([s.Action]), "s3:PutObject") || contains(flatten([s.Action]), "s3:DeleteObject")
-    ])
-    error_message = "the plan role may write or delete only .tflock objects in the state bucket"
+    condition = toset(flatten([
+      for s in jsondecode(aws_iam_role_policy.plan_state_access[0].policy).Statement : s.Action
+    ])) == toset(["s3:GetObject", "s3:PutObject", "s3:DeleteObject"])
+    error_message = "the plan role's state policy may grant only GetObject, PutObject and DeleteObject"
+  }
+  assert {
+    condition = jsondecode(aws_iam_role_policy.plan_state_access[0].policy).Statement == [
+      {
+        Sid      = "ReadState"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.state.arn}/*"
+      },
+      {
+        Sid      = "TakeAndReleaseLock"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:DeleteObject"]
+        Resource = "${aws_s3_bucket.state.arn}/*.tflock"
+      },
+    ]
+    error_message = "the plan role may read state and write or delete only .tflock objects in the state bucket"
   }
 }
 
@@ -213,9 +228,13 @@ run "plan_role_cannot_read_secrets_or_app_data" {
   }
 
   assert {
+    condition     = aws_iam_role_policy.plan_deny_secrets_and_data[0].role == aws_iam_role.plan[0].id
+    error_message = "the deny policy must be attached to the plan role"
+  }
+  assert {
     condition = anytrue([
       for s in jsondecode(aws_iam_role_policy.plan_deny_secrets_and_data[0].policy).Statement :
-      s.Effect == "Deny" && s.Action == "kms:Decrypt" && try(s.Condition.StringLike["kms:ViaService"], "") == "ssm.*.amazonaws.com"
+      s.Effect == "Deny" && s.Resource == "*" && s.Action == "kms:Decrypt" && try(s.Condition.StringLike["kms:ViaService"], "") == "ssm.*.amazonaws.com"
     ])
     error_message = "the plan role must be denied kms:Decrypt through SSM"
   }
@@ -229,7 +248,7 @@ run "plan_role_cannot_read_secrets_or_app_data" {
   assert {
     condition = anytrue([
       for s in jsondecode(aws_iam_role_policy.plan_deny_secrets_and_data[0].policy).Statement :
-      s.Effect == "Deny" && contains(flatten([s.Action]), "logs:GetLogEvents") && contains(flatten([s.Action]), "sqs:ReceiveMessage") && contains(flatten([s.Action]), "secretsmanager:GetSecretValue")
+      s.Effect == "Deny" && s.Resource == "*" && contains(flatten([s.Action]), "logs:GetLogEvents") && contains(flatten([s.Action]), "sqs:ReceiveMessage") && contains(flatten([s.Action]), "secretsmanager:GetSecretValue")
     ])
     error_message = "the plan role must be denied reading logs, queue messages and secrets"
   }
