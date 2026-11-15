@@ -26,6 +26,52 @@ mock_provider "aws" {
   }
 }
 
+override_resource {
+  target = aws_sqs_queue.jobs
+  values = {
+    arn = "arn:aws:sqs:ap-southeast-2:123456789012:jobs-queue"
+    url = "https://sqs.ap-southeast-2.amazonaws.com/123456789012/jobs-queue"
+  }
+}
+
+override_resource {
+  target = aws_sqs_queue.dlq
+  values = {
+    arn = "arn:aws:sqs:ap-southeast-2:123456789012:dead-letter-queue"
+    url = "https://sqs.ap-southeast-2.amazonaws.com/123456789012/dead-letter-queue"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.api
+  values = {
+    arn = "arn:aws:iam::123456789012:role/api-role"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.worker
+  values = {
+    arn = "arn:aws:iam::123456789012:role/worker-role"
+  }
+}
+
+override_resource {
+  target = aws_lambda_function.api
+  values = {
+    arn        = "arn:aws:lambda:ap-southeast-2:123456789012:function:api-function"
+    invoke_arn = "arn:aws:apigateway:ap-southeast-2:lambda:path/2015-03-31/functions/api-function/invocations"
+  }
+}
+
+override_resource {
+  target = aws_lambda_function.worker
+  values = {
+    arn        = "arn:aws:lambda:ap-southeast-2:123456789012:function:worker-function"
+    invoke_arn = "arn:aws:apigateway:ap-southeast-2:lambda:path/2015-03-31/functions/worker-function/invocations"
+  }
+}
+
 variables {
   name                                = "nursing-ai-test"
   image_uri                           = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/nursing-ai-test:abc123"
@@ -122,6 +168,10 @@ run "api_throttled" {
     error_message = "the integration must be a version 2.0 proxy"
   }
   assert {
+    condition     = toset(keys(jsondecode(aws_apigatewayv2_stage.default.access_log_settings[0].format))) == toset(["requestId", "ip", "requestTime", "httpMethod", "routeKey", "status", "responseLength", "integrationLatency"])
+    error_message = "the access log must carry exactly the listed metadata fields"
+  }
+  assert {
     condition     = aws_lambda_function.api.timeout == 29
     error_message = "the API timeout must fit inside the HTTP API's 30 s limit"
   }
@@ -189,7 +239,7 @@ run "only_the_worker_reads_the_anthropic_key" {
     error_message = "the worker must not send jobs"
   }
   assert {
-    condition     = !contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.anthropic_api_key_parameter_arn) && contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.google_client_id_parameter_arn) && contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.google_client_secret_parameter_arn)
+    condition     = contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.google_client_id_parameter_arn) && contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.google_client_secret_parameter_arn)
     error_message = "the API reads the Google parameters"
   }
   assert {
@@ -222,7 +272,82 @@ run "lambdas_use_ipv6_and_the_web_adapter" {
     error_message = "readiness is a TCP check on 8080"
   }
   assert {
+    condition     = aws_lambda_function.worker.environment[0].variables["AWS_LWA_READINESS_CHECK_PROTOCOL"] == "tcp" && aws_lambda_function.worker.environment[0].variables["AWS_LWA_PORT"] == "8080"
+    error_message = "the worker's readiness is a TCP check on 8080"
+  }
+  assert {
     condition     = aws_lambda_function.api.package_type == "Image" && aws_lambda_function.worker.package_type == "Image"
     error_message = "both functions run the container image"
   }
+}
+
+run "wiring_points_each_resource_at_the_right_one" {
+  command = apply
+
+  assert {
+    condition     = aws_sqs_queue.jobs.arn != aws_sqs_queue.dlq.arn && aws_iam_role.api.arn != aws_iam_role.worker.arn && aws_lambda_function.api.arn != aws_lambda_function.worker.arn
+    error_message = "the test's mock ARNs must be distinct or the wiring checks mean nothing"
+  }
+  assert {
+    condition     = jsondecode(aws_sqs_queue_redrive_allow_policy.dlq.redrive_allow_policy).sourceQueueArns == ["arn:aws:sqs:ap-southeast-2:123456789012:jobs-queue"]
+    error_message = "only the jobs queue may redrive into the DLQ"
+  }
+  assert {
+    condition     = jsondecode(aws_sqs_queue.jobs.redrive_policy).deadLetterTargetArn == "arn:aws:sqs:ap-southeast-2:123456789012:dead-letter-queue"
+    error_message = "the jobs queue must redrive into the DLQ"
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s.Resource == aws_sqs_queue.jobs.arn if contains(flatten([s.Action]), "sqs:ReceiveMessage")])
+    error_message = "the worker reads the jobs queue"
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s if s.Resource == aws_sqs_queue.jobs.arn && contains(flatten([s.Action]), "sqs:ReceiveMessage")]) == 1
+    error_message = "the worker policy must grant ReceiveMessage on the jobs queue"
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s if s.Resource == aws_sqs_queue.jobs.arn && contains(flatten([s.Action]), "sqs:SendMessage")]) == 1
+    error_message = "the API policy must grant SendMessage on the jobs queue"
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.worker.event_source_arn == aws_sqs_queue.jobs.arn
+    error_message = "the worker must be fed from the jobs queue"
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.worker.function_name == aws_lambda_function.worker.arn
+    error_message = "the queue must feed the worker function"
+  }
+  assert {
+    condition     = aws_apigatewayv2_integration.api.integration_uri == aws_lambda_function.api.invoke_arn
+    error_message = "the HTTP API must call the API function"
+  }
+  assert {
+    condition     = aws_apigatewayv2_integration.api.integration_method == "POST"
+    error_message = "the integration must use POST"
+  }
+  assert {
+    condition     = aws_lambda_function.api.role == aws_iam_role.api.arn && aws_lambda_function.worker.role == aws_iam_role.worker.arn
+    error_message = "each function must run as its own role"
+  }
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["DRAFT_QUEUE_URL"] == aws_sqs_queue.jobs.url
+    error_message = "the API must send to the jobs queue"
+  }
+  assert {
+    condition     = aws_lambda_permission.api_gateway.function_name == aws_lambda_function.api.function_name
+    error_message = "the HTTP API may invoke only the API function"
+  }
+}
+
+run "swapped_parameter_arn_and_name_is_refused" {
+  command = plan
+
+  variables {
+    database_url_parameter_arn  = "/nursing-ai/test/database-url"
+    database_url_parameter_name = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/database-url"
+  }
+
+  expect_failures = [
+    var.database_url_parameter_arn,
+    var.database_url_parameter_name,
+  ]
 }

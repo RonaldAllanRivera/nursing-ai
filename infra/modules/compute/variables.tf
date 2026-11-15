@@ -74,41 +74,81 @@ variable "ai_monthly_cap_usd" {
 variable "database_url_parameter_arn" {
   description = "ARN of the SecureString that holds the database URL."
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.database_url_parameter_arn))
+    error_message = "database_url_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
 }
 
 variable "database_url_parameter_name" {
   description = "Name of the SecureString that holds the database URL. The app reads it at cold start."
   type        = string
+
+  validation {
+    condition     = startswith(var.database_url_parameter_name, "/")
+    error_message = "database_url_parameter_name must be a parameter name that starts with /."
+  }
 }
 
 variable "anthropic_api_key_parameter_arn" {
   description = "ARN of the SecureString that holds the Anthropic API key. Only the worker may read it."
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.anthropic_api_key_parameter_arn))
+    error_message = "anthropic_api_key_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
 }
 
 variable "anthropic_api_key_parameter_name" {
   description = "Name of the SecureString that holds the Anthropic API key."
   type        = string
+
+  validation {
+    condition     = startswith(var.anthropic_api_key_parameter_name, "/")
+    error_message = "anthropic_api_key_parameter_name must be a parameter name that starts with /."
+  }
 }
 
 variable "google_client_id_parameter_arn" {
   description = "ARN of the SecureString that holds the Google sign-in client ID. Only the API may read it."
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.google_client_id_parameter_arn))
+    error_message = "google_client_id_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
 }
 
 variable "google_client_id_parameter_name" {
   description = "Name of the SecureString that holds the Google sign-in client ID."
   type        = string
+
+  validation {
+    condition     = startswith(var.google_client_id_parameter_name, "/")
+    error_message = "google_client_id_parameter_name must be a parameter name that starts with /."
+  }
 }
 
 variable "google_client_secret_parameter_arn" {
   description = "ARN of the SecureString that holds the Google sign-in client secret. Only the API may read it."
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.google_client_secret_parameter_arn))
+    error_message = "google_client_secret_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
 }
 
 variable "google_client_secret_parameter_name" {
   description = "Name of the SecureString that holds the Google sign-in client secret."
   type        = string
+
+  validation {
+    condition     = startswith(var.google_client_secret_parameter_name, "/")
+    error_message = "google_client_secret_parameter_name must be a parameter name that starts with /."
+  }
 }
 
 variable "api_log_group_name" {

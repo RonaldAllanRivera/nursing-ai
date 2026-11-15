@@ -215,6 +215,9 @@ resource "aws_lambda_event_source_mapping" "worker" {
   function_name    = aws_lambda_function.worker.arn
   batch_size       = 1
 
+  # Lambda checks at create time that the role can read the queue.
+  depends_on = [aws_iam_role_policy.worker]
+
   scaling_config {
     maximum_concurrency = var.worker_max_concurrency
   }
@@ -232,6 +235,7 @@ resource "aws_apigatewayv2_api" "this" {
 resource "aws_apigatewayv2_integration" "api" {
   api_id                 = aws_apigatewayv2_api.this.id
   integration_type       = "AWS_PROXY"
+  integration_method     = "POST"
   integration_uri        = aws_lambda_function.api.invoke_arn
   payload_format_version = "2.0"
 }
