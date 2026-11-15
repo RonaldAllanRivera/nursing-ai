@@ -113,3 +113,42 @@ def test_combining_mark_continues_the_word() -> None:
     assert find_span(prepare("mañana"), "man") is None
     assert find_span(prepare("mañana"), "̃ana") is None
     assert find_span(prepare("mañana"), "mañana") == Span(start=0, end=7)
+
+
+def test_combining_mark_before_the_quote_continues_the_word() -> None:
+    decomposed = "mañana"
+    assert find_span(prepare(decomposed), "ana") is None
+    assert find_span(prepare(decomposed), "mañ") is None
+    assert find_span(prepare(decomposed), "mañana") == Span(start=0, end=7)
+    assert find_span(prepare("pt mañana ok"), "ok") == Span(start=11, end=13)
+
+
+HY = chr(0x2010)  # hyphen
+NB = chr(0x2011)  # non-breaking hyphen
+
+
+def test_unicode_hyphen_continues_the_word() -> None:
+    assert find_span(prepare(f"non{HY}responsive"), "responsive") is None
+    assert find_span(prepare(f"non{NB}responsive"), "responsive") is None
+    assert find_span(prepare(f"non{NB}responsive"), "non") is None
+    assert find_span(prepare(f"pt {HY} responsive"), "responsive") == Span(start=5, end=15)
+
+
+def test_quote_starting_or_ending_with_a_hyphen_inside_a_word_is_not_found() -> None:
+    assert find_span(prepare("pt non-responsive"), "-responsive") is None
+    assert find_span(prepare("non-responsive"), "non-") is None
+    assert find_span(prepare(f"pt non{NB}responsive"), f"{NB}responsive") is None
+    assert find_span(prepare("pt - responsive"), "- responsive") == Span(start=3, end=15)
+    assert find_span(prepare("seen non- today"), "non-") == Span(start=5, end=9)
+
+
+def test_number_after_a_leading_decimal_point_is_not_found() -> None:
+    assert find_span(prepare("give .5 mg"), "5 mg") is None
+    assert find_span(prepare("seen at 3. 4 more"), "4 more") == Span(start=11, end=17)
+    assert find_span(prepare("T 37.5"), ".5") is None
+
+
+def test_quote_ending_in_a_dot_inside_a_decimal_is_not_found() -> None:
+    assert find_span(prepare("HR 90.5"), "HR 90.") is None
+    assert find_span(prepare("T 37.9. nagsuk"), "T 37.9") == Span(start=0, end=6)
+    assert find_span(prepare("T 37.9. nagsuk"), "T 37.9.") == Span(start=0, end=7)
