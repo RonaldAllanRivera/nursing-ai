@@ -22,15 +22,16 @@ from nursing_core.domain.notes import (
 )
 from nursing_core.domain.units import (
     TEMPERATURE_UNITS,
+    VOLUME_UNITS,
     WEIGHT_UNITS,
     Ucum,
     UnitDefaults,
 )
 from nursing_core.pipeline.text import MatchText, find_span
-from nursing_core.pipeline.unit_check import numbers_in, unit_end_after
+from nursing_core.pipeline.unit_check import number_value, numbers_in, unit_end_after
 
 # The word right before a number; spaces and one ":" or "=" may sit between.
-_LABEL = re.compile(r"([^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
+_LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
 
 _PRECEDENCE = (
     LineStatus.NO_SOURCE,
@@ -42,7 +43,7 @@ _PRECEDENCE = (
 
 @dataclass(frozen=True, slots=True)
 class _NoteNumber:
-    value: Decimal
+    value: tuple[Decimal, ...]
     text: str
     span: Span  # in the note as typed
     label: str | None
@@ -126,14 +127,14 @@ def _note_numbers(raw: str, quote_span: Span) -> list[_NoteNumber]:
     sliced = raw[quote_span.start : quote_span.end]
     out: list[_NoteNumber] = []
     for written, local in numbers_in(sliced):
-        unit = unit_end_after(sliced, local)
-        stop = local.end if unit is None else unit[1]
-        with_unit = Span(start=quote_span.start + local.start, end=quote_span.start + stop)
+        span = Span(start=quote_span.start + local.start, end=quote_span.start + local.end)
+        unit = unit_end_after(raw, span)  # read in the whole note: the quote may stop before it
+        with_unit = Span(start=span.start, end=span.end if unit is None else unit[1])
         out.append(
             _NoteNumber(
-                value=Decimal(written),
+                value=number_value(written),
                 text=written,
-                span=Span(start=quote_span.start + local.start, end=quote_span.start + local.end),
+                span=span,
                 label=_label_before(sliced, local.start),
                 unit=None if unit is None else unit[0],
                 with_unit=with_unit,
@@ -143,12 +144,14 @@ def _note_numbers(raw: str, quote_span: Span) -> list[_NoteNumber]:
     return out
 
 
-def _default_unit(unit: Ucum, units: UnitDefaults) -> Ucum | None:
+def default_unit(unit: Ucum, units: UnitDefaults) -> Ucum | None:
     if unit in TEMPERATURE_UNITS:
         return units.temperature
     if unit in WEIGHT_UNITS:
         return units.weight
-    return units.volume
+    if unit in VOLUME_UNITS:
+        return units.volume
+    return None
 
 
 def _mismatches(
@@ -156,7 +159,7 @@ def _mismatches(
 ) -> list[NumberMismatch]:
     out: list[NumberMismatch] = []
     for written, span in numbers_in(text):
-        same_value = [n for n in note_numbers if n.value == Decimal(written)]
+        same_value = [n for n in note_numbers if n.value == number_value(written)]
         if not same_value:
             label = _label_before(text, span.start)
             paired = next((n for n in note_numbers if label and n.label == label), None)
@@ -174,7 +177,7 @@ def _mismatches(
         if drafted is None:
             continue
         unit, unit_end = drafted
-        default = _default_unit(unit, units)
+        default = default_unit(unit, units)
         if any(n.unit == unit or (n.unit is None and default == unit) for n in same_value):
             continue
         first = same_value[0]

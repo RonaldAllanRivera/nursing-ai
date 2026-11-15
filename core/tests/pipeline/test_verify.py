@@ -13,7 +13,7 @@ from nursing_core.domain.notes import (
 from nursing_core.domain.units import Ucum, UnitDefaults
 from nursing_core.pipeline.redact import redact, restore
 from nursing_core.pipeline.text import prepare
-from nursing_core.pipeline.verify import check_line, recheck_line, restore_line
+from nursing_core.pipeline.verify import check_line, default_unit, recheck_line, restore_line
 
 PH = UnitDefaults(temperature=Ucum.CEL, weight=None, volume=Ucum.ML)
 US = UnitDefaults(temperature=Ucum.DEG_F, weight=None, volume=Ucum.ML)
@@ -248,7 +248,9 @@ def test_restore_keeps_the_mismatches_of_the_cautious_reading() -> None:
 
 def test_demo_lines_check_to_their_expected_lines() -> None:
     facilities = {facility.key: facility for facility in DEMO_FACILITIES}
-    for case in load_demo_cases():
+    cases = load_demo_cases()
+    assert cases
+    for case in cases:
         units = facilities[case.facility_key].units
         mapping = redact(case.rough_note.text, case.patient).mapping
         note = prepare(case.rough_note.text)
@@ -276,3 +278,99 @@ def test_demo_lines_check_to_their_expected_lines() -> None:
                     case.key,
                     expected.id,
                 )
+
+
+def _kinds(line: DraftLine) -> list[MismatchKind]:
+    return [m.kind for m in line.number_mismatches]
+
+
+def test_a_dose_fraction_is_not_matched_by_one_of_its_digits() -> None:
+    line = _check("gave 1/2 tab PO", "Gave 2 tabs PO.", ["gave 1/2 tab PO"])
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    assert _kinds(line) == [MismatchKind.VALUE]
+    assert line.number_mismatches[0].note_text == "1/2"
+
+
+def test_a_leading_dot_decimal_is_not_matched_by_a_whole_number() -> None:
+    line = _check("lorazepam .5 mg IV", "Lorazepam 5 mg IV given.", ["lorazepam .5 mg IV"])
+    assert _kinds(line) == [MismatchKind.VALUE]
+    ok = _check("lorazepam .5 mg IV", "Lorazepam 0.50 mg IV given.", ["lorazepam .5 mg IV"])
+    assert ok.status is LineStatus.SOURCE_FOUND
+
+
+def test_digits_inside_a_word_are_not_a_number_to_match() -> None:
+    line = _check("D5LR running", "5 units insulin given, D5LR running.", ["D5LR running"])
+    assert _kinds(line) == [MismatchKind.VALUE]
+    assert line.number_mismatches[0].draft_text == "5"
+    ok = _check("D5LR running", "D5LR running.", ["D5LR running"])
+    assert ok.status is LineStatus.SOURCE_FOUND
+
+
+def test_a_number_glued_to_a_label_still_counts() -> None:
+    line = _check("HR120 SpO2 95", "HR 120, SpO2 95.", ["HR120 SpO2 95"])
+    assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_a_draft_vulgar_fraction_is_a_number_to_check() -> None:
+    line = _check("gave 1 tab", "Gave ½ tab.", ["gave 1 tab"])
+    [mismatch] = line.number_mismatches
+    assert (mismatch.draft_text, mismatch.draft_span) == ("½", Span(start=5, end=6))
+    assert (mismatch.note_text, mismatch.note_span) == ("1", Span(start=5, end=6))
+
+
+def test_a_vulgar_fraction_matches_its_slash_form_both_ways() -> None:
+    assert _check("gave 1/2 tab", "Gave ½ tab.", ["gave 1/2 tab"]).status is LineStatus.SOURCE_FOUND
+    assert _check("gave ½ tab", "Gave 1/2 tab.", ["gave ½ tab"]).status is LineStatus.SOURCE_FOUND
+
+
+def test_a_group_is_not_matched_by_a_standalone_number() -> None:
+    line = _check("BP 90/60", "BP 90 systolic.", ["BP 90/60"])
+    assert _kinds(line) == [MismatchKind.VALUE]
+    assert (line.number_mismatches[0].note_text) == "90/60"
+    line = _check("BP 90 then 60", "BP 90/60.", ["BP 90 then 60"])
+    assert _kinds(line) == [MismatchKind.VALUE]
+
+
+def test_the_unit_is_read_past_the_end_of_the_quote() -> None:
+    line = _check("T 37.4 F at 3am", "T 37.4 °C.", ["T 37.4"])
+    [mismatch] = line.number_mismatches
+    assert mismatch.kind is MismatchKind.UNIT
+    assert (mismatch.draft_text, mismatch.draft_span) == ("37.4 °C", Span(start=2, end=9))
+    assert (mismatch.note_text, mismatch.note_span) == ("37.4 F", Span(start=2, end=8))
+
+
+def test_a_weight_unit_written_after_the_quote_is_flagged() -> None:
+    units = US_LB
+    line = _check("wt 80 kg today", "Weight 80 lb.", ["wt 80"], units=units)
+    assert _kinds(line) == [MismatchKind.UNIT]
+    assert line.number_mismatches[0].note_text == "80 kg"
+
+
+def test_unit_spellings_outside_the_exact_table_are_checked() -> None:
+    for drafted in ("T 37.4 \u2109", "T 37.4\u00b0 F", "T 37.4\u00a0\u00b0F", "T 37.4\u00baF"):
+        line = _check("BT 37.4", drafted, ["BT 37.4"])
+        assert _kinds(line) == [MismatchKind.UNIT], drafted
+        assert line.number_mismatches[0].draft_text == drafted[2:]
+    assert _check("BT 37.4", "T 37.4 \u2103", ["BT 37.4"]).status is LineStatus.SOURCE_FOUND
+
+
+def test_a_unit_spelled_oddly_in_the_note_counts_as_written() -> None:
+    line = _check("BT 37.4 \u2109", "T 37.4 °C.", ["BT 37.4"])
+    assert _kinds(line) == [MismatchKind.UNIT]
+    assert line.number_mismatches[0].note_text == "37.4 \u2109"
+
+
+def test_a_label_glued_to_a_digit_is_not_a_label() -> None:
+    line = _check("5HR 112", "HR 121.", ["5HR 112"])
+    assert line.number_mismatches[0].note_text is None
+    line = _check("HR_ 112", "HR 121.", ["HR_ 112"])
+    assert line.number_mismatches[0].note_text is None
+
+
+def test_any_occurrence_with_the_right_unit_passes() -> None:
+    note = "T 37.4 F then T 37.4 C"
+    assert _check(note, "T 37.4 °C.", [note]).status is LineStatus.SOURCE_FOUND
+
+
+def test_a_unit_outside_every_measure_has_no_default() -> None:
+    assert default_unit(Ucum.PERCENT, PH) is None
