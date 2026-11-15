@@ -1,7 +1,7 @@
 import { cn } from "../lib/cn";
 
 // The mockup's sprite, symbol by symbol. Only the symbols a screen uses are here; fork (the
-// ambiguous-term status) comes with the glossary in P3.
+// ambiguous-term status, P3) and lock (the signed note, W5) come with the screens that use them.
 const PATHS = {
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   neq: (
@@ -9,12 +9,6 @@ const PATHS = {
       <path d="M5 9.5h14" />
       <path d="M5 14.5h14" />
       <path d="M15.5 4.5l-7 15" />
-    </>
-  ),
-  lock: (
-    <>
-      <rect x="5" y="11" width="14" height="10" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
     </>
   ),
   boxcheck: (

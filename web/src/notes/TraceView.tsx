@@ -50,11 +50,15 @@ export function TraceView({
   const noteText = useRef<HTMLParagraphElement>(null);
   // The line the nurse picked herself: only that selection swipes (a reload with ?line= just shows it).
   const [swipeId, setSwipeId] = useState<string | undefined>(undefined);
-  // How many times "Sign note" has said its line. The text alternates a trailing space, so the
-  // live region changes (and is read out) every time, even for the same words.
-  const [announced, setAnnounced] = useState(0);
-  const announcement =
-    announced === 0 ? "" : `Check this line before you sign.${announced % 2 === 0 ? " " : ""}`;
+  const [announcement, setAnnouncement] = useState("");
+  // Clear, then set on the next frame (the mockup's way): the region changes each time, so the
+  // same words are read out again.
+  const announce = (message: string) => {
+    setAnnouncement("");
+    requestAnimationFrame(() => {
+      setAnnouncement(message);
+    });
+  };
 
   const setLine = (id: string | undefined) => {
     void navigate({ search: id === undefined ? {} : { line: id }, replace: true });
@@ -95,7 +99,7 @@ export function TraceView({
     const next = nextLineNeedingReview(draft, selected?.id);
     if (!next) return; // W5: nothing is left to check, so this will open the signing dialog.
     pick(next.id);
-    setAnnounced((count) => count + 1);
+    announce("Check this line before you sign.");
   };
 
   // Escape closes the drawer (small screens only: on a wide one the card is always there).
@@ -125,7 +129,6 @@ export function TraceView({
   const ready = note.status === "signed" || (note.status === "draft" && left === 0);
   const handlers = {
     selectedId: selected?.id,
-    tabStopId: selected?.id ?? lines[0]?.id,
     register: (id: string, element: HTMLButtonElement | null) => {
       if (element) lineButtons.current.set(id, element);
       else lineButtons.current.delete(id);
@@ -168,7 +171,7 @@ export function TraceView({
               </p>
             </div>
           </div>
-          <TraceCard line={selected} open={open} onClose={close} />
+          <TraceCard line={selected} noteText={rough.text} open={open} onClose={close} />
         </section>
 
         <section className="pane-draft" aria-labelledby="draft-h">
@@ -176,7 +179,9 @@ export function TraceView({
             <h2 id="draft-h">{`${w.noteFormat(rough.note_format)} draft`}</h2>
             <p>Written by AI, checked by code. Tap a line to see the words it came from.</p>
           </div>
-          <p className={ready ? "answer is-ready" : "answer"}>{answerText(draft, note.status)}</p>
+          <p className={ready ? "answer is-ready" : "answer"} aria-live="polite">
+            {answerText(draft, note.status)}
+          </p>
           <StatusKey draft={draft} />
           <DraftForm
             draft={draft}

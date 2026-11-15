@@ -14,8 +14,6 @@ import {
 
 export interface LineHandlers {
   selectedId: string | undefined;
-  /** The one line Tab lands on: the selected one, or else the first. */
-  tabStopId: string | undefined;
   register: (id: string, element: HTMLButtonElement | null) => void;
   onPick: (id: string) => void;
   onArrow: (id: string, key: string) => void;
@@ -45,7 +43,6 @@ function LineButton({
       ref={(element) => {
         handlers.register(line.id, element);
       }}
-      tabIndex={handlers.tabStopId === line.id ? 0 : -1}
       aria-current={selected ? "true" : undefined}
       className={cn(
         "line",

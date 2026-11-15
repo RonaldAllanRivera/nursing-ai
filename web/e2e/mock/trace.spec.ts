@@ -14,10 +14,10 @@ async function noSidewaysScroll(page: Page) {
   expect(fits).toBe(true);
 }
 
-async function openDemoNote(page: Page) {
+async function openDemoNote(page: Page, patient: RegExp = /Demo patient A/) {
   await page.goto("/sign-in");
   await page.getByRole("button", { name: SARAH }).click();
-  await page.getByRole("link", { name: /Demo patient A/ }).click();
+  await page.getByRole("link", { name: patient }).click();
   await page.getByLabel("Your note").fill("pt c/o hilo since 2am, BP 90/60 HR 112");
   await page.getByRole("button", { name: "Save note" }).click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]{36}$/, { timeout: 8000 });
@@ -103,6 +103,8 @@ test("works by keyboard: Tab to the draft, arrow to a line, Escape, then Sign no
   await expect(first).toBeFocused();
 
   if (isSmall(page)) {
+    // The focus is in the drawer, so Escape has to bring it back to the line.
+    await page.getByRole("button", { name: "Close" }).focus();
     await page.keyboard.press("Escape");
     await expect(page).not.toHaveURL(/line=/);
     await expect(first).toBeFocused();
@@ -125,6 +127,21 @@ test("has no axe violations with a line selected, in day and in night", async ({
   expect(empty.violations).toEqual([]);
   await line(page, D2).click();
   await expect(page.locator(".note-text mark.hl")).toBeVisible();
+  const day = await new AxeBuilder({ page }).withTags(TAGS).analyze();
+  expect(day.violations).toEqual([]);
+  await page.getByRole("button", { name: "Night theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
+  const night = await new AxeBuilder({ page }).withTags(TAGS).analyze();
+  expect(night.violations).toEqual([]);
+  await noSidewaysScroll(page);
+});
+
+test("demo-2's two entries, and a line left empty, have no axe violations in day and night", async ({
+  page,
+}) => {
+  await openDemoNote(page, /Demo patient B/);
+  await expect(page.getByRole("button", { name: /^Fever/ })).toBeVisible();
+  await expect(page.getByText("Not written — left empty")).toBeVisible();
   const day = await new AxeBuilder({ page }).withTags(TAGS).analyze();
   expect(day.violations).toEqual([]);
   await page.getByRole("button", { name: "Night theme" }).click();

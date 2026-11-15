@@ -83,7 +83,9 @@ const noteRoute = createRoute({
   path: "/notes/$noteId",
   // `line` is the selected draft line. Its id is opaque: kept as the server wrote it.
   validateSearch: (search: Record<string, unknown>): { line?: string } => {
-    // The router reads a number-looking value as a number; the id is the text the user wrote.
+    // The router's JSON search parser turns a number-looking value into a number before it gets
+    // here, so `?line=1.50` arrives as 1.5. Ids the app writes round-trip (they are quoted);
+    // only a hand-typed, number-looking id can lose its exact text. Not worth a custom parser.
     const line = search["line"];
     const id = typeof line === "string" || typeof line === "number" ? String(line) : "";
     return id === "" ? {} : { line: id };

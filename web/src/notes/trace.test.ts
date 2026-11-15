@@ -393,10 +393,34 @@ describe("what a selected line lights up", () => {
   });
 
   it("marks the note's number inside the quote it belongs to", () => {
-    const segments = quoteSegments(d1("e1-D2"), 0);
-    expect(segments[0]?.highlight).toBe(0);
-    const bad = segments.flatMap((s) => s.parts).filter((p) => p.bad);
+    const [quote] = quoteSegments(d1("e1-D2"), DEMO_1.rough_note.text);
+    expect(quote?.segments[0]?.highlight).toBe(0);
+    const bad = (quote?.segments ?? []).flatMap((s) => s.parts).filter((p) => p.bad);
     expect(bad.map((p) => p.text)).toEqual(["112"]);
+  });
+
+  it("lists a found quote as the nurse's own words, not the AI's quote string", () => {
+    const l = line({
+      source_quotes: [{ text: "the AI's own string", span: { start: 3, end: 21 } }],
+    });
+    const [quote] = quoteSegments(l, DEMO_1.rough_note.text);
+    expect(
+      quote?.segments
+        .flatMap((s) => s.parts)
+        .map((p) => p.text)
+        .join(""),
+    ).toBe("c/o hilo since 2am");
+  });
+
+  it("does not list a quote the server found no span for", () => {
+    const l = line({
+      source_quotes: [
+        { text: "nowhere in the note", span: null },
+        { text: "x", span: { start: 3, end: 21 } },
+      ],
+    });
+    expect(quoteSegments(l, DEMO_1.rough_note.text).map((q) => q.index)).toEqual([1]);
+    expect(quoteSegments(line({ source_quotes: [{ text: "a", span: null }] }), "abc")).toEqual([]);
   });
 
   it("cuts the words at a span by code point", () => {

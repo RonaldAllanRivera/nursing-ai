@@ -9,15 +9,19 @@ import { quoteSegments, reasonFor, shownStatus, type DraftLine } from "./trace";
  */
 export function TraceCard({
   line,
+  noteText,
   open,
   onClose,
 }: {
   line: DraftLine | undefined;
+  /** The nurse's note: the quotes are shown as her own words at their spans. */
+  noteText: string;
   /** Small screens only: whether the drawer is up. */
   open: boolean;
   onClose: () => void;
 }) {
   const shown = line ? shownStatus(line) : undefined;
+  const quotes = line ? quoteSegments(line, noteText) : [];
   return (
     <aside
       id="trace"
@@ -42,11 +46,11 @@ export function TraceCard({
           </h2>
           <p className="trace-reason">{reasonFor(line)}</p>
           <h3>From your note</h3>
-          {line.source_quotes.length > 0 ? (
+          {quotes.length > 0 ? (
             <ul className="quotes">
-              {line.source_quotes.map((quote, i) => (
-                <li key={`${String(i)}-${quote.text}`}>
-                  <Segments segments={quoteSegments(line, i)} />
+              {quotes.map(({ index, segments }) => (
+                <li key={index}>
+                  <Segments segments={segments} />
                 </li>
               ))}
             </ul>

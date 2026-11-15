@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { ApiError } from "../api/errors";
+import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useFacility } from "../facility/useFacility";
 import { useSession } from "../session/session";
@@ -29,11 +30,14 @@ export function NotePage() {
         </Link>
         <p
           role={missing ? undefined : "alert"}
-          className={missing ? "mt-2 text-ink-2" : "mt-2 text-stop"}
+          className={`mt-2 flex items-start gap-2 ${missing ? "text-ink-2" : "text-stop"}`}
         >
-          {missing
-            ? "This note is not on your list. Go back and pick one."
-            : "This note did not load. Go back and try again."}
+          <Icon name="flag" className="mt-1" />
+          <span>
+            {missing
+              ? "This note is not on your list. Go back and pick one."
+              : "This note did not load. Go back and try again."}
+          </span>
         </p>
       </section>
     );

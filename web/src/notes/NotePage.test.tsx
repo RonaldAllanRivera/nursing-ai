@@ -36,7 +36,11 @@ async function openNote(noteId: string, search: { line?: string } = {}, persona 
 }
 
 /** The mock API's answer for a note is replaced after sign-in (renderApp's own handlers go first otherwise). */
-async function openWith(change: (note: Note) => Note, status = 200) {
+async function openWith(
+  change: (note: Note) => Note,
+  status = 200,
+  search: { line?: string } = {},
+) {
   const app = await signIn();
   server.use(
     http.get("*/api/v1/notes/:id", ({ params }) =>
@@ -47,7 +51,7 @@ async function openWith(change: (note: Note) => Note, status = 200) {
         : HttpResponse.json({}, { status }),
     ),
   );
-  await goToNote(app, NOTE_1);
+  await goToNote(app, NOTE_1, search);
   return app;
 }
 
@@ -68,17 +72,30 @@ const lineButton = (name: RegExp | string) =>
   screen.getByRole("button", { name: typeof name === "string" ? new RegExp(name) : name });
 
 /** jsdom has no matchMedia: say whether the screen is wide (960 px and up) or not. */
-function mockScreen(wide: boolean) {
+function mockScreen(initiallyWide: boolean) {
+  let wide = initiallyWide;
+  const listeners = new Set<() => void>();
   vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query === "(min-width: 960px)" ? wide : false,
+    get matches() {
+      return query === "(min-width: 960px)" ? wide : false;
+    },
     media: query,
     onchange: null,
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
     addListener: () => undefined,
     removeListener: () => undefined,
     dispatchEvent: () => false,
   }));
+  /** The window is resized across 960 px: the query changes and its listeners hear it. */
+  return (next: boolean) => {
+    wide = next;
+    act(() => {
+      listeners.forEach((listener) => {
+        listener();
+      });
+    });
+  };
 }
 
 afterEach(() => {
@@ -218,13 +235,67 @@ describe("the trace view", () => {
     expect(app.router.history.length).toBe(historyBefore);
   });
 
-  it("is one Tab stop: the selected line, or the first one", async () => {
+  it("keeps every line in the Tab order: Tab goes from one line to the next", async () => {
     await openNote(NOTE_1);
-    expect(lineButton(/^Dizziness/)).toHaveAttribute("tabindex", "0");
-    expect(lineButton(/^Reports dizziness/)).toHaveAttribute("tabindex", "-1");
-    await userEvent.click(lineButton(/^Reports dizziness/));
-    expect(lineButton(/^Reports dizziness/)).toHaveAttribute("tabindex", "0");
-    expect(lineButton(/^Dizziness/)).toHaveAttribute("tabindex", "-1");
+    await userEvent.click(lineButton(/^Dizziness with low blood pressure/));
+    await userEvent.tab();
+    expect(lineButton(/^Reports dizziness/)).toHaveFocus();
+    await userEvent.tab();
+    expect(lineButton(/^BP 90\/60 mmHg/)).toHaveFocus();
+    await userEvent.tab({ shift: true });
+    expect(lineButton(/^Reports dizziness/)).toHaveFocus();
+    // Tabbing only moves the focus; the arrow keys are the ones that select.
+    expect(lineButton(/^Dizziness/)).toHaveAttribute("aria-current", "true");
+  });
+
+  it("makes the answer line a polite live region", async () => {
+    await openNote(NOTE_1);
+    expect(screen.getByText("3 lines need you before you sign.")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
+  });
+
+  it("lists only the words the server found in the note, as the nurse wrote them", async () => {
+    await openWith(
+      (note) => {
+        const d1 = linesInOrder(note.draft).find((l) => l.id === "e1-D1");
+        if (!d1) throw new Error("no D1");
+        d1.source_quotes = [
+          { text: "the AI's own string", span: { start: 3, end: 21 } },
+          { text: "not anywhere in the note", span: null },
+        ];
+        return note;
+      },
+      200,
+      { line: "e1-D1" },
+    );
+    const card = within(await screen.findByRole("complementary", { name: /came from/ }));
+    const items = card.getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual(["c/o hilo since 2am"]);
+    expect(card.queryByText(/the AI's own string|not anywhere/)).toBeNull();
+    expect(noteText().querySelector("mark.hl")).toHaveTextContent("c/o hilo since 2am");
+  });
+
+  it("says no words match when none of a line's quotes has a span", async () => {
+    await openWith(
+      (note) => {
+        const d1 = linesInOrder(note.draft).find((l) => l.id === "e1-D1");
+        if (!d1) throw new Error("no D1");
+        d1.source_quotes = [{ text: "not anywhere in the note", span: null }];
+        return note;
+      },
+      200,
+      { line: "e1-D1" },
+    );
+    const card = within(await screen.findByRole("complementary", { name: /came from/ }));
+    expect(card.getByText("No words in your note match this line.")).toBeVisible();
+    expect(card.queryByRole("listitem")).toBeNull();
+  });
+
+  it("says nothing is missing when the checklist is empty", async () => {
+    await openWith((note) => ({ ...note, checklist: [] }));
+    expect(await screen.findByText("Nothing is missing.")).toBeVisible();
   });
 
   it("Sign note jumps to the next line that needs you and says so, then goes on round", async () => {
@@ -233,18 +304,28 @@ describe("the trace view", () => {
     expect(status).toHaveTextContent("");
     expect(screen.getByRole("button", { name: "Sign note" })).not.toHaveAttribute("disabled");
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const sign = () => userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    // The words are set on the next frame, after a clear, so a repeat is read out again.
+    const said = () =>
+      waitFor(() => {
+        expect(status).toHaveTextContent("Check this line before you sign.");
+      });
+
+    await sign();
     expect(lineButton(/^Dizziness with low/)).toHaveFocus();
     expect(app.router.state.location.search).toEqual({ line: "e1-F" });
+    await said();
     expect(screen.getByRole("status")).toBe(status);
-    expect(status).toHaveTextContent("Check this line before you sign.");
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    await sign();
     expect(lineButton(/^BP 90\/60 mmHg/)).toHaveFocus();
-    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    await said();
+    await sign();
     expect(lineButton(/^Physician notified/)).toHaveFocus();
-    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    await said();
+    await sign();
     expect(lineButton(/^Dizziness with low/)).toHaveFocus();
+    await said();
   });
 
   it("does nothing yet when no line needs you", async () => {
@@ -283,10 +364,28 @@ describe("the trace view", () => {
       expect(trace).toHaveClass("open");
       expect(app.router.state.location.search).toEqual({ line: "e1-A2" });
 
+      // Move the focus into the drawer first, so Escape has to bring it back to the line.
+      const close = within(trace).getByRole("button", { name: "Close" });
+      act(() => {
+        close.focus();
+      });
+      expect(close).toHaveFocus();
       await userEvent.keyboard("{Escape}");
       expect(trace).not.toHaveClass("open");
       expect(app.router.state.location.search).toEqual({});
       expect(lineButton(/^Physician notified/)).toHaveFocus();
+    });
+
+    it("follows the window across 960 px: a selected line opens the drawer when it shrinks", async () => {
+      const resize = mockScreen(true);
+      await openNote(NOTE_1);
+      const trace = screen.getByRole("complementary", { hidden: true, name: /came from/ });
+      await userEvent.click(lineButton(/^Still weak/));
+      expect(trace).not.toHaveClass("open");
+      resize(false);
+      expect(trace).toHaveClass("open");
+      resize(true);
+      expect(trace).not.toHaveClass("open");
     });
 
     it("closes with the Close button, or by tapping the same line again", async () => {

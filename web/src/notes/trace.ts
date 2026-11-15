@@ -133,22 +133,31 @@ export function lineSegments(line: DraftLine): Segment[] {
   return spansFor(line.text, marks);
 }
 
-/** One quote as the trace card lists it: all highlighted, the note's differing number marked inside. */
-export function quoteSegments(line: DraftLine, quoteIndex: number): Segment[] {
-  const quote = line.source_quotes[quoteIndex];
-  if (!quote) return [];
-  const marks: Mark[] = [
-    { kind: "highlight", start: 0, end: Array.from(quote.text).length, index: quoteIndex },
-  ];
-  const at = quote.span;
-  if (at && line.status === "number_mismatch") {
-    for (const { note_span: found } of line.number_mismatches) {
-      if (found && at.start <= found.start && found.end <= at.end) {
-        marks.push({ kind: "bad", start: found.start - at.start, end: found.end - at.start });
+/**
+ * The quotes the trace card lists under "From your note": only those the server found in the
+ * note (a span), each shown as the nurse's own words at that span (never the AI's quote string),
+ * with the note's differing number marked inside. A quote with no span isn't in the note.
+ */
+export function quoteSegments(
+  line: DraftLine,
+  noteText: string,
+): { index: number; segments: Segment[] }[] {
+  const found: { index: number; segments: Segment[] }[] = [];
+  line.source_quotes.forEach((quote, index) => {
+    const at = quote.span;
+    if (!at) return;
+    const words = wordsAt(noteText, at);
+    const marks: Mark[] = [{ kind: "highlight", start: 0, end: Array.from(words).length, index }];
+    if (line.status === "number_mismatch") {
+      for (const { note_span: bad } of line.number_mismatches) {
+        if (bad && at.start <= bad.start && bad.end <= at.end) {
+          marks.push({ kind: "bad", start: bad.start - at.start, end: bad.end - at.start });
+        }
       }
     }
-  }
-  return spansFor(quote.text, marks);
+    found.push({ index, segments: spansFor(words, marks) });
+  });
+  return found;
 }
 
 // ---------------------------------------------------------------------------------------------

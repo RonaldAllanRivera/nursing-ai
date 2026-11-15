@@ -375,6 +375,10 @@
     font-size: var(--fs-14);
     margin: 2px 0 var(--sp-3);
   }
+  .check-none {
+    color: var(--ink-2);
+    margin-bottom: var(--sp-3);
+  }
   .check-items {
     border-top: 1px solid var(--rule);
   }
@@ -422,7 +426,7 @@
   }
 
   /* ---------- Small screens: stacked, source drawer ---------- */
-  @media (max-width: 959px) {
+  @media (width < 960px) {
     .note-head {
       grid-template-areas: "tab name" "meta meta";
       gap: var(--sp-2) var(--sp-3);
@@ -558,7 +562,7 @@
 }
 
 /* The draft's own focus ring keeps the mockup's rounded corners. */
-.trace-view :focus-visible {
+.trace-view :focus-visible:not(.line) {
   border-radius: var(--r-control);
 }
 
@@ -569,5 +573,12 @@
   }
   to {
     background-size: 100% 100%;
+  }
+}
+
+/* Below 960 px the sign bar is fixed to the bottom: a focused line scrolls clear of it (WCAG 2.4.11). */
+@media (width < 960px) {
+  :root:has(.trace-view) {
+    scroll-padding-bottom: 120px;
   }
 }
