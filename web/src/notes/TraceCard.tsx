@@ -1,0 +1,68 @@
+import { Icon } from "../components/Icon";
+import { Segments } from "./Segments";
+import { quoteSegments, reasonFor, shownStatus, type DraftLine } from "./trace";
+
+/**
+ * "Where the selected line came from". Under the note on a wide screen; on a small one a bottom
+ * drawer (not modal: the draft stays usable behind it). Close, Escape or tapping the line again
+ * closes it.
+ */
+export function TraceCard({
+  line,
+  open,
+  onClose,
+}: {
+  line: DraftLine | undefined;
+  /** Small screens only: whether the drawer is up. */
+  open: boolean;
+  onClose: () => void;
+}) {
+  const shown = line ? shownStatus(line) : undefined;
+  return (
+    <aside
+      id="trace"
+      aria-label="Where the selected line came from"
+      className={open ? "trace open" : "trace"}
+    >
+      <div className="drawer-bar">
+        <span>Where this line came from</span>
+        <button type="button" className="btn" onClick={onClose}>
+          <Icon name="close" />
+          Close
+        </button>
+      </div>
+      {line && shown ? (
+        <div>
+          <p className="trace-line">
+            <q>{line.text}</q>
+          </p>
+          <h2 className={`trace-status tone-${shown.tone}`}>
+            <Icon name={shown.icon} />
+            {shown.label}
+          </h2>
+          <p className="trace-reason">{reasonFor(line)}</p>
+          <h3>From your note</h3>
+          {line.source_quotes.length > 0 ? (
+            <ul className="quotes">
+              {line.source_quotes.map((quote, i) => (
+                <li key={`${String(i)}-${quote.text}`}>
+                  <Segments segments={quoteSegments(line, i)} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="no-quote">
+              <Icon name="flag" />
+              No words in your note match this line.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="trace-empty">
+          Tap a line in the draft. The words it came from light up in your note,{" "}
+          <mark className="hl">like this</mark>.
+        </p>
+      )}
+    </aside>
+  );
+}

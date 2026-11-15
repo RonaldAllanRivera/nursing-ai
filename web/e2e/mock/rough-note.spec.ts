@@ -42,7 +42,7 @@ test("types a note, saves it and lands on the note", async ({ page }) => {
     page.getByText("Drafting your note. This usually takes a few seconds."),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]{36}$/, { timeout: 8000 });
-  await expect(page.getByRole("heading", { name: /^Note / })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your note" })).toBeVisible();
   await noSidewaysScroll(page);
 });
 

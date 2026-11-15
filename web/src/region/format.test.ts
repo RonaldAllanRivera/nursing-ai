@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../api/schema";
-import { formatDate, formatShiftRange, formatTime } from "./format";
+import { formatDate, formatDayMonth, formatShiftRange, formatTime } from "./format";
 
 type ShiftRef = components["schemas"]["ShiftRef"];
 
@@ -16,6 +16,14 @@ describe("formatDate", () => {
     const iso = "2026-11-12T01:00:00Z";
     expect(formatDate(iso, { timeZone: manila, locale: "en-PH" })).toBe("12 Nov 2026");
     expect(formatDate(iso, { timeZone: la, locale: "en-US" })).toBe("11 Nov 2026");
+  });
+});
+
+describe("formatDayMonth", () => {
+  it("is the date without the year, in the zone it is given", () => {
+    const iso = "2026-11-12T01:00:00Z";
+    expect(formatDayMonth(iso, { timeZone: manila, locale: "en-PH" })).toBe("12 Nov");
+    expect(formatDayMonth(iso, { timeZone: la, locale: "en-US" })).toBe("11 Nov");
   });
 });
 

@@ -104,7 +104,8 @@ describe("patient page", () => {
       },
       { timeout: 4000 },
     );
-    expect(await screen.findByRole("heading", { name: /Note / })).toBeVisible();
+    // The note page (the trace view) has opened.
+    expect(await screen.findByRole("heading", { name: "Your note" })).toBeVisible();
   });
 
   it("reuses the idempotency key when it retries", async () => {

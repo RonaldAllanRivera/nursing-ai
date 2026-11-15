@@ -25,6 +25,12 @@ export function formatDate(iso: string, opts: { timeZone: string; locale: Locale
   return `${day} ${month} ${year}`;
 }
 
+/** `"12 Nov"`: the same without the year, for a column that already sits under one date. */
+export function formatDayMonth(iso: string, opts: { timeZone: string; locale: Locale }): string {
+  const { day, month } = dayMonth(iso, opts.timeZone, opts.locale);
+  return `${day} ${month}`;
+}
+
 /** `"05:10"` on the 24-hour clock; `"5:10 AM"` (or `"10 PM"` on the hour) on the 12-hour one. */
 export function formatTime(
   iso: string,

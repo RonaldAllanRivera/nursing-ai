@@ -81,6 +81,13 @@ const patientRoute = createRoute({
 const noteRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/notes/$noteId",
+  // `line` is the selected draft line. Its id is opaque: kept as the server wrote it.
+  validateSearch: (search: Record<string, unknown>): { line?: string } => {
+    // The router reads a number-looking value as a number; the id is the text the user wrote.
+    const line = search["line"];
+    const id = typeof line === "string" || typeof line === "number" ? String(line) : "";
+    return id === "" ? {} : { line: id };
+  },
   beforeLoad: ({ context }) => requireNurse(context.queryClient),
   component: NotePage,
 });
