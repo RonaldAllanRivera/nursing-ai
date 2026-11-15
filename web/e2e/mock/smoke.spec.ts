@@ -1,6 +1,6 @@
-// The sign-in page's fonts, axe and fit against the mock API, at 375, 768 and 1280 px (see
-// playwright.mock.config.ts). The keyboard path is in sign-in.spec.ts.
-import AxeBuilder from "@axe-core/playwright";
+// The sign-in page's fonts against the mock API, at 375, 768 and 1280 px (see
+// playwright.mock.config.ts). Its axe and fit checks are the first step of the PH flow in
+// journeys.spec.ts.
 import { expect, test } from "@playwright/test";
 
 test("loads the sign-in page with its fonts", async ({ page }) => {
@@ -26,22 +26,4 @@ test("loads the sign-in page with its fonts", async ({ page }) => {
   expect(status).toContain("Atkinson Hyperlegible Next:loaded");
   expect(status).toContain("Atkinson Hyperlegible Mono:loaded");
   for (const response of await Promise.all(loaded)) expect(response.status()).toBe(200);
-});
-
-test("has no axe violations", async ({ page }) => {
-  await page.goto("/sign-in");
-  await expect(page.getByText(/^API:/)).toHaveText("API: healthy");
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
-});
-
-test("has no sideways scroll", async ({ page }) => {
-  await page.goto("/sign-in");
-  await expect(page.getByText(/^API:/)).toHaveText("API: healthy");
-  const fits = await page.evaluate(
-    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-  );
-  expect(fits).toBe(true);
 });

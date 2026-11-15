@@ -1,38 +1,14 @@
-// The admin's Settings screen against the mock API, at 375, 768 and 1280 px.
+// The admin's Settings screen against the mock API, at 375, 768 and 1280 px. The admin path in
+// journeys.spec.ts (375 and 1280 px) walks the rename, the US shifts and the nurse's new label.
 // The mock keeps its state in the page, so every flow navigates inside the app (no reload).
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Locator, type Page } from "@playwright/test";
-
-const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
-
-async function noSidewaysScroll(page: Page) {
-  const fits = await page.evaluate(
-    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-  );
-  expect(fits).toBe(true);
-}
+import { expect, test, type Page } from "@playwright/test";
+import { ADMIN, expectNoViolations, noSidewaysScroll, signInAs, tabTo } from "./helpers.ts";
 
 async function openSettings(page: Page) {
-  await page.goto("/sign-in");
-  await page.getByRole("button", { name: "Admin · Victor Lazaro" }).click();
-  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await signInAs(page, ADMIN, "Settings");
   await expect(page.getByRole("textbox", { name: "Facility name" })).toHaveValue(
     "SYNTHETIC Demo Hospital (PH)",
   );
-}
-
-/** Tab until `target` has the focus (a keyboard user's path), failing if it never does. */
-async function tabTo(page: Page, target: Locator, limit = 80) {
-  for (let i = 0; i < limit; i++) {
-    await page.keyboard.press("Tab");
-    if (await target.evaluate((el) => el === document.activeElement)) return;
-  }
-  throw new Error("The keyboard never reached the field.");
-}
-
-async function expectNoViolations(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
-  expect(results.violations).toEqual([]);
 }
 
 test("shows the facility's settings and fits the screen", async ({ page }) => {
