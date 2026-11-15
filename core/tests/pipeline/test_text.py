@@ -134,6 +134,27 @@ def test_unicode_hyphen_continues_the_word() -> None:
     assert find_span(prepare(f"pt {HY} responsive"), "responsive") == Span(start=5, end=15)
 
 
+ACUTE = chr(0x301)  # combining acute accent
+WARNING = "⚠️"  # warning sign drawn as an emoji (variation selector 16)
+HEART = "❤️"  # red heart drawn as an emoji (variation selector 16)
+
+
+def test_combining_mark_before_a_hyphen_continues_the_word() -> None:
+    decomposed = f"cafe{ACUTE}-noir"
+    assert find_span(prepare(decomposed), f"cafe{ACUTE}") is None
+    assert find_span(prepare(decomposed), "noir") is None
+    assert find_span(prepare(decomposed), "-noir") is None
+    assert find_span(prepare(f"pt cafe{ACUTE} - noir"), f"cafe{ACUTE}") == Span(start=3, end=8)
+
+
+def test_quote_right_after_an_emoji_with_a_variation_selector_is_found() -> None:
+    note = prepare(f"{WARNING}pt had chest pain")
+    assert find_span(note, "pt had chest pain") == Span(start=2, end=19)
+    assert find_span(prepare(f"{HEART}HR 88"), "HR 88") == Span(start=2, end=7)
+    assert find_span(prepare(f"{WARNING}HR 88"), WARNING) == Span(start=0, end=2)
+    assert find_span(prepare(f"{WARNING}HR 88"), "️HR 88") == Span(start=1, end=7)
+
+
 def test_quote_starting_or_ending_with_a_hyphen_inside_a_word_is_not_found() -> None:
     assert find_span(prepare("pt non-responsive"), "-responsive") is None
     assert find_span(prepare("non-responsive"), "non-") is None

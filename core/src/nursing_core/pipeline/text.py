@@ -30,7 +30,7 @@ def prepare(raw: str) -> MatchText:
     """Normalise one code point at a time so each result character has one raw origin.
 
     Known limit: a precomposed letter ("\u00f1") and its decomposed form don't match each other.
-    Both errors are towards "not found", which is safe.
+    That error is towards "not found", which is safe.
     """
     chars: list[str] = []
     origin: list[int] = []
@@ -74,13 +74,11 @@ def _at(text: str, index: int) -> str:
 def _inside_longer_word(text: str, start: int, end: int) -> bool:
     """True when text[start:end] is only part of a word, a hyphenated word or a number.
 
-    A combining mark counts as part of its word, on both sides of the quote.
+    A combining mark on a letter is part of that letter's word in every rule here, inside the
+    quote and out, because every letter test goes through _is_letter.
     """
-    first, last = text[start], text[end - 1]
     before, after = _at(text, start - 1), _at(text, end)
-    if _is_mark(first):
-        return True
-    if _run_on(before, first) or _run_on(last, after):
+    if _run_on(text, start - 1) or _run_on(text, end - 1):
         return True
     return _cut_at_hyphen(text, start, end, before, after) or _cut_inside_decimal(
         text, start, end, before, after
@@ -89,13 +87,13 @@ def _inside_longer_word(text: str, start: int, end: int) -> bool:
 
 def _cut_at_hyphen(text: str, start: int, end: int, before: str, after: str) -> bool:
     first, last = text[start], text[end - 1]
-    if first in _HYPHENS and _is_letter(before):
+    if first in _HYPHENS and _is_letter(text, start - 1):
         return True
-    if last in _HYPHENS and _is_letter(after):
+    if last in _HYPHENS and _is_letter(text, end):
         return True
-    if first.isalpha() and before in _HYPHENS and _is_letter(_at(text, start - 2)):
+    if _is_letter(text, start) and before in _HYPHENS and _is_letter(text, start - 2):
         return True
-    return last.isalpha() and after in _HYPHENS and _is_letter(_at(text, end + 1))
+    return _is_letter(text, end - 1) and after in _HYPHENS and _is_letter(text, end + 1)
 
 
 def _cut_inside_decimal(text: str, start: int, end: int, before: str, after: str) -> bool:
@@ -113,10 +111,20 @@ def _is_mark(char: str) -> bool:
     return bool(char) and unicodedata.category(char).startswith("M")
 
 
-def _is_letter(char: str) -> bool:
-    return char.isalpha() or _is_mark(char)
+def _is_letter(text: str, index: int) -> bool:
+    """True when text[index] is a letter, or a combining mark attached to a letter.
+
+    A mark attaches to the character before its run of marks. A mark on anything else, such as
+    the variation selector that draws a symbol as an emoji, is not part of a word.
+    """
+    while _is_mark(_at(text, index)):
+        index -= 1
+    return _at(text, index).isalpha()
 
 
-def _run_on(left: str, right: str) -> bool:
-    """True when two neighbouring characters are both letters or both digits (one word/number)."""
-    return (_is_letter(left) and _is_letter(right)) or (left.isdigit() and right.isdigit())
+def _run_on(text: str, left: int) -> bool:
+    """True when text[left] and the next character are both letters or both digits."""
+    right = left + 1
+    return (_is_letter(text, left) and _is_letter(text, right)) or (
+        _at(text, left).isdigit() and _at(text, right).isdigit()
+    )
