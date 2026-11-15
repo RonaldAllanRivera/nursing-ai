@@ -6,6 +6,7 @@ import { Button } from "../components/ui/Button";
 import { roleLabel } from "../session/personas";
 import { useSession, useSignOut } from "../session/session";
 import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
+import { ShellFrame } from "./RouteScreens";
 import { ShiftControl } from "./ShiftControl";
 
 const NAV_LINK =
@@ -102,7 +103,9 @@ export function Shell() {
       </header>
       <AidLine />
       <main className="mx-auto max-w-[1280px] px-4 pt-2 pb-12 sm:px-6">
-        <Outlet />
+        <ShellFrame.Provider value={true}>
+          <Outlet />
+        </ShellFrame.Provider>
       </main>
     </>
   );

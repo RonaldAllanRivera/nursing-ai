@@ -1,3 +1,4 @@
+import { createContext, useContext, type ReactNode } from "react";
 import { Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
@@ -6,18 +7,43 @@ import { Skeleton } from "../components/ui/Skeleton";
 
 /** What the router shows when a page can't load or doesn't exist. Plain words; never the error itself. */
 
-/** A page that is still loading (the router shows it only after a short wait). */
-export function PendingScreen() {
+/** True under the signed-in shell, which already has the aid line and the page's `<main>`. */
+export const ShellFrame = createContext(false);
+
+/** The screen's content in its own frame (aid line and `<main>`), or bare inside the shell's. */
+function Frame({
+  children,
+  className,
+  busy,
+}: {
+  children: ReactNode;
+  className: string;
+  busy?: boolean;
+}) {
+  const inShell = useContext(ShellFrame);
+  const busyProps = busy ? { "aria-busy": true as const } : {};
+  if (inShell) return <div {...busyProps}>{children}</div>;
   return (
     <>
       <AidLine />
-      <main aria-busy="true" className="mx-auto grid max-w-[1280px] gap-3 px-4 pt-4 sm:px-6">
+      <main {...busyProps} className={className}>
+        {children}
+      </main>
+    </>
+  );
+}
+
+/** A page that is still loading (the router shows it only after a short wait). */
+export function PendingScreen() {
+  return (
+    <Frame busy className="mx-auto max-w-[1280px] px-4 pt-4 sm:px-6">
+      <div className="grid gap-3">
         <span className="sr-only">Loading…</span>
         <Skeleton className="h-8 w-2/3" />
         <Skeleton className="h-16" />
         <Skeleton className="h-16" />
-      </main>
-    </>
+      </div>
+    </Frame>
   );
 }
 
@@ -25,43 +51,37 @@ export function PendingScreen() {
 export function ErrorScreen({ reset }: ErrorComponentProps) {
   const router = useRouter();
   return (
-    <>
-      <AidLine />
-      <main className="mx-auto max-w-[1280px] px-4 pt-4 sm:px-6">
-        <p role="alert" className="flex items-start gap-2 font-semibold text-stop">
-          <Icon name="flag" className="mt-1" />
-          <span>Something went wrong loading this page.</span>
-        </p>
-        <p className="mt-2 text-ink-2">Check the connection, then try again.</p>
-        <Button
-          variant="primary"
-          className="mt-4"
-          onClick={() => {
-            reset();
-            void router.invalidate();
-          }}
-        >
-          Try again
-        </Button>
-      </main>
-    </>
+    <Frame className="mx-auto max-w-[1280px] px-4 pt-4 sm:px-6">
+      <p role="alert" className="flex items-start gap-2 font-semibold text-stop">
+        <Icon name="flag" className="mt-1" />
+        <span>Something went wrong loading this page.</span>
+      </p>
+      <p className="mt-2 text-ink-2">Check the connection, then try again.</p>
+      <Button
+        variant="primary"
+        className="mt-4"
+        onClick={() => {
+          reset();
+          void router.invalidate();
+        }}
+      >
+        Try again
+      </Button>
+    </Frame>
   );
 }
 
 /** An address that is not a page here (a typo, an old link). */
 export function NotFoundScreen() {
   return (
-    <>
-      <AidLine />
-      <main className="mx-auto max-w-[1280px] px-4 pt-4 sm:px-6">
-        <p className="text-18 font-bold">There's no page at this address.</p>
-        <Link
-          to="/"
-          className="mt-2 inline-flex min-h-11 items-center font-semibold text-pen underline underline-offset-4"
-        >
-          Go to the start
-        </Link>
-      </main>
-    </>
+    <Frame className="mx-auto max-w-[1280px] px-4 pt-4 sm:px-6">
+      <p className="text-18 font-bold">There's no page at this address.</p>
+      <Link
+        to="/"
+        className="mt-2 inline-flex min-h-11 items-center font-semibold text-pen underline underline-offset-4"
+      >
+        Go to the start
+      </Link>
+    </Frame>
   );
 }
