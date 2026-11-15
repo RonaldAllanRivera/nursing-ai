@@ -393,11 +393,6 @@ def test_everyday_wording_does_not_split_a_clause() -> None:
         )
 
 
-def test_a_letter_after_a_one_letter_word_and_dot_still_splits() -> None:
-    note = "Cefuroxime due c. Paracetamol given"
-    assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing
-
-
 def test_an_emoji_variation_selector_does_not_hide_a_word() -> None:
     for note in ("⚠️dizzy", "❗️nahihilo pt"):
         items = missing_items_checklist(context(allergies=[], fall_risk=LOW), [note], NOW)
@@ -412,3 +407,66 @@ def test_a_mark_on_a_letter_still_joins_the_word_either_side() -> None:
     assert missing_items_checklist(ctx, ["xécafe"], NOW)[0].missing
     assert missing_items_checklist(ctx, ["café"], NOW)[0].missing
     assert missing_items_checklist(ctx, ["cafe️ tube"], NOW)[0].missing
+
+
+def test_a_full_stop_glued_to_a_letter_ends_a_clause_unless_one_letter_precedes_it() -> None:
+    for note in (
+        "Paracetamol given...cefuroxime due",
+        "Paracetamol given..cefuroxime due",
+        "Cefuroxime due 0800.Paracetamol given",
+        "1.Cefuroxime due 2.Paracetamol given",
+        "Cefuroxime due (0800).Paracetamol given",
+        "Cefuroxime due x2.Paracetamol given",
+        "(Cefuroxime due.)Paracetamol given",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+
+
+def test_one_letter_before_a_glued_full_stop_keeps_the_clause_whole() -> None:
+    ctx = context(allergies=[], medicines=[medicine("Paracetamol", NOW - timedelta(hours=1))])
+    for note in ("Paracetamol 500mg p.o.given", "Paracetamol c.given", "Paracetamol 0.5 given"):
+        assert not missing_items_checklist(ctx, [note], NOW)[0].missing, note
+
+
+def test_a_one_letter_word_then_a_full_stop_and_a_space_still_splits() -> None:
+    note = "Cefuroxime due c. Paracetamol given"
+    assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing
+
+
+def test_an_abbreviation_before_a_capital_letter_ends_the_clause() -> None:
+    for note in (
+        "Cefuroxime due 8 a.m. Paracetamol given",
+        "Cefuroxime due p.o. Paracetamol given",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+    ctx = context(allergies=[], medicines=[medicine("Paracetamol", NOW - timedelta(hours=1))])
+    assert not missing_items_checklist(ctx, ["Paracetamol 500mg p.o. given"], NOW)[0].missing
+    assert missing_items_checklist(ctx, ["Paracetamol p.o. Given at 0900"], NOW)[0].missing
+
+
+def test_dash_runs_bars_bullets_and_arrows_end_a_clause() -> None:
+    for note in (
+        "Cefuroxime due -- Paracetamol given",
+        "Cefuroxime due \u2013\u2013 Paracetamol given",
+        "Cefuroxime due\u2014Paracetamol given",
+        "Cefuroxime due\u2013Paracetamol given",
+        "Cefuroxime due | Paracetamol given",
+        "Cefuroxime due \u2022 Paracetamol given",
+        "Cefuroxime due\u2192Paracetamol given",
+        "Cefuroxime due -> Paracetamol given",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note
+
+
+def test_an_en_dash_between_digits_is_a_range_not_a_clause_end() -> None:
+    ctx = context(allergies=[], medicines=[medicine("Paracetamol", NOW - timedelta(hours=1))])
+    assert not missing_items_checklist(ctx, ["Paracetamol 2\u20133 tabs given"], NOW)[0].missing
+
+
+def test_a_full_stop_before_a_run_of_closers_ends_a_clause() -> None:
+    for note in (
+        'Cefuroxime "due.") Paracetamol given',
+        "Cefuroxime (due\uff0e\uff09 Paracetamol given",
+        "(Cefuroxime due.\u201d) Paracetamol given",
+    ):
+        assert missing_items_checklist(one_due_medicine(), [note], NOW)[0].missing, note

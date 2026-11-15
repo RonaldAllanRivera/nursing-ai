@@ -48,16 +48,18 @@ def _find_any(note: MatchText, phrases: Iterable[str]) -> list[Span]:
 
 
 _LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
-_ALWAYS_END = frozenset(";?!:\u3002\u3001")
-_SPACED_DASHES = frozenset("-/\u2013\u2014")
+_ALWAYS_END = frozenset(";?!:\u3002\u3001\u2014\u2192")
+_SPACED = frozenset("/|\u2022")
 _CLOSERS = frozenset("\"')]\u201d\u2019")
+_EN_DASH = "\u2013"
 
 
 def _clause_ends(raw: str) -> list[int]:
     """Offsets in the typed text of the characters that end a clause, in ascending order.
 
-    A clause ends at a line break, at ; ? ! : , and their full-width forms, at an ellipsis, at
-    a dash or slash with spaces on both sides, and at a "." that ends a sentence. A "," between
+    A clause ends at a line break, at ; ? ! : , and their full-width forms, at an ellipsis, an
+    em dash, an arrow, a "." that ends a sentence, and at a dash run, slash, bar or bullet with
+    spaces on both sides. An en dash ends one unless it sits between digits. A "," between
     digits, a "." inside a number and a "." in an abbreviation such as "p.o." do not end one.
     Characters are judged after the same per-code-point folding the matcher uses.
     """
@@ -71,11 +73,27 @@ def _ends_clause(raw: str, folds: list[str], index: int) -> bool:
         return True
     if fold == ",":
         return not (_is_digit(folds, index - 1) and _is_digit(folds, index + 1))
-    if fold in _SPACED_DASHES or raw[index] in _SPACED_DASHES:
+    if raw[index] == _EN_DASH:
+        return not (_is_digit(folds, index - 1) and _is_digit(folds, index + 1))
+    if fold in _SPACED:
         return _is_space(folds, index - 1) and _is_space(folds, index + 1)
+    if fold == "-":
+        return _ends_spaced_hyphen(folds, index)
     if fold == ".":
         return _ends_sentence(raw, folds, index)
     return fold.endswith(".")
+
+
+def _ends_spaced_hyphen(folds: list[str], index: int) -> bool:
+    """A hyphen run with whitespace on both sides, or a spaced arrow " -> "."""
+    if not _is_space(folds, index - 1):
+        return False
+    after = index + 1
+    while after < len(folds) and folds[after] == "-":
+        after += 1
+    if after < len(folds) and folds[after] == ">":
+        after += 1
+    return _is_space(folds, after)
 
 
 def _is_digit(folds: list[str], index: int) -> bool:
@@ -93,21 +111,26 @@ def _is_letter(folds: list[str], index: int) -> bool:
 def _ends_sentence(raw: str, folds: list[str], index: int) -> bool:
     """Whether the "." at this offset ends a sentence rather than a number or abbreviation."""
     after = index + 1
-    if after < len(raw) and raw[after] in _CLOSERS:
+    while after < len(folds) and folds[after] in _CLOSERS:
         after += 1
-    if after >= len(raw) or _is_space(folds, after):
-        return not _ends_abbreviation(folds, index)
-    if after > index + 1 or not _is_letter(folds, after):
+    closed = after > index + 1
+    if after >= len(folds) or _is_space(folds, after):
+        if closed or not _ends_abbreviation(folds, index):
+            return True
+        return _upper_case_follows(raw, after)
+    if not _is_letter(folds, after):
         return False
-    letters = 0
-    while _is_letter(folds, index - 1 - letters):
-        letters += 1
-    return letters >= 2
+    return closed or not (_is_letter(folds, index - 1) and not _is_letter(folds, index - 2))
 
 
 def _ends_abbreviation(folds: list[str], index: int) -> bool:
-    """A single letter, itself right after a "." ("p.o."), then this ".": not a sentence end."""
+    """A single letter, itself right after a "." ("p.o."), then this ".": an abbreviation."""
     return _is_letter(folds, index - 1) and index >= 2 and folds[index - 2] == "."
+
+
+def _upper_case_follows(raw: str, index: int) -> bool:
+    rest = raw[index:].lstrip()
+    return rest[:1].isupper()
 
 
 def _clause_number(ends: list[int], offset: int) -> int:
