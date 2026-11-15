@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
@@ -161,7 +161,10 @@ describe("acting on a line", () => {
     await userEvent.click(card().getByRole("button", { name: "Cancel" }));
     expect(card().queryByRole("textbox")).toBeNull();
     expect(line(FOCUS)).toHaveTextContent("AI wording — check");
-    expect(card().getByRole("button", { name: "Edit line" })).toHaveFocus();
+    // The focus is put back on the next frame.
+    await waitFor(() => {
+      expect(card().getByRole("button", { name: "Edit line" })).toHaveFocus();
+    });
   });
 
   it("will not save an empty line, and says what to do", async () => {
@@ -231,7 +234,7 @@ describe("acting on a line", () => {
     );
     await userEvent.click(line(FOCUS));
     await userEvent.click(card().getByRole("button", { name: "Wording is right" }));
-    expect(await card().findByText("This note is signed and locked.")).toBeVisible();
+    expect(await card().findByText("This note is locked.")).toBeVisible();
     expect(card().getByRole("button", { name: "Reload note" })).toBeVisible();
   });
 
@@ -383,6 +386,260 @@ describe("signing", () => {
       ),
     ).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Reload note" })).toBeVisible();
+  });
+});
+
+const problem = (status: number, code: string, extra: object = {}) =>
+  HttpResponse.json(
+    { type: "about:blank", title: "Refused", status, code, ...extra },
+    { status, headers: { "Content-Type": "application/problem+json" } },
+  );
+
+describe("the dialogs open on the safe choice", () => {
+  it("puts the focus on Cancel in the sign dialog", async () => {
+    await openChanged(resolveAll);
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    });
+  });
+
+  it("puts the focus on Keep draft in the discard dialog", async () => {
+    await openNote();
+    await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Keep draft" })).toHaveFocus();
+    });
+  });
+});
+
+describe("while a write is under way", () => {
+  it("keeps the sign dialog open: Escape and Cancel wait, and the note is signed", async () => {
+    await openChanged(resolveAll);
+    server.use(
+      http.post("*/api/v1/notes/:id/sign", async () => {
+        await delay(250);
+        return HttpResponse.json(signedNote(), { headers: { ETag: '"v2"' } });
+      }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    expect(await within(dialog).findByRole("button", { name: "Signing…" })).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    expect(cancel).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(cancel);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(await screen.findByText(/^Signed by you at/)).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("will not take Cancel in the edit box while the line saves, and says why", async () => {
+    await openNote();
+    server.use(
+      http.patch("*/api/v1/notes/:id/lines/:lineId", async () => {
+        await delay(250);
+        return HttpResponse.json(demoNote(NOTE_1), { headers: { ETag: '"v2"' } });
+      }),
+    );
+    await userEvent.click(line(FOCUS));
+    await userEvent.click(card().getByRole("button", { name: "Edit line" }));
+    await userEvent.click(card().getByRole("button", { name: "Save line" }));
+    const saving = await card().findByRole("button", { name: "Saving…" });
+    expect(saving).toBeVisible();
+    const cancel = card().getByRole("button", { name: "Cancel" });
+    expect(cancel).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(cancel);
+    expect(card().getByRole("textbox", { name: "Edit line" })).toBeVisible();
+    await said("Line saved.");
+  });
+
+  it("does not open the edit box while a change is saving", async () => {
+    await openNote();
+    server.use(
+      http.patch("*/api/v1/notes/:id/lines/:lineId", async () => {
+        await delay(250);
+        return HttpResponse.json(demoNote(NOTE_1), { headers: { ETag: '"v2"' } });
+      }),
+    );
+    await userEvent.click(line(FOCUS));
+    await userEvent.click(card().getByRole("button", { name: "Wording is right" }));
+    await userEvent.click(card().getByRole("button", { name: "Edit line" }));
+    expect(card().queryByRole("textbox")).toBeNull();
+    await said("Wording confirmed.");
+  });
+
+  it("keeps a write's answer when a slower refetch was already under way", async () => {
+    const app = await openNote();
+    server.use(
+      http.get("*/api/v1/notes/:id", async () => {
+        await delay(200);
+        return HttpResponse.json(demoNote(NOTE_1), { headers: { ETag: '"v1"' } });
+      }),
+    );
+    void app.queryClient.refetchQueries({ queryKey: ["note", NOTE_1] });
+    await userEvent.click(line(FOCUS));
+    await userEvent.click(card().getByRole("button", { name: "Wording is right" }));
+    await said("Wording confirmed.");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(line(FOCUS)).toHaveTextContent("Checked by you");
+    expect(app.queryClient.getQueryData<{ etag: string }>(["note", NOTE_1])?.etag).toBe('"v2"');
+  });
+});
+
+function signedNote(): Note {
+  const me = Object.values(demoApi.sessions).find((s) => s.display_name === "Sarah Navarro, RN");
+  return {
+    ...resolveAll(demoNote(NOTE_1)),
+    status: "signed",
+    version: 2,
+    signature: {
+      signed_by: me?.user_id ?? "",
+      signed_at: "2026-11-11T21:42:00Z",
+      content_hash: "0123456789abcdef".repeat(4),
+    },
+  };
+}
+
+describe("after a sign or a discard", () => {
+  it("puts the focus on the lock after signing", async () => {
+    await openChanged(resolveAll);
+    server.use(
+      http.post("*/api/v1/notes/:id/sign", () =>
+        HttpResponse.json(signedNote(), { headers: { ETag: '"v2"' } }),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    const lock = (await screen.findByText(/^Signed by you at/)).closest(".signed");
+    await waitFor(() => {
+      expect(lock).toHaveFocus();
+    });
+  });
+
+  it("puts the focus on the answer line after discarding, without a second announcement", async () => {
+    await openNote();
+    await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Discard draft" }));
+    const answer = await screen.findByText("Discarded. This draft won't reach the record.");
+    await waitFor(() => {
+      expect(answer).toHaveFocus();
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("says in the discard dialog that the note changed, and offers Reload note", async () => {
+    await openNote();
+    server.use(http.post("*/api/v1/notes/:id/discard", () => problem(412, "stale_version")));
+    await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Discard draft" }));
+    expect(
+      await within(dialog).findByText(
+        "This note changed somewhere else. Reload to see the latest version.",
+      ),
+    ).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Reload note" })).toBeVisible();
+  });
+
+  it("says in the discard dialog that the note is locked", async () => {
+    await openNote();
+    server.use(http.post("*/api/v1/notes/:id/discard", () => problem(409, "note_locked")));
+    await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Discard draft" }));
+    expect(await within(dialog).findByText("This note is locked.")).toBeVisible();
+    expect(within(dialog).getByText("Reload to see it.")).toBeVisible();
+  });
+
+  it("keeps the sign dialog open, with words, when review_incomplete lists no line", async () => {
+    await openChanged(resolveAll);
+    server.use(
+      http.post("*/api/v1/notes/:id/sign", () =>
+        problem(409, "review_incomplete", { line_ids: [] }),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Some lines still need a check. Cancel, then look at each flagged line.",
+    );
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+});
+
+describe("a line with two differing numbers", () => {
+  it("offers one button for both numbers and sends one edit", async () => {
+    const text = "At 0330, HR 121 bpm, temperature 37.8 °F.";
+    const at = (words: string) => {
+      const start = Array.from(text.slice(0, text.indexOf(words))).length;
+      return { start, end: start + Array.from(words).length };
+    };
+    await openChanged((note) => {
+      const d1 = linesInOrder(note.draft).find((l) => l.id === "e1-D1");
+      if (!d1) throw new Error("no D1");
+      d1.text = text;
+      d1.status = "number_mismatch";
+      d1.number_mismatches = [
+        {
+          kind: "value",
+          draft_text: "121",
+          draft_span: at("121"),
+          note_text: "112",
+          note_span: null,
+        },
+        {
+          kind: "unit",
+          draft_text: "37.8 °F",
+          draft_span: at("37.8 °F"),
+          note_text: "37.8",
+          note_span: null,
+        },
+      ];
+      return note;
+    });
+    const bodies: unknown[] = [];
+    server.use(
+      http.patch("*/api/v1/notes/:id/lines/:lineId", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(demoNote(NOTE_1), { headers: { ETag: '"v2"' } });
+      }),
+    );
+    await userEvent.click(line(/^At 0330, HR 121/));
+    expect(card().queryByRole("button", { name: /^Use 112 from/ })).toBeNull();
+    await userEvent.click(card().getByRole("button", { name: "Use the numbers from your note" }));
+    await said("Changed to 112 and 37.8.");
+    expect(bodies).toEqual([{ action: "edit", text: "At 0330, HR 112 bpm, temperature 37.8." }]);
+  });
+});
+
+describe("Escape in the edit box on a small screen", () => {
+  it("does not close the drawer or drop the typed text", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+    const app = await openNote();
+    await userEvent.click(line(FOCUS));
+    await userEvent.click(card().getByRole("button", { name: "Edit line" }));
+    await userEvent.type(card().getByRole("textbox", { name: "Edit line" }), " more");
+    await userEvent.keyboard("{Escape}");
+    expect(app.router.state.location.search).toEqual({ line: "e1-F" });
+    expect(card().getByRole("textbox", { name: "Edit line" })).toHaveValue(
+      "Dizziness with low blood pressure more",
+    );
   });
 });
 

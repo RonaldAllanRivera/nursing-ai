@@ -41,6 +41,8 @@ export function useActOnLine(noteId: string) {
       });
       return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
     },
+    // A refetch already under way would answer with the version from before this write.
+    onMutate: () => queryClient.cancelQueries({ queryKey: entryKey(noteId) }),
     onSuccess: ({ note, etag }) => {
       keepAnswer(queryClient, noteId, note, etag);
     },
@@ -64,6 +66,7 @@ export function useFinishNote(noteId: string, how: "sign" | "discard") {
           : await api.POST("/api/v1/notes/{note_id}/discard", params);
       return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
     },
+    onMutate: () => queryClient.cancelQueries({ queryKey: entryKey(noteId) }),
     onSuccess: ({ note, etag }) => {
       keepAnswer(queryClient, noteId, note, etag);
       void queryClient.invalidateQueries({ queryKey: ["patient"] });

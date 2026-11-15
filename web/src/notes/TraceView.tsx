@@ -141,7 +141,11 @@ export function TraceView({
 
   // Escape closes the drawer (small screens only: on a wide one the card is always there).
   const onEscape = useEffectEvent((event: KeyboardEvent) => {
-    if (event.key === "Escape") close();
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    // A dialog took this Escape (it prevents the default), and Escape in the edit box must not
+    // close the drawer and lose what she typed.
+    if (event.target instanceof Element && event.target.closest("textarea")) return;
+    close();
   });
   useEffect(() => {
     if (!open) return;
@@ -305,7 +309,7 @@ export function TraceView({
         signerName={me.name}
         missing={note.checklist.filter((item) => item.missing).map((item) => item.subject)}
         onSigned={() => {
-          announce("Note signed and locked.");
+          // The answer line is live and the focus moves to the lock: no third announcement.
           afterDialog.current = () => lock.current?.focus();
         }}
         onIncomplete={(ids) => {
@@ -324,7 +328,6 @@ export function TraceView({
         open={discarding}
         onOpenChange={setDiscarding}
         onDiscarded={() => {
-          announce("Draft discarded.");
           afterDialog.current = () => answerLine.current?.focus();
         }}
       />

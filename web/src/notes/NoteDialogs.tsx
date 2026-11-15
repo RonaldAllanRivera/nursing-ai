@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
-import { WriteProblem } from "./LineActions";
+import { WriteProblem } from "./WriteProblem";
 import { failureOf, useFinishNote } from "./writes";
 
 interface Shared {
@@ -13,7 +13,7 @@ interface Shared {
   onCloseAutoFocus: (event: Event) => void;
 }
 
-/** The two buttons: the confirming one first and firm, the way out second. */
+/** The two buttons: the confirming one first and firm, the way out second (and where the focus starts). */
 function Choice({
   yes,
   yesBusy,
@@ -22,6 +22,7 @@ function Choice({
   onYes,
   onNo,
   primary,
+  safe,
 }: {
   yes: string;
   yesBusy: string;
@@ -30,6 +31,7 @@ function Choice({
   onYes: () => void;
   onNo: () => void;
   primary: boolean;
+  safe: RefObject<HTMLButtonElement | null>;
 }) {
   return (
     <div className="actions">
@@ -43,27 +45,54 @@ function Choice({
       >
         {busy ? yesBusy : yes}
       </button>
-      <button type="button" className="btn" onClick={onNo}>
+      {/* While the write is under way the way out waits: the other button's "…ing" is the reason. */}
+      <button
+        type="button"
+        ref={safe}
+        className="btn"
+        aria-disabled={busy || undefined}
+        onClick={() => {
+          if (!busy) onNo();
+        }}
+      >
         {no}
       </button>
     </div>
   );
 }
 
+/**
+ * The panel. It opens with the focus on the safe choice (an Enter held down on the opener must
+ * not go on to sign or discard), and can't be dismissed while the write is under way.
+ */
 function Panel({
   shared,
   title,
+  busy,
+  safe,
   children,
 }: {
   shared: Shared;
   title: string;
+  busy: boolean;
+  safe: RefObject<HTMLButtonElement | null>;
   children: ReactNode;
 }) {
+  const hold = (event: Event) => {
+    if (busy) event.preventDefault();
+  };
   return (
     <DialogContent
       container={shared.container}
       className="note-dialog"
+      onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        safe.current?.focus();
+      }}
       onCloseAutoFocus={shared.onCloseAutoFocus}
+      onEscapeKeyDown={hold}
+      onPointerDownOutside={hold}
+      onInteractOutside={hold}
     >
       <DialogTitle>{title}</DialogTitle>
       {children}
@@ -89,13 +118,15 @@ export function SignDialog({
   onIncomplete: (lineIds: string[]) => void;
 }) {
   const sign = useFinishNote(shared.noteId, "sign");
+  const safe = useRef<HTMLButtonElement>(null);
   const close = (open: boolean) => {
+    if (!open && sign.isPending) return;
     if (!open) sign.reset();
     shared.onOpenChange(open);
   };
   return (
     <Dialog open={shared.open} onOpenChange={close}>
-      <Panel shared={{ ...shared, onOpenChange: close }} title={`Sign this ${format} note`}>
+      <Panel shared={shared} title={`Sign this ${format} note`} busy={sign.isPending} safe={safe}>
         <DialogDescription>
           {`You're signing as ${signerName}. After you sign, the note is locked.`}
         </DialogDescription>
@@ -117,6 +148,7 @@ export function SignDialog({
         ) : null}
         <Choice
           primary
+          safe={safe}
           yes="Sign note"
           yesBusy="Signing…"
           no="Cancel"
@@ -132,7 +164,8 @@ export function SignDialog({
               },
               onError: (error) => {
                 const failure = failureOf(error);
-                if (failure.kind === "incomplete") {
+                // With no line to go to, the dialog stays and says what to do.
+                if (failure.kind === "incomplete" && failure.lineIds.length > 0) {
                   onIncomplete(failure.lineIds);
                   close(false);
                 }
@@ -153,13 +186,15 @@ export function DiscardDialog({
   onDiscarded: () => void;
 }) {
   const discard = useFinishNote(shared.noteId, "discard");
+  const safe = useRef<HTMLButtonElement>(null);
   const close = (open: boolean) => {
+    if (!open && discard.isPending) return;
     if (!open) discard.reset();
     shared.onOpenChange(open);
   };
   return (
     <Dialog open={shared.open} onOpenChange={close}>
-      <Panel shared={{ ...shared, onOpenChange: close }} title="Discard this draft?">
+      <Panel shared={shared} title="Discard this draft?" busy={discard.isPending} safe={safe}>
         <DialogDescription>
           It won&apos;t reach the record. Your typed note stays saved.
         </DialogDescription>
@@ -174,6 +209,7 @@ export function DiscardDialog({
         ) : null}
         <Choice
           primary={false}
+          safe={safe}
           yes="Discard draft"
           yesBusy="Discarding…"
           no="Keep draft"

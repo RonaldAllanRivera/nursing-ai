@@ -1,63 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
-import { failureOf, useActOnLine, useReloadNote, type LineBody } from "./writes";
 import { actionsFor, type DraftLine, type LineAction } from "./trace";
+import { WriteProblem } from "./WriteProblem";
+import { useActOnLine, type LineBody } from "./writes";
 
 const MAX_LINE = 500;
 
-/** Why a write was refused, and what to do next. A stale or locked note offers Reload note. */
-export function WriteProblem({
-  error,
-  withText = false,
-  noteId,
-  onReloaded,
-}: {
-  error: unknown;
-  /** The nurse has typed something that is still on screen. */
-  withText?: boolean;
-  noteId: string;
-  onReloaded: () => void;
-}) {
-  const reload = useReloadNote(noteId);
-  const [reloading, setReloading] = useState(false);
-  const failure = failureOf(error);
-  const needsReload = failure.kind === "stale" || failure.kind === "locked";
-  return (
-    <div role="alert" className="write-problem">
-      <p>
-        <Icon name="flag" />
-        {failure.kind === "stale" ? (
-          <span>
-            {withText
-              ? "This note changed somewhere else. Reload to see the latest version. Your text is still here."
-              : "This note changed somewhere else. Reload to see the latest version."}
-          </span>
-        ) : failure.kind === "locked" ? (
-          <>
-            <span>This note is signed and locked.</span> <span>Reload to see it.</span>
-          </>
-        ) : (
-          <span>That change was not saved. Check your connection and try again.</span>
-        )}
-      </p>
-      {needsReload ? (
-        <button
-          type="button"
-          className="btn"
-          aria-disabled={reloading || undefined}
-          onClick={() => {
-            if (reloading) return;
-            setReloading(true);
-            void reload(onReloaded).finally(() => {
-              setReloading(false);
-            });
-          }}
-        >
-          {reloading ? "Reloading…" : "Reload note"}
-        </button>
-      ) : null}
-    </div>
-  );
+/** "112", "112 and 37.8", "112, 37.8 and 5". */
+function listed(items: string[]): string {
+  const last = items.at(-1) ?? "";
+  return items.length < 2 ? last : `${items.slice(0, -1).join(", ")} and ${last}`;
 }
 
 function label(action: LineAction): string {
@@ -66,6 +18,8 @@ function label(action: LineAction): string {
       return "Wording is right";
     case "use":
       return `Use ${action.replacement} from your note`;
+    case "useAll":
+      return "Use the numbers from your note";
     case "remove":
       return "Remove line";
     case "edit":
@@ -77,13 +31,14 @@ function label(action: LineAction): string {
   }
 }
 
-const FIRM: LineAction["kind"][] = ["confirm", "use", "remove", "putBack"];
+const FIRM: LineAction["kind"][] = ["confirm", "use", "useAll", "remove", "putBack"];
 
 function bodyOf(action: LineAction): LineBody | undefined {
   switch (action.kind) {
     case "confirm":
       return { action: "confirm" };
     case "use":
+    case "useAll":
       return { action: "edit", text: action.text };
     case "remove":
       return { action: "remove" };
@@ -101,6 +56,8 @@ function saidFor(action: LineAction): string {
       return "Wording confirmed.";
     case "use":
       return `Changed to ${action.replacement}.`;
+    case "useAll":
+      return `Changed to ${listed(action.replacements)}.`;
     case "remove":
       return "Line removed.";
     case "undo":
@@ -159,6 +116,7 @@ export function LineActions({
   };
 
   const save = () => {
+    if (busy) return;
     const trimmed = text.trim();
     const length = Array.from(trimmed).length;
     if (length === 0) {
@@ -217,12 +175,15 @@ export function LineActions({
             aria-disabled={busy || undefined}
             onClick={save}
           >
-            Save line
+            {busy ? "Saving…" : "Save line"}
           </button>
+          {/* While the line saves, the way out waits: "Saving…" is the reason. */}
           <button
             type="button"
             className="btn"
+            aria-disabled={busy || undefined}
             onClick={() => {
+              if (busy) return;
               act.reset();
               setInvalid(null);
               setEditing(false);
@@ -233,7 +194,6 @@ export function LineActions({
             Cancel
           </button>
         </div>
-        {busy ? <span className="sr-only">Saving…</span> : null}
       </div>
     );
   }
@@ -249,6 +209,7 @@ export function LineActions({
             className={FIRM.includes(action.kind) ? "btn btn-firm" : "btn"}
             aria-disabled={busy || undefined}
             onClick={() => {
+              if (busy) return;
               const body = bodyOf(action);
               if (!body) {
                 setText(line.text);

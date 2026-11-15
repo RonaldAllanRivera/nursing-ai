@@ -339,6 +339,13 @@ describe("writes to a note: line actions, sign and discard", () => {
     expect(original.text).toBe(original.ai_text);
   });
 
+  it("leaves the status of an edited line that never had a mismatch as it was", async () => {
+    await start();
+    const edited = await act("e1-F", { action: "edit", text: "Dizzy, low BP" });
+    const line = lineOf(edited.data, "e1-F");
+    expect([line.review, line.status]).toEqual(["edited", "summary"]);
+  });
+
   it("keeps the mismatch when an edit leaves the draft's number where it was", async () => {
     await start();
     const kept = await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 121 bpm, weak." });
@@ -388,6 +395,88 @@ describe("writes to a note: line actions, sign and discard", () => {
     expect(done.response.headers.get("ETag")).toBe('"v2"');
     const read = await api.GET("/api/v1/notes/{note_id}", { params: { path: { note_id: NOTE } } });
     expect(read.data?.status).toBe("discarded");
+  });
+
+  it("shows a signed note as signed on the patient's list for the shift", async () => {
+    await start();
+    const patient = firstPatient("ph-demo");
+    await api.POST("/api/v1/patients/{patient_id}/rough-notes", {
+      params: { path: { patient_id: patient.id }, header: { "Idempotency-Key": "k-sign" } },
+      body: { text: "pt c/o hilo since 2am, BP 90/60 HR 112" },
+    });
+    const listed = async () =>
+      (
+        await api.GET("/api/v1/patients/{patient_id}", {
+          params: { path: { patient_id: patient.id } },
+        })
+      ).data?.notes.map((n) => n.note_status);
+    await act("e1-F", { action: "confirm" });
+    await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 112 bpm." }, '"v2"');
+    await act("e1-A2", { action: "remove" }, '"v3"');
+    await sign('"v4"');
+    expect(await listed()).toEqual(["signed"]);
+  });
+
+  describe("the check an edit gets, on a line with two differing numbers", () => {
+    const TEXT = "At 0330, HR 121 bpm, temperature 37.8 °F.";
+    const span = (words: string) => {
+      const start = Array.from(TEXT.slice(0, TEXT.indexOf(words))).length;
+      return { start, end: start + Array.from(words).length };
+    };
+
+    async function startWithTwo() {
+      const source = structuredClone(demoApi);
+      const line = source.notes[NOTE]?.draft.entries[0]?.data[0];
+      if (!line) throw new Error("no D1");
+      line.text = TEXT;
+      line.ai_text = TEXT;
+      line.status = "number_mismatch";
+      line.number_mismatches = [
+        {
+          kind: "value",
+          draft_text: "121",
+          draft_span: span("121"),
+          note_text: "112",
+          note_span: null,
+        },
+        {
+          kind: "unit",
+          draft_text: "37.8 °F",
+          draft_span: span("37.8 °F"),
+          note_text: "37.8",
+          note_span: null,
+        },
+      ];
+      server.use(...createHandlers(source));
+      await signIn("staff_nurse", "ph-demo");
+    }
+
+    it("keeps the other difference, at its new place, when one number is fixed", async () => {
+      await startWithTwo();
+      const edited = await act("e1-D1", {
+        action: "edit",
+        text: "At 0330, HR 112 bpm, temperature 37.8 °F.",
+      });
+      const line = lineOf(edited.data, "e1-D1");
+      expect(line.review).toBe("edited");
+      expect(line.status).toBe("number_mismatch");
+      expect(line.number_mismatches.map((m) => m.draft_text)).toEqual(["37.8 °F"]);
+      // The text got shorter by nothing here, so also check a length change below.
+      const shorter = await act(
+        "e1-D1",
+        { action: "edit", text: "HR 12, temperature 37.8 °F." },
+        '"v2"',
+      );
+      const moved = lineOf(shorter.data, "e1-D1").number_mismatches[0];
+      expect(moved?.draft_span).toEqual({ start: 19, end: 26 });
+    });
+
+    it("clears the mismatches and finds the source once none of them is left", async () => {
+      await startWithTwo();
+      const edited = await act("e1-D1", { action: "edit", text: "At 0330, HR 112, temp 37.8." });
+      const line = lineOf(edited.data, "e1-D1");
+      expect([line.status, line.number_mismatches]).toEqual(["source_found", []]);
+    });
   });
 
   it("answers an unknown note with 404, and leaves other notes alone", async () => {

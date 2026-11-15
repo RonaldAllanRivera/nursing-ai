@@ -435,20 +435,40 @@ describe("what a selected line lights up", () => {
 describe("the differing number's mark follows the review", () => {
   const confirmed = (id: string): Line => ({ ...demoLine(id), review: "confirmed" });
 
-  it("marks it only while the line's review is pending", () => {
-    const pending = demoLine("e1-D2");
-    expect(noteMarks(pending).some((m) => m.kind === "bad")).toBe(true);
-    for (const review of ["confirmed", "edited"] as const) {
-      const resolved = { ...pending, review };
-      expect(noteMarks(resolved).some((m) => m.kind === "bad")).toBe(false);
-      expect(
-        lineSegments(resolved)
-          .flatMap((s) => s.parts)
-          .some((p) => p.bad),
-      ).toBe(false);
-      const [quote] = quoteSegments(resolved, DEMO_1.rough_note.text);
-      expect((quote?.segments ?? []).flatMap((s) => s.parts).some((p) => p.bad)).toBe(false);
+  const marked = (l: Line) => ({
+    inNote: noteMarks(l).some((m) => m.kind === "bad"),
+    inLine: lineSegments(l)
+      .flatMap((s) => s.parts)
+      .some((p) => p.bad),
+    inCard: (quoteSegments(l, DEMO_1.rough_note.text)[0]?.segments ?? [])
+      .flatMap((s) => s.parts)
+      .some((p) => p.bad),
+  });
+
+  it("marks it while the line is pending", () => {
+    expect(marked(demoLine("e1-D2"))).toEqual({ inNote: true, inLine: true, inCard: true });
+  });
+
+  it("hides it once the line is confirmed or removed", () => {
+    for (const review of ["confirmed", "removed"] as const) {
+      const resolved = { ...demoLine("e1-D2"), review };
+      expect(marked(resolved)).toEqual({ inNote: false, inLine: false, inCard: false });
     }
+  });
+
+  it("keeps it on an edited line the re-check still found a difference in", () => {
+    const edited = { ...demoLine("e1-D2"), review: "edited" as const };
+    expect(marked(edited)).toEqual({ inNote: true, inLine: true, inCard: true });
+  });
+
+  it("hides it on an edited line whose status is no longer a number difference", () => {
+    const fixed = {
+      ...demoLine("e1-D2"),
+      review: "edited" as const,
+      status: "source_found" as const,
+      number_mismatches: [],
+    };
+    expect(marked(fixed)).toEqual({ inNote: false, inLine: false, inCard: false });
   });
 
   it("still lights up the quotes of a resolved line", () => {
@@ -490,6 +510,50 @@ describe("actionsFor", () => {
     const use = actions[0];
     expect(use?.kind === "use" && use.replacement).toBe("112");
     expect(use?.kind === "use" && use.text).toBe(demoLine("e1-D2").text.replace("121", "112"));
+  });
+
+  describe("a line with two differing numbers", () => {
+    const text = "At 0330, HR 121 bpm, temperature 37.8 °F.";
+    const at = (words: string) => {
+      const start = Array.from(text.slice(0, text.indexOf(words))).length;
+      return { start, end: start + Array.from(words).length };
+    };
+    const two = (second: string | null): Line =>
+      line({
+        text,
+        status: "number_mismatch",
+        number_mismatches: [
+          {
+            kind: "value",
+            draft_text: "121",
+            draft_span: at("121"),
+            note_text: "112",
+            note_span: null,
+          },
+          {
+            kind: "unit",
+            draft_text: "37.8 °F",
+            draft_span: at("37.8 °F"),
+            note_text: second,
+            note_span: null,
+          },
+        ],
+      });
+
+    it("offers one action that uses every number from the note, right to left, in one edit", () => {
+      const actions = actionsFor(two("37.8"));
+      expect(actions.map((a) => a.kind)).toEqual(["useAll", "edit"]);
+      const all = actions[0];
+      expect(all?.kind === "useAll" && all.replacements).toEqual(["112", "37.8"]);
+      expect(all?.kind === "useAll" && all.text).toBe("At 0330, HR 112 bpm, temperature 37.8.");
+    });
+
+    it("keeps one Use button when only one mismatch has a number in the note", () => {
+      const actions = actionsFor(two(null));
+      expect(actions.map((a) => a.kind)).toEqual(["use", "edit"]);
+      const use = actions[0];
+      expect(use?.kind === "use" && use.replacement).toBe("112");
+    });
   });
 
   it("offers no number when the note has none to match", () => {

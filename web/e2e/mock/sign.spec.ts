@@ -120,6 +120,8 @@ test("does it all by keyboard: Tab to a line, Enter, Tab to the action, then sig
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Sign this FDAR note" });
   await expect(dialog).toBeVisible();
+  // It opens on the safe choice: a held Enter on Sign note can't go on to sign.
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(sign).toBeFocused();
@@ -146,6 +148,7 @@ test("asks before it discards, and the discarded note has no actions", async ({ 
   ).toBeVisible();
   const open = await new AxeBuilder({ page }).withTags(TAGS).analyze();
   expect(open.violations).toEqual([]);
+  await expect(dialog.getByRole("button", { name: "Keep draft" })).toBeFocused();
   await dialog.getByRole("button", { name: "Keep draft" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("3 lines need you before you sign.")).toBeVisible();

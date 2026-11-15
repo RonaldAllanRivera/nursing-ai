@@ -1,11 +1,23 @@
 import { http, HttpResponse, type HttpHandler } from "msw";
 import type { components } from "../api/schema";
 import { demoApi } from "./demo-api";
-import { linesInOrder, needsReview, wordsAt } from "../notes/trace";
 import type { DemoApi } from "./types";
 
 type Schemas = components["schemas"];
 type ProblemCode = Schemas["Problem"]["code"];
+type Line = Schemas["DraftLine"];
+
+// The mock keeps its own copies of the server's rules, so the web's code can't agree with itself.
+
+/** Every line, in the order of the draft: each entry's focus, then its D, A and R lines. */
+function linesInOrder(draft: Schemas["FdarDraft"]): Line[] {
+  return draft.entries.flatMap((e) => [e.focus, ...e.data, ...e.action, ...e.response]);
+}
+
+/** Core's rule: a line needs review while it is pending and its source was not found. */
+function needsReview(line: Line): boolean {
+  return line.review === "pending" && line.status !== "source_found";
+}
 
 /** The mock's stand-in for the server's SHA-256 of the signed text. */
 const FIXED_HASH = "9f2c7a41d83be5106a7c4de2f0b19853c6e7a2d4b8f01c93e5a6d7084b2c1f3e";
@@ -20,13 +32,19 @@ const TITLES: Record<number, string> = {
   428: "A required header is missing",
 };
 
-function problem(status: number, code: ProblemCode, errors?: Schemas["FieldError"][]) {
+function problem(
+  status: number,
+  code: ProblemCode,
+  errors?: Schemas["FieldError"][],
+  lineIds?: string[],
+) {
   const body: Schemas["Problem"] = {
     type: "about:blank",
     title: TITLES[status] ?? "Error",
     status,
     code,
     ...(errors ? { errors } : {}),
+    ...(lineIds ? { line_ids: lineIds } : {}),
   };
   return HttpResponse.json(body, {
     status,
@@ -74,6 +92,15 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
   function original(noteId: string, lineId: string) {
     const note = source.notes[noteId];
     return note ? linesInOrder(note.draft).find((l) => l.id === lineId) : undefined;
+  }
+
+  /** The patient page's list for the shift shows the note as signed or discarded. */
+  function setShiftNoteStatus(note: Schemas["NoteOut"], status: "signed" | "discarded") {
+    for (const detail of Object.values(data.patientDetails)) {
+      for (const entry of detail.notes) {
+        if (entry.rough_note_id === note.rough_note_id) entry.note_status = status;
+      }
+    }
   }
 
   /** A write went through: one version on, and the new ETag with the note. */
@@ -265,13 +292,18 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
             }
             line.text = body.text.trim();
             line.review = "edited";
-            // Checked again: a line whose differing numbers are gone is found in the note.
-            const stillThere = line.number_mismatches.some(
-              (m) => wordsAt(line.text, m.draft_span) === m.draft_text,
-            );
-            if (!stillThere) {
-              line.number_mismatches = [];
-              line.status = "source_found";
+            // Checked again, only for a line that had differing numbers: one is fixed when its
+            // words no longer occur in the new text; the others stay, at their new places.
+            if (line.number_mismatches.length > 0) {
+              const text = line.text;
+              line.number_mismatches = line.number_mismatches.flatMap((m) => {
+                const at = text.indexOf(m.draft_text);
+                if (at < 0) return [];
+                const start = Array.from(text.slice(0, at)).length;
+                const end = start + Array.from(m.draft_text).length;
+                return [{ ...m, draft_span: { start, end } }];
+              });
+              if (line.number_mismatches.length === 0) line.status = "source_found";
             }
             break;
           }
@@ -296,15 +328,11 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       const { note, user } = gate;
       const open = linesInOrder(note.draft).filter(needsReview);
       if (open.length > 0) {
-        return HttpResponse.json(
-          {
-            type: "about:blank",
-            title: "Some lines still need review",
-            status: 409,
-            code: "review_incomplete",
-            line_ids: open.map((l) => l.id),
-          } satisfies Schemas["Problem"],
-          { status: 409, headers: { "Content-Type": "application/problem+json" } },
+        return problem(
+          409,
+          "review_incomplete",
+          undefined,
+          open.map((l) => l.id),
         );
       }
       note.status = "signed";
@@ -313,6 +341,7 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
         signed_at: new Date().toISOString(),
         content_hash: FIXED_HASH,
       };
+      setShiftNoteStatus(note, "signed");
       return saved(note);
     }),
 
@@ -322,11 +351,7 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       const { note, user } = gate;
       note.status = "discarded";
       note.discard = { discarded_at: new Date().toISOString(), discarded_by: user };
-      for (const detail of Object.values(data.patientDetails)) {
-        for (const entry of detail.notes) {
-          if (entry.rough_note_id === note.rough_note_id) entry.note_status = "discarded";
-        }
-      }
+      setShiftNoteStatus(note, "discarded");
       return saved(note);
     }),
   ];

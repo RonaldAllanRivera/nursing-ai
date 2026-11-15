@@ -117,9 +117,15 @@ export function replaceAtSpan(text: string, span: Span, replacement: string): st
   return [...chars.slice(0, start), replacement, ...chars.slice(end)].join("");
 }
 
-/** The differing number is marked only until the nurse has dealt with the line (the mockup's `!resolved`). */
+/**
+ * The differing number is marked while the line is pending, or while it is edited and the re-check
+ * still found a difference (an edit that fixed one of two numbers must not hide the other). It is
+ * not marked once she confirmed or removed the line, or the code no longer finds a difference.
+ */
 function showsDifference(line: DraftLine): boolean {
-  return line.status === "number_mismatch" && line.review === "pending";
+  return (
+    line.status === "number_mismatch" && (line.review === "pending" || line.review === "edited")
+  );
 }
 
 /** What a selected line lights up in the nurse's note: its quotes, and the number that differs. */
@@ -293,7 +299,9 @@ export type LineAction =
   | { kind: "undo" }
   | { kind: "putBack" }
   /** `replacement` is the note's number; `text` is the line with it in place of the draft's. */
-  | { kind: "use"; replacement: string; text: string };
+  | { kind: "use"; replacement: string; text: string }
+  /** Two or more differing numbers: every replacement in one edit, `replacements` left to right. */
+  | { kind: "useAll"; replacements: string[]; text: string };
 
 /** The buttons the trace card shows for a line, the one that settles it first. */
 export function actionsFor(line: DraftLine): LineAction[] {
@@ -310,18 +318,25 @@ export function actionsFor(line: DraftLine): LineAction[] {
     case "summary":
       return [{ kind: "confirm" }, { kind: "edit" }];
     case "number_mismatch": {
-      const uses = line.number_mismatches.flatMap((m): LineAction[] =>
-        m.note_text === null
-          ? []
-          : [
-              {
-                kind: "use",
-                replacement: m.note_text,
-                text: replaceAtSpan(line.text, m.draft_span, m.note_text),
-              },
-            ],
+      const fixable = line.number_mismatches.flatMap((m) =>
+        m.note_text === null ? [] : [{ span: m.draft_span, replacement: m.note_text }],
       );
-      return [...uses, { kind: "edit" }];
+      const [only, second] = fixable;
+      if (only && !second) {
+        const text = replaceAtSpan(line.text, only.span, only.replacement);
+        return [{ kind: "use", replacement: only.replacement, text }, { kind: "edit" }];
+      }
+      if (only && second) {
+        // Right to left, so a replacement of another length can't move the spans still to come.
+        const text = [...fixable]
+          .sort((a, b) => b.span.start - a.span.start)
+          .reduce((soFar, f) => replaceAtSpan(soFar, f.span, f.replacement), line.text);
+        const replacements = [...fixable]
+          .sort((a, b) => a.span.start - b.span.start)
+          .map((f) => f.replacement);
+        return [{ kind: "useAll", replacements, text }, { kind: "edit" }];
+      }
+      return [{ kind: "edit" }];
     }
     case "no_source":
       // A Focus line is the heading of its entry: it can be reworded, not removed.
