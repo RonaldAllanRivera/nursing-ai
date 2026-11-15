@@ -60,7 +60,8 @@ resource "aws_s3_bucket_ownership_controls" "state" {
 resource "aws_s3_bucket_policy" "state" {
   bucket = aws_s3_bucket.state.id
 
-  # The public access block must be in place before a policy is attached.
+  # S3 can reject two settings of one bucket written at the same time
+  # (OperationAborted), so the policy waits for the public access block.
   depends_on = [aws_s3_bucket_public_access_block.state]
 
   policy = jsonencode({
@@ -149,7 +150,13 @@ resource "aws_iam_role_policy_attachment" "deploy_admin" {
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
-# Pull requests get a read-only role, so a plan can never change anything.
+# Pull requests get this role. It can read the account's configuration and the
+# Terraform state, but a deny policy below stops it decrypting SecureString
+# parameters and reading objects, logs and queue messages, because a pull
+# request's plan runs that pull request's own code. Pull-request plans therefore
+# run as `terraform plan -refresh=false`: the AWS provider decrypts every SSM
+# parameter it refreshes, so a refreshing plan would be refused. The workflow
+# must use the `pull_request` trigger, never `pull_request_target`.
 resource "aws_iam_role" "plan" {
   count = var.enable_github_oidc ? 1 : 0
 
@@ -202,6 +209,52 @@ resource "aws_iam_role_policy" "plan_state_access" {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:DeleteObject"]
         Resource = "${aws_s3_bucket.state.arn}/*.tflock"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "plan_deny_secrets_and_data" {
+  count = var.enable_github_oidc ? 1 : 0
+
+  name = "deny-secrets-and-app-data"
+  role = aws_iam_role.plan[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "NoSecretDecryption"
+        Effect   = "Deny"
+        Action   = "kms:Decrypt"
+        Resource = "*"
+        Condition = {
+          StringLike = { "kms:ViaService" = "ssm.*.amazonaws.com" }
+        }
+      },
+      {
+        Sid         = "NoObjectsOutsideState"
+        Effect      = "Deny"
+        Action      = ["s3:GetObject", "s3:GetObjectVersion"]
+        NotResource = "${aws_s3_bucket.state.arn}/*"
+      },
+      {
+        Sid      = "NoAppData"
+        Effect   = "Deny"
+        Resource = "*"
+        Action = [
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents",
+          "logs:StartQuery",
+          "logs:GetQueryResults",
+          "logs:StartLiveTail",
+          "logs:GetLogRecord",
+          "logs:Unmask",
+          "sqs:ReceiveMessage",
+          "rds:DownloadDBLogFilePortion",
+          "rds:DownloadCompleteDBLogFile",
+          "secretsmanager:GetSecretValue",
+        ]
       }
     ]
   })
