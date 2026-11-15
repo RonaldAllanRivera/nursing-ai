@@ -1,6 +1,7 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { onlineManager } from "@tanstack/react-query";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { components } from "../api/schema";
 import { demoApi } from "../mocks/demo-api";
@@ -51,10 +52,12 @@ describe("patient page", () => {
     expect(screen.getByText("64 F, Medical Ward")).toBeVisible();
     expect(within(screen.getByRole("main")).getByText("Shift 10-6")).toBeVisible();
     expect(screen.getByText(/22:00 11 Nov to 06:00 12 Nov 2026/)).toBeVisible();
-    expect(screen.getByText("No notes yet this shift. Write the first one below.")).toBeVisible();
+    expect(
+      screen.getByText("No notes yet this shift. Write the first one in Your note."),
+    ).toBeVisible();
   });
 
-  it("uses the unit's words and clock for a US patient", async () => {
+  it("uses the unit's words for a US patient", async () => {
     const app = await renderApp("/sign-in");
     await userEvent.click(
       await screen.findByRole("button", { name: "Staff nurse · Emily Carter, RN" }),
@@ -181,7 +184,171 @@ describe("patient page", () => {
     expect(await screen.findByText("Monthly AI budget reached. Your note is saved.")).toBeVisible();
     expect(screen.getByLabelText("Your note")).toHaveValue("pt c/o hilo");
     expect(router.state.location.pathname).toMatch(/^\/patients\//);
-    expect(screen.getByRole("button", { name: "Save note" })).toBeEnabled();
+  });
+
+  describe("after a failed draft", () => {
+    const failJob = () => {
+      server.use(
+        http.get("*/api/v1/draft-jobs/:id", ({ params }) =>
+          HttpResponse.json<Schemas["DraftJobOut"]>({
+            id: String(params["id"]),
+            rough_note_id: "00000000-0000-4000-8000-000000000013",
+            status: "failed",
+            failure: "provider_error",
+            note_id: null,
+          }),
+        ),
+      );
+    };
+
+    it("keeps Save note disabled for the same text, and says what to do", async () => {
+      await openPatientA();
+      failJob();
+      const keys = recordPosts(() => undefined);
+      await typeNote("pt c/o hilo");
+      await save();
+      expect(
+        await screen.findByText("The AI service didn't answer. Your note is saved."),
+      ).toBeVisible();
+      expect(screen.getByText("To save a new note, change the text.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
+      expect(screen.getByLabelText("Your note")).toHaveValue("pt c/o hilo");
+      expect(keys).toHaveLength(1);
+    });
+
+    it("enables Save note again after an edit and sends a new key", async () => {
+      await openPatientA();
+      failJob();
+      const keys = recordPosts(() => undefined);
+      await typeNote("pt c/o hilo");
+      await save();
+      await screen.findByText("To save a new note, change the text.");
+      await typeNote("pt c/o hilo since 2am");
+      expect(screen.queryByText("To save a new note, change the text.")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save note" })).toBeEnabled();
+      await save();
+      await waitFor(() => {
+        expect(keys).toHaveLength(2);
+      });
+      expect(keys[1]).not.toBe(keys[0]);
+    });
+
+    it("refreshes the patient so the saved note shows in this shift's list", async () => {
+      await openPatientA();
+      failJob();
+      let gets = 0;
+      server.use(
+        http.get("*/api/v1/patients/:id", () => {
+          gets += 1;
+          return undefined;
+        }),
+      );
+      await typeNote("pt c/o hilo");
+      await save();
+      await screen.findByText("To save a new note, change the text.");
+      await waitFor(() => {
+        expect(gets).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  it("invalidates the patient when the draft is ready, for when she comes back", async () => {
+    const { router, queryClient } = await openPatientA();
+    await typeNote("pt c/o hilo");
+    await save();
+    await waitFor(
+      () => {
+        expect(router.state.location.pathname).toMatch(/^\/notes\//);
+      },
+      { timeout: 4000 },
+    );
+    expect(queryClient.getQueryState(["patient", PATIENT_A])?.isInvalidated).toBe(true);
+  });
+
+  it("holds the text still while the note is saving and drafting", async () => {
+    await openPatientA();
+    await typeNote("pt c/o hilo");
+    await save();
+    await screen.findByText("Drafting your note. This usually takes a few seconds.");
+    const box = screen.getByLabelText("Your note");
+    expect(box).toHaveAttribute("readonly");
+    expect(box).toHaveAttribute("aria-readonly", "true");
+    await userEvent.type(box, " more");
+    expect(box).toHaveValue("pt c/o hilo");
+  });
+
+  it("says it is saving while the request is out", async () => {
+    await openPatientA();
+    server.use(
+      http.post(ROUGH_URL, async () => {
+        await delay(300);
+        return undefined;
+      }),
+    );
+    await typeNote("pt c/o hilo");
+    await save();
+    expect(await screen.findByText("Saving your note…")).toBeVisible();
+    await screen.findByText("Drafting your note. This usually takes a few seconds.");
+  });
+
+  it("says it is waiting for the network when the browser is offline", async () => {
+    await openPatientA();
+    await typeNote("pt c/o hilo");
+    act(() => {
+      onlineManager.setOnline(false);
+    });
+    try {
+      await save();
+      expect(
+        await screen.findByText("Waiting for the network. Your note is still here."),
+      ).toBeVisible();
+    } finally {
+      act(() => {
+        onlineManager.setOnline(true);
+      });
+    }
+    await screen.findByText("Drafting your note. This usually takes a few seconds.");
+  });
+
+  it("stops following a draft the server can't find, and says so", async () => {
+    await openPatientA();
+    server.use(
+      http.get("*/api/v1/draft-jobs/:id", () =>
+        HttpResponse.json({ code: "not_found", status: 404, title: "Not found" }, { status: 404 }),
+      ),
+    );
+    await typeNote("pt c/o hilo");
+    await save();
+    expect(
+      await screen.findByText(
+        "Couldn't find the draft. Your note is saved. Reload the page to see where it is.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Your note")).not.toHaveAttribute("readonly");
+  });
+
+  it("keeps the typed note when a refetch of the patient fails", async () => {
+    const { queryClient } = await openPatientA();
+    await typeNote("pt c/o hilo");
+    server.use(http.get("*/api/v1/patients/:id", () => HttpResponse.json({}, { status: 500 })));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["patient"] });
+    });
+    await waitFor(() => {
+      expect(queryClient.getQueryState(["patient", PATIENT_A])?.status).toBe("error");
+    });
+    expect(screen.getByLabelText("Your note")).toHaveValue("pt c/o hilo");
+    expect(screen.getByRole("heading", { name: "Demo patient A" })).toBeVisible();
+  });
+
+  it("follows a shift change made in the header", async () => {
+    await openPatientA();
+    const main = within(screen.getByRole("main"));
+    expect(main.getByText("Shift 10-6")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Change shift" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^2-10/ }));
+    expect(await main.findByText("Shift 2-10")).toBeVisible();
+    expect(main.getByText(/14:00 to 22:00 11 Nov 2026/)).toBeVisible();
   });
 
   it("lists this shift's notes with their status, and links a ready draft", async () => {
@@ -246,7 +413,12 @@ describe("patient page", () => {
       "href",
       "/notes/n-ready",
     );
+    expect(within(items[2] as HTMLElement).getByRole("link")).toHaveAttribute(
+      "href",
+      "/notes/n-signed",
+    );
     expect(within(items[0] as HTMLElement).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(items[3] as HTMLElement).queryByRole("link")).not.toBeInTheDocument();
     expect(app.router.state.location.pathname).toBe(`/patients/${PATIENT_A}`);
   });
 

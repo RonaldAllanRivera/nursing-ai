@@ -70,6 +70,8 @@ export function useChangeShift() {
       unwrap(await api.PUT("/api/v1/session/shift", { body: { starts_at: startsAt } })),
     onSuccess: (session) => {
       queryClient.setQueryData(sessionKey, session);
+      // A patient's page shows the session's shift and its notes.
+      void queryClient.invalidateQueries({ queryKey: ["patient"] });
     },
   });
 }

@@ -232,3 +232,17 @@ describe("rough-note writes", () => {
     expect(await notesOf(firstPatient("ph-demo").id)).toEqual([]);
   });
 });
+
+describe("patient detail follows the chosen shift", () => {
+  it("shows the shift picked in the header", async () => {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+    const patient = firstPatient("ph-demo");
+    const target = demoApi.facilities["ph-demo"]?.shift_choices.find((c) => c.code === "2-10");
+    await api.PUT("/api/v1/session/shift", { body: { starts_at: target?.starts_at ?? "" } });
+    const { data } = await api.GET("/api/v1/patients/{patient_id}", {
+      params: { path: { patient_id: patient.id } },
+    });
+    expect(data?.shift.code).toBe("2-10");
+  });
+});

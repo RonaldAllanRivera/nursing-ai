@@ -120,7 +120,9 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       if (!current) return problem(401, "not_signed_in");
       if (current.facility_key === null) return problem(403, "forbidden");
       const found = data.patientDetails[params.id];
-      return found ? HttpResponse.json(found) : problem(404, "not_found");
+      if (!found) return problem(404, "not_found");
+      // The page shows the shift the nurse picked in the header.
+      return HttpResponse.json(shiftOverride ? { ...found, shift: shiftOverride } : found);
     }),
 
     http.post<{ id: string }>("*/api/v1/patients/:id/rough-notes", async ({ params, request }) => {
@@ -139,6 +141,8 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       }
       const earlier = sent.get(key);
       if (earlier && earlier.text !== body.text) return problem(422, "idempotency_key_reused");
+      // The frozen demo data has one job per patient, so a second save (new key) replays a job
+      // that is already finished. The real API makes a new job each time.
       const jobId = earlier?.jobId ?? data.jobForPatient[params.id];
       const job = jobId === undefined ? undefined : data.jobs[jobId];
       if (!job) return problem(404, "not_found");

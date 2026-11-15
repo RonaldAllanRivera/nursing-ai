@@ -28,12 +28,27 @@ export function isTransient(error: unknown): boolean {
   return error instanceof DOMException && error.name === "TimeoutError";
 }
 
+/** The server answered 4xx: sending or asking again as it is will not change the answer. */
+export function isRefused(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+}
+
+/** The step a screen reader hears about: 200, 100, 50 or 0 left, -1 when over, nothing before. */
+export function announceStep(left: number): 200 | 100 | 50 | 0 | -1 | null {
+  if (left < 0) return -1;
+  if (left === 0) return 0;
+  if (left <= 50) return 50;
+  if (left <= 100) return 100;
+  if (left <= 200) return 200;
+  return null;
+}
+
 /** Twice, then give up. */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
   return failureCount < 2 && isTransient(error);
 }
 
-export function useSaveRoughNote(patientId: string, onSent: () => void) {
+export function useSaveRoughNote(patientId: string, onSent: (text: string) => void) {
   return useMutation({
     mutationFn: async ({ text, key }: { text: string; key: string }) =>
       unwrap(
@@ -43,7 +58,9 @@ export function useSaveRoughNote(patientId: string, onSent: () => void) {
         }),
       ),
     retry: shouldRetry,
-    onSuccess: onSent,
+    onSuccess: (_job, { text }) => {
+      onSent(text);
+    },
   });
 }
 
@@ -58,10 +75,10 @@ export const draftJobQuery = (jobId: string) =>
         }),
       ),
     staleTime: 0,
-    // Look again until the job is done, a little less often each time.
+    // Look again until the job is done, a little less often each time. A 4xx will not change.
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "succeeded" || status === "failed"
+      return status === "succeeded" || status === "failed" || isRefused(query.state.error)
         ? false
         : pollDelay(query.state.dataUpdateCount - 1);
     },

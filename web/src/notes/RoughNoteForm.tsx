@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { ApiError } from "../api/errors";
+import { useEffect, useState, type ReactNode } from "react";
+import { Icon, type IconName } from "../components/Icon";
 import { Button } from "../components/ui/Button";
+import { patientQuery } from "../patients/patients";
 import { failureMessage } from "./draft";
 import { createKeyKeeper } from "./idempotency";
-import { patientQuery } from "../patients/patients";
-import { draftJobQuery, textState, useSaveRoughNote } from "./roughNote";
+import { announceStep, draftJobQuery, isRefused, textState, useSaveRoughNote } from "./roughNote";
 
 const RULED_PAPER = {
   backgroundImage:
@@ -14,21 +14,54 @@ const RULED_PAPER = {
   backgroundAttachment: "local",
 } as const;
 
+const SPOKEN_COUNT = {
+  200: "200 or fewer characters remain.",
+  100: "100 or fewer characters remain.",
+  50: "50 or fewer characters remain.",
+  0: "No characters remain.",
+  "-1": "Over the limit. Shorten your note to save it.",
+} as const;
+
+function Line({
+  icon,
+  tone,
+  role,
+  children,
+}: {
+  icon: IconName;
+  tone: string;
+  role: "status" | "alert";
+  children: ReactNode;
+}) {
+  return (
+    <p role={role} className={`flex items-start gap-2 ${tone}`}>
+      <Icon name={icon} className="mt-1" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
 /** The nurse's rough note on ruled paper, one primary button, and the draft's progress after it. */
 export function RoughNoteForm({ patientId }: { patientId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
+  const [sentText, setSentText] = useState<string | null>(null);
   const [keeper] = useState(() => createKeyKeeper());
-  const save = useSaveRoughNote(patientId, () => {
+  const save = useSaveRoughNote(patientId, (sent) => {
     keeper.done();
+    setSentText(sent);
   });
   const job = useQuery({ ...draftJobQuery(save.data?.id ?? ""), enabled: save.isSuccess });
 
   const { left, showCount, canSave } = textState(text);
   const failed = job.data?.status === "failed";
-  const drafting = save.isSuccess && !failed;
+  // The job can't be followed any more (the server says it is not there): the note is still saved.
+  const lost = job.data === undefined && isRefused(job.error);
+  const drafting = save.isSuccess && !failed && !lost;
   const busy = save.isPending || drafting;
+  // A note that was sent and saved is never sent again as it is: it needs a change first.
+  const sameAsSent = save.isSuccess && text === sentText;
   const noteId = job.data?.status === "succeeded" ? job.data.note_id : null;
 
   useEffect(() => {
@@ -38,13 +71,19 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
     void navigate({ to: "/notes/$noteId", params: { noteId } });
   }, [noteId, patientId, queryClient, navigate]);
 
+  useEffect(() => {
+    if (!failed) return;
+    // The saved note, with its failure, belongs in this shift's list.
+    void queryClient.invalidateQueries({ queryKey: patientQuery(patientId).queryKey });
+  }, [failed, patientId, queryClient]);
+
   const send = () => {
-    if (!canSave || busy) return;
+    if (!canSave || busy || sameAsSent) return;
     save.mutate({ text, key: keeper.keyFor(text) });
   };
 
-  // A 4xx (not a 401, which signs you out) is not worth sending again as it is.
-  const refused = save.error instanceof ApiError && save.error.status < 500;
+  const refused = isRefused(save.error);
+  const step = announceStep(left);
 
   return (
     <form
@@ -66,15 +105,16 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         onChange={(event) => {
           setText(event.target.value);
         }}
+        readOnly={busy}
+        aria-readonly={busy}
         rows={8}
         aria-describedby="rough-note-hint rough-note-count"
         spellCheck
-        className="mt-3 block max-h-[60vh] min-h-64 w-full resize-y rounded-control border border-rule-strong bg-sheet px-3 font-note text-18 leading-(--lh-note) text-ink"
+        className="mt-3 block max-h-[60vh] min-h-64 w-full resize-y rounded-control border border-rule-strong bg-sheet px-3 font-note text-18 leading-(--lh-note) text-ink read-only:text-ink-2"
         style={RULED_PAPER}
       />
       <p
         id="rough-note-count"
-        aria-live="polite"
         className={`mt-1 min-h-6 text-14 ${left < 0 ? "font-semibold text-stop" : "text-ink-2"}`}
       >
         {showCount
@@ -83,33 +123,55 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
             : `${String(-left)} ${left === -1 ? "character" : "characters"} too many. Shorten your note to save it.`
           : ""}
       </p>
+      {/* Only at 200, 100, 50, 0 and over: a screen reader would otherwise read every keystroke. */}
+      <p role="status" className="sr-only">
+        {step === null ? "" : SPOKEN_COUNT[String(step) as keyof typeof SPOKEN_COUNT]}
+      </p>
 
       <div className="mt-3 grid gap-3">
+        {save.isPending && !save.isPaused ? (
+          <Line icon="box" tone="text-ink-2" role="status">
+            Saving your note…
+          </Line>
+        ) : null}
+        {save.isPaused ? (
+          <Line icon="flag" tone="text-review" role="status">
+            Waiting for the network. Your note is still here.
+          </Line>
+        ) : null}
         {save.isError ? (
-          <p role="alert" className="font-semibold text-stop">
+          <Line icon="flag" tone="font-semibold text-stop" role="alert">
             {refused
               ? "The note was not accepted. Your note is still here."
               : "Couldn't reach the server. Your note is still here."}
-          </p>
+          </Line>
         ) : null}
         {drafting && !job.isError ? (
-          <p role="status" className="text-ink-2">
+          <Line icon="box" tone="text-ink-2" role="status">
             Drafting your note. This usually takes a few seconds.
-          </p>
+          </Line>
         ) : null}
         {drafting && job.isError ? (
-          <p role="status" className="text-ink-2">
+          <Line icon="flag" tone="text-review" role="status">
             Couldn't check on the draft just now. Your note is saved. Still trying.
-          </p>
+          </Line>
+        ) : null}
+        {lost ? (
+          <Line icon="flag" tone="font-semibold text-stop" role="alert">
+            Couldn't find the draft. Your note is saved. Reload the page to see where it is.
+          </Line>
         ) : null}
         {failed ? (
-          <p role="alert" className="font-semibold text-stop">
+          <Line icon="flag" tone="font-semibold text-stop" role="alert">
             {failureMessage(job.data?.failure)}
-          </p>
+          </Line>
+        ) : null}
+        {(failed || lost) && sameAsSent ? (
+          <p className="text-ink-2">To save a new note, change the text.</p>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" variant="primary" disabled={!canSave || busy}>
+          <Button type="submit" variant="primary" disabled={!canSave || busy || sameAsSent}>
             Save note
           </Button>
           {save.isError && !refused ? (

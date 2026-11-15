@@ -27,7 +27,9 @@ test("the patient page shows the bed tab, the shift and the empty notes list", a
   await expect(main.getByText("Synthetic")).toBeVisible();
   await expect(main.getByText("64 F, Medical Ward")).toBeVisible();
   await expect(main.getByText("22:00 11 Nov to 06:00 12 Nov 2026")).toBeVisible();
-  await expect(main.getByText("No notes yet this shift. Write the first one below.")).toBeVisible();
+  await expect(
+    main.getByText("No notes yet this shift. Write the first one in Your note."),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Save note" })).toBeDisabled();
   await noSidewaysScroll(page);
 });

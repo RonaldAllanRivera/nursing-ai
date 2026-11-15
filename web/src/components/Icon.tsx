@@ -1,7 +1,7 @@
 import { cn } from "../lib/cn";
 
 // The mockup's sprite, symbol by symbol. Only the symbols a screen uses are here; add the rest
-// (check, pen, neq, flag, fork, you, removed, lock, box, boxcheck, close) with the screen that needs them.
+// (check, neq, fork, lock, boxcheck, close) with the screen that needs them.
 const PATHS = {
   pen: (
     <>

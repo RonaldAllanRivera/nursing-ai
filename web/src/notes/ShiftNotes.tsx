@@ -36,7 +36,9 @@ export function ShiftNotes({
         Notes this shift
       </h2>
       {notes.length === 0 ? (
-        <p className="mt-2 text-ink-2">No notes yet this shift. Write the first one below.</p>
+        <p className="mt-2 text-ink-2">
+          No notes yet this shift. Write the first one in Your note.
+        </p>
       ) : (
         <ul aria-labelledby="shift-notes-heading" className="m-0 mt-2 list-none p-0">
           {notes.map((item) => {
@@ -51,7 +53,7 @@ export function ShiftNotes({
                 <span className="min-w-16 font-semibold">{time}</span>
                 <span className={`inline-flex items-center gap-2 font-semibold ${look.tone}`}>
                   <Icon name={look.icon} />
-                  {status.kind === "ready" && status.noteId ? (
+                  {(status.kind === "ready" || status.kind === "signed") && status.noteId ? (
                     <Link
                       to="/notes/$noteId"
                       params={{ noteId: status.noteId }}

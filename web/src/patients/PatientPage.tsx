@@ -28,7 +28,9 @@ export function PatientPage() {
     </Link>
   );
 
-  if (patient.isError || facility.isError) {
+  // The error page is only for a page that has nothing to show. A failed refetch keeps the data,
+  // and the form with the nurse's text stays where it is.
+  if ((!patient.data && patient.isError) || (!facility.data && facility.isError)) {
     const missing = patient.error instanceof ApiError && patient.error.status === 404;
     return (
       <section>
@@ -86,7 +88,7 @@ export function PatientPage() {
           <ShiftNotes notes={notes} timeZone={shift.timezone} locale={locale} clock={clock} />
         </div>
         <div className="lg:order-1">
-          <RoughNoteForm patientId={patientId} />
+          <RoughNoteForm key={patientId} patientId={patientId} />
         </div>
       </div>
     </section>
