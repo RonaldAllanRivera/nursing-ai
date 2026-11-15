@@ -17,3 +17,8 @@ output "budget_name" {
   description = "Name of the monthly cost budget."
   value       = aws_budgets_budget.monthly_guard.name
 }
+
+output "repository_url" {
+  description = "URL of the image repository CI pushes the application image to."
+  value       = module.registry.repository_url
+}

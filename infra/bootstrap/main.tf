@@ -295,3 +295,13 @@ resource "aws_budgets_budget" "monthly_guard" {
     }
   }
 }
+
+# ---------------------------------------------------------------------------
+# Image registry (CI pushes the application image here before `live` applies)
+# ---------------------------------------------------------------------------
+
+module "registry" {
+  source = "../modules/registry"
+
+  name = var.name
+}
