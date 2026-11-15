@@ -3,6 +3,7 @@
 import re
 from datetime import date
 
+import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 from nursing_core.demo import load_demo_cases
@@ -21,11 +22,11 @@ def _identity(**changes: object) -> PatientIdentity:
         middle_name="Qorvanne",
         family_name="Malabanan",
         suffix="Jr",
-        nicknames=["Nena"],
+        nicknames=["Qorvy"],
         relatives=[Relative(name="Zyxquil Malabanan", relation="son")],
         record_number="SYN-PH-0099",
         birth_date=date(1962, 3, 4),
-        address="12 Zyxquil St, Qorvanne",
+        address="12 Vexlor St, Plimth",
         postal_code="1234",
     )
     return base.model_copy(update=changes)
@@ -50,13 +51,16 @@ def test_full_name_forms_and_suffix() -> None:
 
 def test_record_number_birth_date_and_address_replaced() -> None:
     ident = _identity()
-    note = "SYN-PH-0099 born 1962-03-04, 3/4/1962, 04/03/1962, March 4, 1962, 4 Mar 1962."
-    note += " Lives at 12 Zyxquil St, Qorvanne 1234."
+    note = (
+        "SYN-PH-0099 born 1962-03-04, 3/4/1962, 04/03/1962, 3-4-1962, 04-03-1962, "
+        "March 4, 1962, Mar 4, 1962, 4 March 1962, 4 Mar 1962."
+    )
+    note += " Lives at 12 Vexlor St, Plimth 1234."
     out = redact(note, ident)
     assert "[RECORD_NO_1]" in out.text
     assert "[ADDRESS_1]" in out.text
     assert "[POSTAL_CODE_1]" in out.text
-    assert out.text.count("[BIRTH_DATE_") == 5
+    assert out.text.count("[BIRTH_DATE_") == 9
     assert "1962" not in out.text
     assert restore(out.text, out.mapping) == note
 
@@ -64,8 +68,8 @@ def test_record_number_birth_date_and_address_replaced() -> None:
 def test_name_inside_another_word_is_kept() -> None:
     out = redact("Teodora and Doras, Dora", TEODORA)
     assert out.text == "[PATIENT_1] and Doras, [NICKNAME_1]"
-    ana = _identity(given_name="Ana", middle_name=None, family_name="Qorvanne", suffix=None)
-    assert redact("banana with Ana", ana).text == "banana with [PATIENT_1]"
+    zyx = _identity(given_name="Zyxquil", middle_name=None, family_name="Qorvanne", suffix=None)
+    assert redact("xzyxquil with Zyxquil", zyx).text == "xzyxquil with [PATIENT_1]"
 
 
 def test_us_phone_email_ssn_url_and_ip_replaced() -> None:
@@ -76,6 +80,19 @@ def test_us_phone_email_ssn_url_and_ip_replaced() -> None:
         "also www.example.com, host 192.0.2.17."
     )
     out = redact(note, PERPETUA)
+    phones = [v for k, v in out.mapping.items() if k.startswith("[PHONE_")]
+    assert phones == [
+        "(415) 555-0134",
+        "415-555-0134",
+        "415.555.0134",
+        "+1 415 555 0134",
+        "+14155550134",
+        "0917 555 0134",
+        "09175550134",
+        "+63 917 555 0134",
+        "(02) 8555 0134",
+        "02-8555-0134",
+    ]
     assert out.text.count("[PHONE_") == 10
     assert "[EMAIL_1]" in out.text
     assert "[SSN_1]" in out.text
@@ -99,9 +116,10 @@ def test_dates_replaced_but_not_scores_or_times() -> None:
         "11/12/2026, 11/12/26, 11-12-2026, 2026-11-12, 12 Nov 2026, Nov 12, 2026, "
         "November 12, 12 November"
     )
-    out = redact(note, PERPETUA)
+    out = redact(note + "; pain 6/10 at 0830 and 1015, BP 142/84", PERPETUA)
     assert out.text.count("[DATE_") == 8
-    assert restore(out.text, out.mapping) == note
+    assert out.text.endswith("; pain 6/10 at 0830 and 1015, BP 142/84")
+    assert restore(out.text, out.mapping) == note + "; pain 6/10 at 0830 and 1015, BP 142/84"
 
 
 def test_age_90_and_over_becomes_90_plus() -> None:
@@ -116,8 +134,8 @@ def test_age_90_and_over_becomes_90_plus() -> None:
 
 def test_zip_only_from_record_or_after_state_code() -> None:
     ident = _identity()
-    out = redact("0800 IVF #3 CA 94110, DC 20001-9876, rm 55555, 1234", ident)
-    assert out.text == "0800 IVF #3 CA [ZIP_1], DC [ZIP_2], rm 55555, [POSTAL_CODE_1]"
+    out = redact("0800 IVF #3 CA 94110, DC 20001-9876, rm 55555, Plimth 1234", ident)
+    assert out.text == "0800 IVF #3 CA [ZIP_1], DC [ZIP_2], rm 55555, Plimth [POSTAL_CODE_1]"
     assert out.mapping["[ZIP_2]"] == "20001-9876"
 
 
@@ -158,7 +176,8 @@ def test_patient_beats_nickname_beats_relative() -> None:
 def test_mentions_identity_uses_whole_words() -> None:
     assert mentions_identity("saw LOLA dora today", TEODORA)
     assert mentions_identity("TEODORA", TEODORA)
-    assert not mentions_identity("Dora on her own", PERPETUA)
+    assert not mentions_identity("Perpetuas and Malabanans", PERPETUA)
+    assert not mentions_identity("Dora on her own", HAROLD)
     assert mentions_identity("record syn-ph-0012", PERPETUA)
     assert not mentions_identity("Lolas", TEODORA)
 
@@ -188,7 +207,145 @@ def test_demo_notes_redact_to_the_tokens_their_model_output_uses() -> None:
             assert _squash(q) in text
 
 
-_IDENTITIES = [PERPETUA, TEODORA, HAROLD, _identity()]
+@pytest.mark.parametrize(
+    "note",
+    [
+        "pain 6/10 may need PRN",
+        "RR 20 may need O2",
+        "RR 20 May need O2",
+        "pain dec 4/10",
+        "pain Dec 4/10",
+        "UO DEC 30 mL/hr",
+        "may 4, 2026 is lower case",
+    ],
+)
+def test_month_words_never_swallow_clinical_numbers(note: str) -> None:
+    assert redact(note, PERPETUA).text == note
+
+
+@pytest.mark.parametrize(
+    "note",
+    ["Nov 12", "12 Nov 2026", "NOV 12 2026", "November 12", "12 NOVEMBER", "May 4, 2026", "4 Sept"],
+)
+def test_month_name_dates_are_redacted(note: str) -> None:
+    out = redact(f"seen {note} ok", PERPETUA)
+    assert out.text == "seen [DATE_1] ok"
+    assert out.mapping == {"[DATE_1]": note}
+
+
+def test_a_name_glued_to_a_date_ssn_or_digits_is_still_redacted() -> None:
+    out = redact("Teodora2026-11-12 seen, Ramil900-12-3456, Ramil11/12/2026, x9Dora", TEODORA)
+    assert (
+        out.text
+        == "[PATIENT_1][DATE_1] seen, [RELATIVE_1][SSN_1], [RELATIVE_1][DATE_2], x9[NICKNAME_1]"
+    )
+    assert restore(out.text, out.mapping) == (
+        "Teodora2026-11-12 seen, Ramil900-12-3456, Ramil11/12/2026, x9Dora"
+    )
+    assert mentions_identity("Teodora2026-11-12", TEODORA)
+    assert not mentions_identity("Teodoras2026", TEODORA)
+
+
+def test_odd_letters_never_crash_and_still_match() -> None:
+    ident = _identity(given_name="Zyxquils", middle_name=None, family_name="Qorvanne", suffix=None)
+    assert redact("ZYXQUIL\u017f note", ident).text == "[PATIENT_1] note"
+    assert redact("Zyxqu\u0130ls note", ident).text == "[PATIENT_1] note"
+    assert mentions_identity("ZYXQUIL\u017f", ident)
+
+
+def test_accents_are_ignored_when_matching_names() -> None:
+    ident = _identity(given_name="Pena", middle_name=None, family_name="Qorvanne", suffix=None)
+    out = redact("Pe\u00f1a, PE\u00d1A, pena, Pen\u0303a, Penas", ident)
+    assert out.text == "[PATIENT_1], [PATIENT_2], [PATIENT_3], [PATIENT_4], Penas"
+    assert out.mapping["[PATIENT_4]"] == "Pen\u0303a"
+    assert restore(out.text, out.mapping) == "Pe\u00f1a, PE\u00d1A, pena, Pen\u0303a, Penas"
+    accented = _identity(
+        given_name="Pe\u00f1a", middle_name=None, family_name="Qorvanne", suffix=None
+    )
+    assert redact("pena", accented).text == "[PATIENT_1]"
+    assert mentions_identity("PENA", accented)
+
+
+def test_a_mark_after_a_name_is_covered_with_it() -> None:
+    ident = _identity(given_name="Pena", middle_name=None, family_name="Qorvanne", suffix=None)
+    out = redact("Pena\u0301 ok", ident)
+    assert out.text == "[PATIENT_1] ok"
+    assert out.mapping == {"[PATIENT_1]": "Pena\u0301"}
+
+
+def test_a_two_word_given_name_is_matched_whole() -> None:
+    ident = _identity(given_name="Zyx Quil", middle_name=None, family_name="Qorvanne", suffix=None)
+    assert redact("Zyx   Quil, Zyx, Quil", ident).text == "[PATIENT_1], [PATIENT_2], [PATIENT_3]"
+
+
+def test_name_words_split_on_hyphens_and_apostrophes() -> None:
+    ident = _identity(
+        given_name="Zyx-Quil", middle_name=None, family_name="O'Qorvanne", suffix=None
+    )
+    out = redact("Zyx-Quil, Quil, Zyx, O'Qorvanne, Qorvanne, O, Q-Zyx", ident)
+    assert (
+        out.text
+        == "[PATIENT_1], [PATIENT_2], [PATIENT_3], [PATIENT_4], [PATIENT_5], O, Q-[PATIENT_3]"
+    )
+
+
+def test_overlapping_hits_merge_into_one_span() -> None:
+    url = "https://example.com/teodora/123456"
+    out = redact(f"see {url} now", TEODORA)
+    assert out.text == "see [URL_1] now"
+    assert out.mapping == {"[URL_1]": url}
+    mail = redact("teodora@example.com", TEODORA)
+    assert mail.text == "[EMAIL_1]"
+    # a name that only partly overlaps a longer pattern never leaves characters behind
+    out = redact("Ramil 2026-11-12 Dimaculangan2026-11-12", TEODORA)
+    assert out.text == "[RELATIVE_1] [DATE_1] [PATIENT_1][DATE_1]"
+
+
+def test_a_digit_postal_code_needs_address_context() -> None:
+    ident = _identity(postal_code="1200")
+    note = "1200 VS taken, IVF 1200 mL, Plimth 1200, zip: 1200, Postal Code 1200, TX, 1200"
+    out = redact(note, ident)
+    assert out.text == (
+        "1200 VS taken, IVF 1200 mL, Plimth [POSTAL_CODE_1], zip: [POSTAL_CODE_1], "
+        "Postal Code [POSTAL_CODE_1], TX, [POSTAL_CODE_1]"
+    )
+    assert redact("Plimth\n1200", ident).text == "Plimth\n1200"
+    assert redact("tx 1200 and in 1200", ident).text == "tx 1200 and in 1200"
+    assert mentions_identity("Plimth 1200", ident)
+    assert not mentions_identity("IVF 1200 mL", ident)
+
+
+def test_a_postal_code_with_a_letter_is_redacted_anywhere() -> None:
+    ident = _identity(postal_code="K1A 0B1")
+    assert redact("sent to K1A 0B1.", ident).text == "sent to [POSTAL_CODE_1]."
+    assert mentions_identity("k1a  0b1", ident)
+
+
+def test_state_code_zip_skips_everyday_clinical_abbreviations() -> None:
+    note = "heparin SC 10000 units, IN 12000 mL, NC 20000, OR 97201, PA 15213, CT 06101"
+    assert redact(note, PERPETUA).text == note
+    assert redact("CA 94110, TX 75001, NY 10001-1234", PERPETUA).text == (
+        "CA [ZIP_1], TX [ZIP_2], NY [ZIP_3]"
+    )
+
+
+def test_urls_in_capitals_and_spaced_us_phone_are_redacted() -> None:
+    out = redact("HTTPS://EXAMPLE.COM/X, WWW.EXAMPLE.COM, 415 555 0134", PERPETUA)
+    assert out.text == "[URL_1], [URL_2], [PHONE_1]"
+    assert out.mapping["[PHONE_1]"] == "415 555 0134"
+    assert redact("range 555-0134 and 1000 500 100", PERPETUA).text == (
+        "range 555-0134 and 1000 500 100"
+    )
+
+
+def test_more_age_forms_become_90_plus() -> None:
+    note = "91 y.o F, age 91, 91 years old, 91 years of age, 91 yrs, 91F, age 89, 5 yrs"
+    assert redact(note, PERPETUA).text == (
+        "90+ y.o F, age 90+, 90+ years old, 90+ years of age, 90+ yrs, 91F, age 89, 5 yrs"
+    )
+
+
+_IDENTITIES = [PERPETUA, TEODORA, HAROLD, _identity(postal_code="1200")]
 _FRAGMENTS = [
     "BP 142/84",
     "pain 6/10",
@@ -197,17 +354,31 @@ _FRAGMENTS = [
     "CA 94110",
     "call 415-555-0134",
     "11/12/2026",
+    "Nov 12",
+    "IVF 1200 mL",
+    "[PATIENT_1]",
+    "[DATE_2]",
+    "https://example.com/zyxquil/9",
+    "zip 1200",
+    "Plimth 1200",
+    "3/4/1962",
+    "Mar 4, 1962",
+    "4 March 1962",
+    "900-12-3456",
 ]
+_SEPARATORS = ["", " ", "  ", "\n", ", "]
 
 
 def _strings(ident: PatientIdentity) -> list[str]:
     return [
         ident.given_name,
+        ident.middle_name or ident.given_name,
         ident.family_name,
         *ident.nicknames,
         *(r.name for r in ident.relatives),
         *(w for r in ident.relatives for w in r.name.split()),
         ident.record_number,
+        ident.address or ident.given_name,
         ident.birth_date.isoformat(),
     ]
 
@@ -223,13 +394,24 @@ def _notes(draw: st.DrawFn) -> tuple[PatientIdentity, str]:
         st.text(max_size=12),
     )
     parts = draw(st.lists(pieces, max_size=8))
-    sep = draw(st.sampled_from([" ", "  ", "\n", ", "]))
-    return ident, sep.join(parts)
+    return ident, draw(st.sampled_from(_SEPARATORS)).join(parts)
 
 
 @given(_notes())
 def test_restore_undoes_redact(case: tuple[PatientIdentity, str]) -> None:
     ident, note = case
-    assume(not re.search(r"(?i)aged|y/o|y\.o|yo|year|yrs", note))
+    assume(not re.search(r"(?i)age|y/o|y\.o|yo|year|yrs", note))
     out = redact(note, ident)
     assert restore(out.text, out.mapping) == note
+
+
+@given(_notes())
+def test_no_identity_string_survives_redaction(case: tuple[PatientIdentity, str]) -> None:
+    ident, note = case
+    assert not mentions_identity(redact(note, ident).text, ident)
+
+
+@given(st.text())
+def test_redact_never_raises_on_arbitrary_text(note: str) -> None:
+    out = redact(note, _identity())
+    assert not mentions_identity(out.text, _identity())
