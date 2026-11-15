@@ -15,7 +15,9 @@ export default defineConfig({
   testDir: "e2e/mock",
   forbidOnly: !!process.env["CI"],
   reporter: process.env["CI"] ? [["html", { open: "never" }], ["list"]] : "list",
-  use: { baseURL },
+  // The browser's zone is UTC, which is neither facility's: a screen that read the browser's
+  // zone instead of the facility's would show the wrong times on any host.
+  use: { baseURL, timezoneId: "UTC" },
   projects: widths.map(({ name, width, height }) => ({
     name,
     use: { browserName: "chromium", viewport: { width, height } },

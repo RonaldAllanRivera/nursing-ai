@@ -8,8 +8,9 @@
 //   3. The admin path, at 375 and 1280 px (768 is skipped), by keyboard alone.
 //
 // Every screen of a journey is checked with axe (WCAG 2.2 AA) and for sideways scroll.
-// Set W7_SHOTS=<folder> to save a full-page screenshot of each screen (375 and 1280 px only).
+// Set E2E_SHOTS=<folder> to save a full-page screenshot of each screen.
 import { expect, test } from "@playwright/test";
+import { widths } from "../widths.ts";
 import {
   ADMIN,
   D2,
@@ -20,6 +21,7 @@ import {
   SARAH,
   card,
   checkScreen,
+  expectHeaderAtMostTwoRows,
   isSmall,
   line,
   noSidewaysScroll,
@@ -32,6 +34,13 @@ import {
 const SIGNED_AT = /^Signed by you at \d\d:\d\d\.$/;
 const HASH = /^Note hash [0-9a-f]{12}$/;
 const NOTE_URL = /\/notes\/[0-9a-f-]{36}$/;
+
+// Project names come from widths.ts, so a rename there can't skip a journey everywhere.
+const projectAt = (width: number) => {
+  const found = widths.find((w) => w.width === width);
+  if (!found) throw new Error(`No project at ${String(width)} px in widths.ts.`);
+  return found.name;
+};
 
 test("PH flow: sign in, write a note, wait for the draft, check three lines, sign, see it locked", async ({
   page,
@@ -49,6 +58,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await expect(header.getByText("Sarah Navarro, RN")).toBeVisible();
   await expect(header.getByText("Staff nurse")).toBeVisible();
   await expect(header.getByText("Shift 10-6")).toBeVisible();
+  await expectHeaderAtMostTwoRows(page);
   await expect(header.getByRole("button", { name: "Change shift" })).toBeVisible();
   await expect(header.getByRole("button", { name: "Night theme" })).toBeVisible();
   await expect(header.getByRole("button", { name: "Sign out" })).toBeVisible();
@@ -150,7 +160,7 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   const sarah = page.getByRole("button", { name: SARAH });
   await expect(sarah).toBeVisible();
   await checkScreen(page);
-  await tabTo(page, sarah);
+  await tabTo(page, sarah, 10);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
 
@@ -158,13 +168,13 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   const row = page.getByRole("link", { name: /Demo patient A/ });
   await expect(row).toBeVisible();
   await checkScreen(page);
-  await tabTo(page, row);
+  await tabTo(page, row, 12);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Demo patient A" })).toBeVisible();
 
   // The patient page: Tab to the note, type, Tab to Save note, Enter.
   const box = page.getByLabel("Your note");
-  await tabTo(page, box);
+  await tabTo(page, box, 12);
   await page.keyboard.type(ROUGH_NOTE);
   await checkScreen(page);
   await page.keyboard.press("Tab");
@@ -226,7 +236,7 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
 
 test("US path: DAR draft, shift 7a-7p, times in Pacific time", async ({ page }, testInfo) => {
   // One width is enough for the region words; the layout is proven by the PH flow at all three.
-  test.skip(testInfo.project.name !== "chromium-375", "The US path runs at 375 px only.");
+  test.skip(testInfo.project.name !== projectAt(375), "The US path runs at 375 px only.");
 
   // The demo data's instants, worded in the US facility's zone with its 24-hour clock (the demo
   // profile's `clock`). Worked out here, not copied off the screen: 15:00Z is 07:00 in Pacific
@@ -256,6 +266,7 @@ test("US path: DAR draft, shift 7a-7p, times in Pacific time", async ({ page }, 
   const header = page.getByRole("banner");
   await expect(header.getByText("Emily Carter, RN")).toBeVisible();
   await expect(header.getByText("Shift 7a-7p")).toBeVisible();
+  await expectHeaderAtMostTwoRows(page);
   await expect(page.getByText(`${shiftStart} to ${shiftEnd} 12 Nov 2026`)).toBeVisible();
   await checkScreen(page);
   await shot(page, "us-list");
@@ -295,7 +306,7 @@ test.describe("admin path", () => {
   test("renames the 10-6 label, sees the US shifts, and the nurse sees the new label (keyboard only)", async ({
     page,
   }, testInfo) => {
-    test.skip(testInfo.project.name === "chromium-768", "The admin path runs at 375 and 1280 px.");
+    test.skip(testInfo.project.name === projectAt(768), "The admin path runs at 375 and 1280 px.");
 
     // Sign in as Admin: Settings only.
     await page.goto("/sign-in");
@@ -308,6 +319,7 @@ test.describe("admin path", () => {
     await expect(header.getByText("Admin")).toBeVisible();
     await expect(header.getByRole("link", { name: "Patients" })).toHaveCount(0);
     await expect(header.getByRole("button", { name: "Change shift" })).toHaveCount(0);
+    await expectHeaderAtMostTwoRows(page);
     const facilityName = page.getByRole("textbox", { name: "Facility name" });
     await expect(facilityName).toHaveValue("SYNTHETIC Demo Hospital (PH)");
     await expect(page.getByText("Changes apply to new notes.")).toBeVisible();
@@ -351,6 +363,7 @@ test.describe("admin path", () => {
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
     await expect(header.getByText("Shift Night")).toBeVisible();
+    await expectHeaderAtMostTwoRows(page);
     await checkScreen(page);
   });
 });

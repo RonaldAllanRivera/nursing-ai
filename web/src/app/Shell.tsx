@@ -9,7 +9,7 @@ import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
 import { ShiftControl } from "./ShiftControl";
 
 const NAV_LINK =
-  "inline-flex min-h-11 items-center rounded-full px-3 font-semibold text-ink [&.active]:bg-sunk [&.active]:underline [&.active]:underline-offset-4 hover:bg-sunk";
+  "inline-flex min-h-11 items-center rounded-full px-2 font-semibold sm:px-3 text-ink [&.active]:bg-sunk [&.active]:underline [&.active]:underline-offset-4 hover:bg-sunk";
 
 function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(readTheme);
@@ -24,10 +24,10 @@ function ThemeToggle() {
         saveTheme(next);
         applyTheme(next);
       }}
-      className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-rule-strong bg-transparent px-4 font-semibold hover:bg-sunk aria-pressed:border-pen aria-pressed:bg-pen-tint aria-pressed:text-pen"
+      className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-rule-strong bg-transparent font-semibold hover:bg-sunk max-sm:px-0 sm:px-4 aria-pressed:border-pen aria-pressed:bg-pen-tint aria-pressed:text-pen"
     >
       <Icon name="moon" />
-      Night theme
+      <span className="max-sm:sr-only">Night theme</span>
     </button>
   );
 }
@@ -47,8 +47,8 @@ export function Shell() {
   return (
     <>
       <header className="border-b border-rule bg-sheet">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 sm:gap-x-4 sm:px-6">
+          <div className="flex min-w-0 flex-[1_1_14rem] items-center gap-3 sm:flex-none">
             <div
               aria-hidden="true"
               className="grid size-12 flex-none place-items-center rounded-control rounded-bl-[2px] bg-primary font-bold text-primary-ink"
@@ -64,10 +64,24 @@ export function Shell() {
               </p>
             </div>
           </div>
+          {/* On a phone, Sign out sits on the first row beside who is signed in, so it comes second
+              in the DOM and the focus order follows what the eye sees. From `sm` up everything fits
+              on one row and Sign out goes last. */}
+          <Button
+            className="sm:order-last"
+            disabled={signOut.isPending}
+            onClick={() => {
+              signOut.mutate(undefined, {
+                onSuccess: () => void navigate({ to: "/sign-in" }),
+              });
+            }}
+          >
+            Sign out
+          </Button>
           {session.shift && session.facility_key !== null ? (
             <ShiftControl shift={session.shift} facilityKey={session.facility_key} />
           ) : null}
-          <nav aria-label="Main" className="ml-auto flex items-center gap-1">
+          <nav aria-label="Main" className="flex items-center gap-1 sm:ml-auto">
             {isAdmin ? (
               <Link to="/settings" className={NAV_LINK}>
                 Settings
@@ -78,19 +92,7 @@ export function Shell() {
               </Link>
             )}
           </nav>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Button
-              disabled={signOut.isPending}
-              onClick={() => {
-                signOut.mutate(undefined, {
-                  onSuccess: () => void navigate({ to: "/sign-in" }),
-                });
-              }}
-            >
-              Sign out
-            </Button>
-          </div>
+          <ThemeToggle />
           {signOut.isError ? (
             <p role="alert" className="order-last basis-full text-14 text-stop">
               Signing out did not work. Try again.

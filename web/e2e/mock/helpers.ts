@@ -42,14 +42,52 @@ export async function expectNoViolationsDayAndNight(page: Page) {
 }
 
 /**
- * Full-page screenshots of the flow's screens, for review: only when `W7_SHOTS` names a folder,
- * and only at 375 and 1280 px. The normal run skips it, so it costs nothing.
+ * Full-page screenshots of the flow's screens, for review: only when `E2E_SHOTS` names a folder.
+ * The normal run skips it, so it costs nothing.
  */
 export async function shot(page: Page, screen: string) {
-  const folder = process.env["W7_SHOTS"];
+  const folder = process.env["E2E_SHOTS"];
+  if (!folder) return;
   const width = page.viewportSize()?.width ?? 0;
-  if (!folder || (width !== 375 && width !== 1280)) return;
-  await page.screenshot({ path: `${folder}/w7-${screen}-${String(width)}.png`, fullPage: true });
+  await page.screenshot({ path: `${folder}/shot-${screen}-${String(width)}.png`, fullPage: true });
+}
+
+/**
+ * The header takes at most two rows (on a phone: who is signed in and Sign out, then the shift,
+ * the link and the theme). Rows are counted from the vertical centres of the header's controls
+ * and its name line: a gap of more than 20 px between two centres starts a new row.
+ */
+export async function expectHeaderAtMostTwoRows(page: Page) {
+  const centres = await page.getByRole("banner").evaluate((header) =>
+    [...header.querySelectorAll("button, a, p")]
+      .map((el) => el.getBoundingClientRect())
+      .filter((box) => box.width > 0 && box.height > 0)
+      .map((box) => box.top + box.height / 2)
+      .sort((a, b) => a - b),
+  );
+  expect(centres.length).toBeGreaterThan(3);
+  let rows = 1;
+  for (let i = 1; i < centres.length; i++) {
+    if ((centres[i] ?? 0) - (centres[i - 1] ?? 0) > 20) rows++;
+  }
+  expect(rows, `centres: ${centres.map(Math.round).join(", ")}`).toBeLessThanOrEqual(2);
+
+  // And nothing sits on top of anything else: no two controls or the name line overlap.
+  const overlaps = await page.getByRole("banner").evaluate((header) => {
+    const boxes = [...header.querySelectorAll("button, a, p")].map((el) =>
+      el.getBoundingClientRect(),
+    );
+    let found = 0;
+    for (const [i, a] of boxes.entries()) {
+      for (const b of boxes.slice(i + 1)) {
+        const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const down = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (across > 1 && down > 1) found++;
+      }
+    }
+    return found;
+  });
+  expect(overlaps).toBe(0);
 }
 
 /** What every screen of a journey must pass: it fits, and axe finds nothing (day, and night if asked). */

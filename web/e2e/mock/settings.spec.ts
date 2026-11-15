@@ -2,7 +2,15 @@
 // journeys.spec.ts (375 and 1280 px) walks the rename, the US shifts and the nurse's new label.
 // The mock keeps its state in the page, so every flow navigates inside the app (no reload).
 import { expect, test, type Page } from "@playwright/test";
-import { ADMIN, expectNoViolations, noSidewaysScroll, signInAs, tabTo } from "./helpers.ts";
+import {
+  ADMIN,
+  SARAH,
+  expectHeaderAtMostTwoRows,
+  expectNoViolations,
+  noSidewaysScroll,
+  signInAs,
+  tabTo,
+} from "./helpers.ts";
 
 async function openSettings(page: Page) {
   await signInAs(page, ADMIN, "Settings");
@@ -13,6 +21,12 @@ async function openSettings(page: Page) {
 
 test("shows the facility's settings and fits the screen", async ({ page }) => {
   await openSettings(page);
+  // The admin's header, at every width: the Admin pill, no Patients link, no shift control.
+  const header = page.getByRole("banner");
+  await expect(header.getByText("Admin")).toBeVisible();
+  await expect(header.getByRole("link", { name: "Patients" })).toHaveCount(0);
+  await expect(header.getByRole("button", { name: "Change shift" })).toHaveCount(0);
+  await expectHeaderAtMostTwoRows(page);
   await expect(page.getByText("Changes apply to new notes.")).toBeVisible();
   await expect(page.getByRole("group", { name: "Shift 3" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "Red" }).last()).toBeChecked();
@@ -40,7 +54,7 @@ test("a nurse who signs in after the save sees the new label", async ({ page }) 
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByRole("status")).toContainText("Saved.");
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.getByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }).click();
+  await page.getByRole("button", { name: SARAH }).click();
   await expect(page.getByRole("banner").getByText("Shift Night")).toBeVisible();
 });
 
