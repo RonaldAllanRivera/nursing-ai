@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/only-throw-error -- TanStack Router's redirect() is thrown on purpose. */
 import type { QueryClient } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
@@ -26,6 +25,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 /** The session, or a redirect to sign-in. A cached "signed out" answer is kept up to date by the sign-in and sign-out calls and by any 401. */
 async function requireSession(queryClient: QueryClient) {
   const session = await queryClient.query({ ...sessionQuery, staleTime: "static" });
+  // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
   if (!session) throw redirect({ to: "/sign-in" });
   return session;
 }
@@ -36,6 +36,7 @@ const indexRoute = createRoute({
   path: "/",
   beforeLoad: async ({ context }) => {
     const session = await requireSession(context.queryClient);
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
     throw redirect({ to: session.facility_key === null ? "/settings" : "/patients" });
   },
 });
@@ -58,6 +59,7 @@ const appRoute = createRoute({
 
 async function requireNurse(queryClient: QueryClient) {
   const session = await requireSession(queryClient);
+  // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
   if (session.facility_key === null) throw redirect({ to: "/settings" });
 }
 
@@ -80,6 +82,7 @@ const settingsRoute = createRoute({
   path: "/settings",
   beforeLoad: async ({ context }) => {
     const session = await requireSession(context.queryClient);
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
     if (session.facility_key !== null) throw redirect({ to: "/patients" });
   },
   component: SettingsPage,

@@ -21,7 +21,7 @@ const INK_EDGE: Record<Ink, string> = {
  * under the header (not floating, so it can never run off a narrow screen).
  */
 export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facilityKey: string }) {
-  const { data: facility } = useFacility(facilityKey);
+  const { data: facility, isError: facilityFailed } = useFacility(facilityKey);
   const change = useChangeShift();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -76,6 +76,7 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
           aria-expanded={open}
           aria-controls="shift-choices"
           onClick={() => {
+            change.reset();
             setOpen((was) => !was);
           }}
           className="min-h-11 cursor-pointer px-2 font-semibold text-pen underline underline-offset-4"
@@ -89,12 +90,16 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
           ref={panel}
           role="group"
           aria-label="Shifts you can work"
-          className="basis-full rounded-sheet border border-rule bg-sheet p-2 shadow-(--lift)"
+          className="order-last basis-full rounded-sheet border border-rule bg-sheet p-2 shadow-(--lift)"
         >
-          {facility ? (
+          {facilityFailed ? (
+            <p role="alert" className="px-2 py-1 text-14 text-stop">
+              The shifts did not load. Close this and try again.
+            </p>
+          ) : facility ? (
             <ul className="grid gap-1 sm:grid-cols-3">
               {facility.shift_choices.map((choice) => {
-                const current = choice.starts_at === shift.starts_at;
+                const current = Date.parse(choice.starts_at) === Date.parse(shift.starts_at);
                 return (
                   <li key={choice.starts_at}>
                     <button

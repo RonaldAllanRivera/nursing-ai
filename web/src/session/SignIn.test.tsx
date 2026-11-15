@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
@@ -34,5 +34,22 @@ describe("sign-in screen", () => {
     await renderApp("/sign-in");
     await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+  });
+
+  it("never shows the last person's patients to the next person who signs in", async () => {
+    const { router } = await renderApp("/sign-in");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    expect(await screen.findAllByRole("link", { name: /Demo patient/ })).toHaveLength(2);
+    // Back to sign-in while still signed in, then pick the US nurse straight away.
+    await router.navigate({ to: "/sign-in" });
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Emily Carter, RN" }),
+    );
+    expect(await screen.findByRole("heading", { name: "Patients on this unit" })).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getAllByRole("link", { name: /Demo patient/ })).toHaveLength(1);
+    });
   });
 });

@@ -1,7 +1,9 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
+import { http, HttpResponse } from "msw";
 import { renderApp } from "../test/render";
+import { server } from "../test/setup";
 
 afterEach(() => {
   localStorage.clear();
@@ -84,5 +86,25 @@ describe("shell and guards", () => {
     expect(localStorage.getItem("theme")).toBe("night");
     await userEvent.click(toggle);
     expect(document.documentElement.dataset["theme"]).toBe("day");
+  });
+
+  it("keeps the admin off a patient's page too", async () => {
+    const admin = await signInAs("Admin · Victor Lazaro");
+    await screen.findByRole("heading", { name: "Settings" });
+    await admin.router.navigate({ to: "/patients/$patientId", params: { patientId: "abc" } });
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+    expect(admin.router.state.location.pathname).toBe("/settings");
+  });
+
+  it("says so when the facility's shifts do not load", async () => {
+    await renderApp("/sign-in");
+    server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
+    expect(
+      await screen.findByText("The shifts did not load. Close this and try again."),
+    ).toBeVisible();
   });
 });

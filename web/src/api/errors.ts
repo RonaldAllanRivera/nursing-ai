@@ -21,20 +21,21 @@ interface Answer<D> {
   response: Response;
 }
 
-/** Turns an openapi-fetch answer into its data, or throws an `ApiError` for TanStack Query. */
-export function unwrap<D>(answer: Answer<D>): D {
-  if (answer.response.ok && answer.data !== undefined) return answer.data;
+function toApiError(answer: Answer<unknown>): ApiError {
   const error = answer.error;
   const problem =
     typeof error === "object" && error !== null && "code" in error ? (error as Problem) : undefined;
-  throw new ApiError(answer.response.status, problem);
+  return new ApiError(answer.response.status, problem);
+}
+
+/** Turns an openapi-fetch answer into its data, or throws an `ApiError` for TanStack Query. */
+export function unwrap<D>(answer: Answer<D>): D {
+  if (answer.response.ok && answer.data !== undefined) return answer.data;
+  throw toApiError(answer);
 }
 
 /** For answers with no body (204). */
 export function ensureOk(answer: Answer<unknown>): void {
   if (answer.response.ok) return;
-  const error = answer.error;
-  const problem =
-    typeof error === "object" && error !== null && "code" in error ? (error as Problem) : undefined;
-  throw new ApiError(answer.response.status, problem);
+  throw toApiError(answer);
 }

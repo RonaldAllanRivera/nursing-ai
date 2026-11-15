@@ -44,4 +44,23 @@ describe("app router", () => {
     await queryClient.invalidateQueries({ queryKey: ["patients"] });
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
   });
+
+  it("sends you to sign-in when a write comes back 401", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
+    const choice = await screen.findByRole("button", { name: /^2-10/ });
+    server.use(
+      http.put("*/api/v1/session/shift", () =>
+        HttpResponse.json(
+          { type: "about:blank", title: "Not signed in", status: 401, code: "not_signed_in" },
+          { status: 401, headers: { "Content-Type": "application/problem+json" } },
+        ),
+      ),
+    );
+    await userEvent.click(choice);
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
 });

@@ -1,4 +1,10 @@
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ensureOk, unwrap } from "../api/errors";
 import type { components } from "../api/schema";
@@ -26,12 +32,19 @@ export const personasQuery = queryOptions({
   queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/personas", { signal })),
 });
 
+/** Nothing the last person saw may show for the next one: drop everything but who is signed in (and the sign-in list). */
+export function clearPersonData(queryClient: QueryClient) {
+  const keep = new Set<unknown>([sessionKey[0], personasQuery.queryKey[0]]);
+  queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
+}
+
 export function useSignIn() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (personaId: string) =>
       unwrap(await api.POST("/api/v1/session", { body: { persona_id: personaId } })),
     onSuccess: (session) => {
+      clearPersonData(queryClient);
       queryClient.setQueryData(sessionKey, session);
     },
   });
@@ -44,8 +57,7 @@ export function useSignOut() {
       ensureOk(await api.DELETE("/api/v1/session"));
     },
     onSuccess: () => {
-      // Nothing the last person saw may show for the next one.
-      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== sessionKey[0] });
+      clearPersonData(queryClient);
       queryClient.setQueryData(sessionKey, null);
     },
   });

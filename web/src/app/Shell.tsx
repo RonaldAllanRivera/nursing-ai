@@ -91,6 +91,11 @@ export function Shell() {
               Sign out
             </Button>
           </div>
+          {signOut.isError ? (
+            <p role="alert" className="order-last basis-full text-14 text-stop">
+              Signing out did not work. Try again.
+            </p>
+          ) : null}
         </div>
       </header>
       <AidLine />

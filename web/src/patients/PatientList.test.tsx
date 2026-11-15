@@ -1,7 +1,9 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { http, HttpResponse } from "msw";
 import { renderApp } from "../test/render";
+import { server } from "../test/setup";
 
 async function signInAs(name: string) {
   await renderApp("/sign-in");
@@ -41,5 +43,16 @@ describe("patient list", () => {
     await signInAs("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient B/ }));
     expect(await screen.findByRole("heading", { name: "Demo patient B" })).toBeVisible();
+  });
+
+  it("says so when the facility does not load, instead of a skeleton forever", async () => {
+    await renderApp("/sign-in");
+    server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    expect(
+      await screen.findByText("The ward details did not load. Reload the page to try again."),
+    ).toBeVisible();
   });
 });

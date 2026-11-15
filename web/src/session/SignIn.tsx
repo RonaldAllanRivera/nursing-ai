@@ -16,7 +16,7 @@ export function SignIn() {
     <>
       <AidLine />
       <main className="mx-auto max-w-2xl px-4 pt-4 pb-12 sm:px-6">
-        <p className="text-14 font-semibold text-ink-2">Nursing Documentation AI</p>
+        <p className="text-14 font-semibold text-ink-2">Sourceline</p>
         <h1 className="mt-1 text-24 leading-tight font-bold">Sign in</h1>
         <p className="mt-1 text-ink-2">
           Choose who you are signing in as. Everything here is made-up demo data.
@@ -32,6 +32,7 @@ export function SignIn() {
         >
           {personas.isPending ? (
             <div className="grid gap-3" aria-busy="true">
+              <span className="sr-only">Loading the people you can sign in as…</span>
               <Skeleton className="h-6 w-1/2" />
               <Skeleton className="h-11" />
               <Skeleton className="h-11" />

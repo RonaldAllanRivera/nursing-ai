@@ -12,9 +12,17 @@ export function PatientList() {
   const facility = useFacility(session?.facility_key ?? null);
   const patients = usePatients();
 
+  if (facility.isError) {
+    return (
+      <p role="alert" className="pt-2 text-stop">
+        The ward details did not load. Reload the page to try again.
+      </p>
+    );
+  }
   if (!facility.data) {
     return (
       <div aria-busy="true" className="grid gap-3 pt-2">
+        <span className="sr-only">Loading the patients…</span>
         <Skeleton className="h-8 w-2/3" />
         <Skeleton className="h-16" />
         <Skeleton className="h-16" />
@@ -37,6 +45,7 @@ export function PatientList() {
       <div className="mt-4 overflow-hidden rounded-sheet border border-rule bg-sheet shadow-(--lift)">
         {patients.isPending ? (
           <div aria-busy="true" className="grid gap-px p-3">
+            <span className="sr-only">Loading the patients…</span>
             <Skeleton className="h-14" />
             <Skeleton className="h-14" />
           </div>
@@ -46,7 +55,8 @@ export function PatientList() {
           </p>
         ) : patients.data.length === 0 ? (
           <p className="p-4 text-ink-2">
-            No patients on this {w.ward.toLowerCase()} yet. Ask the head nurse to add them.
+            No patients are listed on this {w.ward.toLowerCase()} yet. They appear here as soon as
+            they are admitted.
           </p>
         ) : (
           <ul className="m-0 list-none p-0">
