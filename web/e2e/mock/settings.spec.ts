@@ -75,6 +75,8 @@ test("a gap shows above the shifts before Save, and the page is still accessible
   await page.getByRole("group", { name: "Shift 2" }).getByLabel("Starts").fill("15:00");
   await expect(page.getByText("There's a gap between 14:00 and 15:00.")).toBeVisible();
   await page.getByRole("button", { name: "Save settings" }).click();
+  // Save found the problem and sent nothing: the problems block has the focus, and nothing is saved.
+  await expect(page.locator("#shift-problems")).toBeFocused();
   await expect(page.getByRole("status")).not.toContainText("Saved.");
   await noSidewaysScroll(page);
   await expectNoViolations(page);

@@ -53,6 +53,22 @@ export function formatTime(
 }
 
 /**
+ * A local clock time ("14:30", no date, no zone) as the facility's clock words it: `"14:30"`, or
+ * `"2:30 PM"` (`"2 PM"` on the hour), the same wording as `formatTime`. A value that is not a
+ * time comes back as it was.
+ */
+export function formatLocalTime(time: string, clock: Clock): string {
+  const found = /^(\d{2}):(\d{2})/.exec(time);
+  if (!found) return time;
+  const hours = Number(found[1]);
+  const minutes = found[2] ?? "00";
+  if (clock === "24h") return `${String(hours).padStart(2, "0")}:${minutes}`;
+  const period = hours < 12 ? "AM" : "PM";
+  const hour = hours % 12 === 0 ? 12 : hours % 12;
+  return minutes === "00" ? `${String(hour)} ${period}` : `${String(hour)}:${minutes} ${period}`;
+}
+
+/**
  * A shift in its own zone: `"22:00 11 Nov to 06:00 12 Nov 2026"`. One date when both ends fall
  * on the same day, and the year on both dates when it differs.
  */

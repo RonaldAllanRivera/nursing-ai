@@ -47,8 +47,8 @@ export function TableProblems({
         Fix the shifts before you save
       </p>
       <ul className="mt-1 list-disc pl-8">
-        {problems.map((problem) => (
-          <li key={problem}>{problem}</li>
+        {problems.map((problem, at) => (
+          <li key={`${String(at)}-${problem}`}>{problem}</li>
         ))}
       </ul>
     </div>

@@ -11,8 +11,9 @@ import { facilitySettingsQuery, useSaveFacility } from "./facilities";
 import { Field, INPUT, RadioGroup } from "./fields";
 import {
   mapProblems,
+  saveFailureText,
   settingsSchema,
-  timeZones,
+  timeZoneSuggestions,
   toFormValues,
   toSettings,
   type FormValues,
@@ -52,12 +53,6 @@ function Sheet({ id, title, children }: { id: string; title: string; children: R
   );
 }
 
-/** "f3" is settings version 3. The tag itself is the server's business; the screen says the number. */
-function versionOf(etag: string | null): string {
-  const found = etag ? /(\d+)/.exec(etag) : null;
-  return found?.[1] ?? "";
-}
-
 type Failure = "stale" | "reload" | "other" | null;
 
 function Editor({
@@ -72,7 +67,10 @@ function Editor({
   const queryClient = useQueryClient();
   const save = useSaveFacility(facilityKey);
   const schema = useMemo(() => settingsSchema(), []);
-  const zones = useMemo(() => timeZones(), []);
+  const zones = useMemo(
+    () => timeZoneSuggestions(loaded.facility.profile.timezone),
+    [loaded.facility.profile.timezone],
+  );
   // The version this form was loaded from (or last saved as): what the next save is made against.
   const [etag, setEtag] = useState(loaded.etag);
   const formElement = useRef<HTMLFormElement>(null);
@@ -86,6 +84,7 @@ function Editor({
 
   const [savedVersion, setSavedVersion] = useState<string | null>(null);
   const [failure, setFailure] = useState<Failure>(null);
+  const [otherText, setOtherText] = useState("");
   const [reloading, setReloading] = useState(false);
   const [serverTable, setServerTable] = useState<string[]>([]);
   const [serverOther, setServerOther] = useState<string[]>([]);
@@ -109,6 +108,7 @@ function Editor({
       ends_local: s.ends_local ?? "",
     })),
     values.day_starts_at ?? "",
+    values.clock ?? "24h",
   );
   const problems = [...local, ...serverTable.filter((message) => !local.includes(message))];
 
@@ -137,12 +137,16 @@ function Editor({
       setEtag(saved.etag);
       reset(toFormValues(saved.facility));
       setServerTable([]);
-      setSavedVersion(versionOf(saved.etag) || String(saved.facility.version));
+      setSavedVersion(String(saved.facility.version));
     } catch (error) {
-      if (error instanceof ApiError && error.status === 412) {
+      const status = error instanceof ApiError ? error.status : null;
+      const mapped = mapProblems(
+        error instanceof ApiError && status === 422 ? (error.problem?.errors ?? []) : [],
+      );
+      const named = mapped.fields.length + mapped.table.length + mapped.other.length > 0;
+      if (status === 412) {
         setFailure("stale");
-      } else if (error instanceof ApiError && error.status === 422 && error.problem?.errors) {
-        const mapped = mapProblems(error.problem.errors);
+      } else if (status === 422 && named) {
         for (const { name, message } of mapped.fields) {
           setError(name as `shifts.${number}.code`, { type: "server", message });
         }
@@ -150,6 +154,8 @@ function Editor({
         setServerOther(mapped.other);
         focusAfterRender(mapped.fields.length > 0 ? "field" : "table");
       } else {
+        // Nothing to put next to a field: a plain line says what happened and what to do.
+        setOtherText(saveFailureText(status));
         setFailure("other");
       }
     }
@@ -176,7 +182,6 @@ function Editor({
     <form
       ref={formElement}
       noValidate
-      data-etag={etag ?? undefined}
       // Editing takes the server's table message away: it described the last send.
       onChange={() => {
         setServerTable([]);
@@ -286,8 +291,8 @@ function Editor({
 
       {serverOther.length > 0 ? (
         <ul role="alert" className="m-0 grid list-none gap-1 p-0 text-stop">
-          {serverOther.map((message) => (
-            <li key={message} className="flex items-start gap-2">
+          {serverOther.map((message, at) => (
+            <li key={`${String(at)}-${message}`} className="flex items-start gap-2">
               <Icon name="flag" className="mt-0.5" />
               {message}
             </li>
@@ -320,7 +325,7 @@ function Editor({
       {failure === "other" ? (
         <p role="alert" className="flex items-start gap-2 text-stop">
           <Icon name="flag" className="mt-0.5" />
-          The settings were not saved. Check your connection and try again.
+          {otherText}
         </p>
       ) : null}
 
@@ -365,10 +370,20 @@ export function FacilityForm({
   }
   if (settings.isError) {
     return (
-      <p role="alert" className="mt-4 flex items-start gap-2 text-stop">
-        <Icon name="flag" className="mt-0.5" />
-        This facility's settings did not load. Choose the facility again, or reload the page.
-      </p>
+      <div role="alert" className="mt-4 grid justify-items-start gap-2 text-stop">
+        <p className="flex items-start gap-2">
+          <Icon name="flag" className="mt-0.5" />
+          This facility's settings did not load.
+        </p>
+        <Button
+          aria-disabled={settings.isFetching || undefined}
+          onClick={() => {
+            if (!settings.isFetching) void settings.refetch();
+          }}
+        >
+          {settings.isFetching ? "Trying again…" : "Try again"}
+        </Button>
+      </div>
     );
   }
   return (

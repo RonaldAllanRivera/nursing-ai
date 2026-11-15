@@ -3,6 +3,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   redirect,
   type RouterHistory,
@@ -10,7 +11,6 @@ import {
 import { NotePage } from "../notes/NotePage";
 import { PatientList } from "../patients/PatientList";
 import { PatientPage } from "../patients/PatientPage";
-import { SettingsPage } from "../settings/SettingsPage";
 import { SignIn } from "../session/SignIn";
 import { sessionQuery } from "../session/session";
 import { Shell } from "./Shell";
@@ -102,7 +102,8 @@ const settingsRoute = createRoute({
     // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
     if (session.facility_key !== null) throw redirect({ to: "/patients" });
   },
-  component: SettingsPage,
+  // Only the admin has this screen, so a nurse never downloads its form libraries.
+  component: lazyRouteComponent(() => import("../settings/SettingsPage"), "SettingsPage"),
 });
 
 const routeTree = rootRoute.addChildren([

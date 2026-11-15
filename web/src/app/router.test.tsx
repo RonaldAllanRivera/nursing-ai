@@ -45,6 +45,17 @@ describe("app router", () => {
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
   });
 
+  it("loads the lazy Settings route for the admin, and sends nobody else there", async () => {
+    const admin = await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+    expect(admin.router.state.location.pathname).toBe("/settings");
+    expect(await screen.findByRole("textbox", { name: "Facility name" })).toBeVisible();
+    admin.unmount();
+    await renderApp("/settings");
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
+
   it("sends you to sign-in when a write comes back 401", async () => {
     await renderApp("/sign-in");
     await userEvent.click(

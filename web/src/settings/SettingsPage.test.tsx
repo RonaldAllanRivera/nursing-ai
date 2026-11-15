@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 import { facilityQuery } from "../facility/useFacility";
+import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 
@@ -10,8 +11,10 @@ afterEach(() => {
   server.events.removeAllListeners();
 });
 
-async function openSettings() {
+/** Signs in as the admin. `before` runs once the mock is in place, to change what it answers. */
+async function openSettings(before?: () => void) {
   const view = await renderApp("/sign-in");
+  before?.();
   await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
   await screen.findByRole("heading", { name: "Settings" });
   const name = await screen.findByRole("textbox", { name: "Facility name" });
@@ -88,12 +91,26 @@ describe("the settings screen", () => {
     fireEvent.change(within(shift(2)).getByLabelText("Starts"), { target: { value: "15:00" } });
     const problem = await screen.findByText("There's a gap between 14:00 and 15:00.");
     expect(problem).toBeVisible();
+    // Above the first shift, inside the shifts table.
+    expect(screen.getByRole("group", { name: "Shifts" })).toContainElement(problem);
     expect(
-      screen.getByRole("group", { name: "Shifts" }).compareDocumentPosition(problem),
+      problem.compareDocumentPosition(shift(1)) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect(problem).toBeVisible();
+    expect(document.getElementById("shift-problems")).toHaveFocus();
     expect(puts.count).toBe(0);
+  });
+
+  it("words the shift problems in the clock being edited", async () => {
+    await openSettings();
+    fireEvent.change(within(shift(2)).getByLabelText("Starts"), { target: { value: "15:00" } });
+    expect(await screen.findByText("There's a gap between 14:00 and 15:00.")).toBeVisible();
+    await userEvent.click(screen.getByRole("radio", { name: "12-hour" }));
+    expect(await screen.findByText("There's a gap between 2 PM and 3 PM.")).toBeVisible();
+    expect(screen.queryByText("There's a gap between 14:00 and 15:00.")).toBeNull();
+    await userEvent.click(screen.getByRole("radio", { name: "24-hour" }));
+    expect(await screen.findByText("There's a gap between 14:00 and 15:00.")).toBeVisible();
   });
 
   it("checks every field before it sends the form", async () => {
@@ -108,14 +125,68 @@ describe("the settings screen", () => {
     expect(puts.count).toBe(0);
   });
 
-  it("only takes a timezone from the list", async () => {
+  it("turns away a timezone nobody knows", async () => {
     await openSettings();
+    const puts = countPuts();
     const zone = screen.getByRole("combobox", { name: "Timezone" });
     await userEvent.clear(zone);
-    await userEvent.type(zone, "Mars/Olympus");
+    await userEvent.type(zone, "Mars/Base");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(zone).toHaveAccessibleDescription(
-      "Choose a timezone from the list, such as Europe/Paris.",
+    expect(zone).toHaveAccessibleDescription("Enter a real timezone, such as Europe/Paris.");
+    expect(zone).toBeInvalid();
+    expect(puts.count).toBe(0);
+  });
+
+  it("saves a label rename for a facility whose zone is UTC, and suggests UTC", async () => {
+    await openSettings(() => {
+      const stored = structuredClone(demoApi.facilities["ph-demo"]);
+      if (!stored) throw new Error("no demo facility");
+      stored.profile.timezone = "UTC";
+      server.use(
+        http.get("*/api/v1/facilities/:key", () =>
+          HttpResponse.json(stored, { headers: { ETag: '"f1"' } }),
+        ),
+      );
+    });
+    expect(screen.getByRole("combobox", { name: "Timezone" })).toHaveValue("UTC");
+    expect(document.querySelector('#timezone-list option[value="UTC"]')).not.toBeNull();
+    const label = within(shift(3)).getByLabelText("Label");
+    await userEvent.clear(label);
+    await userEvent.type(label, "Night");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Saved.");
+    });
+    expect(screen.getByRole("combobox", { name: "Timezone" })).toHaveValue("UTC");
+  });
+
+  it("says what to do for a refusal that names no field, and for one the server blames on the account", async () => {
+    await openSettings();
+    server.use(http.put("*/api/v1/facilities/:key", () => refuse(422, "invalid_request", [])));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The server did not accept the settings and named no field. Check each field, then try again.",
+    );
+    server.use(http.put("*/api/v1/facilities/:key", () => refuse(403, "forbidden")));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "This account can't change settings. Sign out, then sign in as the admin.",
+      );
+    });
+  });
+
+  it("offers Try again when one facility's settings do not load", async () => {
+    await renderApp("/sign-in");
+    server.use(
+      http.get("*/api/v1/facilities/:key", () => refuse(404, "not_found"), { once: true }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("This facility's settings did not load.");
+    await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("textbox", { name: "Facility name" })).toHaveValue(
+      "SYNTHETIC Demo Hospital (PH)",
     );
   });
 

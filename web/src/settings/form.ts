@@ -21,14 +21,32 @@ export interface FormValues {
   clock: "24h" | "12h";
 }
 
-/** The zones the timezone box offers, and the only ones it accepts. */
-export function timeZones(): string[] {
-  return Intl.supportedValuesOf("timeZone");
+/**
+ * Whether the browser knows this timezone. The server's own list is the judge (it checks again);
+ * this only turns away what no list could hold, such as "Mars/Base", before a send.
+ */
+export function isUsableTimeZone(value: string): boolean {
+  if (value.trim() === "") return false;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value.trim() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What the timezone box suggests: the browser's zones, the facility's own zone (the browser's
+ * list may spell it another way, or leave it out) and UTC. Any other zone can still be typed.
+ */
+export function timeZoneSuggestions(current: string): string[] {
+  return [...new Set([...Intl.supportedValuesOf("timeZone"), current, "UTC"])].filter(
+    (zone) => zone !== "",
+  );
 }
 
 /** The field-level rules (what the server checks on each field). The whole-table rules are `checkShifts`. */
-export function settingsSchema(zones: readonly string[] = timeZones()) {
-  const known = new Set(zones);
+export function settingsSchema() {
   const time = (message: string) => z.string().regex(/^\d{2}:\d{2}$/, message);
   return z.object({
     name: z
@@ -39,10 +57,7 @@ export function settingsSchema(zones: readonly string[] = timeZones()) {
     timezone: z
       .string()
       .trim()
-      .refine(
-        (value) => known.has(value),
-        "Choose a timezone from the list, such as Europe/Paris.",
-      ),
+      .refine(isUsableTimeZone, "Enter a real timezone, such as Europe/Paris."),
     locale: z.enum(["en-PH", "en-US"], "Choose a locale."),
     day_starts_at: time("Enter the time the nursing day starts."),
     shifts: z.array(
@@ -149,4 +164,17 @@ export function mapProblems(errors: readonly Schemas["FieldError"][]): MappedPro
     }
   }
   return mapped;
+}
+
+/** Why a save was refused, in words that say what to do next. 412 and a mapped 422 have their own lines. */
+export function saveFailureText(status: number | null): string {
+  if (status === null) return "The settings were not saved. Check your connection and try again.";
+  if (status === 403)
+    return "This account can't change settings. Sign out, then sign in as the admin.";
+  if (status === 404) return "This facility is no longer there. Reload the page to see the list.";
+  if (status === 422) {
+    return "The server did not accept the settings and named no field. Check each field, then try again.";
+  }
+  if (status >= 500) return "The server had a problem saving. Wait a moment, then try again.";
+  return "The settings were not saved because this page is out of date. Reload the page, then try again.";
 }

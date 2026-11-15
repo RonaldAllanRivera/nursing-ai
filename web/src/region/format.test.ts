@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../api/schema";
-import { formatDate, formatDayMonth, formatShiftRange, formatTime } from "./format";
+import {
+  formatDate,
+  formatDayMonth,
+  formatLocalTime,
+  formatShiftRange,
+  formatTime,
+} from "./format";
 
 type ShiftRef = components["schemas"]["ShiftRef"];
 
@@ -73,5 +79,23 @@ describe("formatShiftRange", () => {
     expect(formatShiftRange(night, { locale: "en-US", clock: "12h" })).toBe(
       "10 PM 11 Nov to 6 AM 12 Nov 2026",
     );
+  });
+});
+
+describe("formatLocalTime", () => {
+  it("keeps a local time as HH:MM on the 24-hour clock", () => {
+    expect(formatLocalTime("14:00", "24h")).toBe("14:00");
+    expect(formatLocalTime("06:05", "24h")).toBe("06:05");
+    expect(formatLocalTime("14:00:00", "24h")).toBe("14:00");
+  });
+
+  it("words it like formatTime on the 12-hour clock", () => {
+    expect(formatLocalTime("14:00", "12h")).toBe("2 PM");
+    expect(formatLocalTime("14:30", "12h")).toBe("2:30 PM");
+    expect(formatLocalTime("06:00", "12h")).toBe("6 AM");
+    expect(formatLocalTime("00:00", "12h")).toBe("12 AM");
+    expect(formatLocalTime("00:15", "12h")).toBe("12:15 AM");
+    expect(formatLocalTime("12:00", "12h")).toBe("12 PM");
+    expect(formatLocalTime("23:59", "12h")).toBe("11:59 PM");
   });
 });
