@@ -109,8 +109,19 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
             yield http
 
 
+# Routes a lane has filled in: they no longer answer 501 (the other tests here still cover them).
+FILLED = {
+    ("GET", "/api/v1/personas"),
+    ("POST", "/api/v1/session"),
+    ("GET", "/api/v1/session"),
+    ("DELETE", "/api/v1/session"),
+    ("PUT", "/api/v1/session/shift"),
+}
+NOT_BUILT = [route for route in ROUTES if (route[0], route[1]) not in FILLED]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("method", "path", "body", "headers", "_ok", "_problems"), ROUTES)
+@pytest.mark.parametrize(("method", "path", "body", "headers", "_ok", "_problems"), NOT_BUILT)
 async def test_p1_routes_answer_501_problem(
     client: httpx.AsyncClient,
     method: str,

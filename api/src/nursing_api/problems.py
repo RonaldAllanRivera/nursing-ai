@@ -4,11 +4,20 @@ Errors never echo the request: a validation error names the field and the rule, 
 typed or an unknown key, because a request body can hold note text or a name.
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from nursing_core.domain.errors import (
+    Forbidden,
+    IdempotencyConflict,
+    NoteLocked,
+    NotFound,
+    ReviewIncomplete,
+    StaleVersion,
+)
 from pydantic import BaseModel
 
 PROBLEM_JSON = "application/problem+json"
@@ -89,6 +98,14 @@ class NotImplementedRoute(Exception):
     """A declared route that a lane hasn't filled in yet."""
 
 
+class NotSignedIn(Exception):
+    """No session cookie, or one that names no live session."""
+
+
+class PreconditionRequired(Exception):
+    """A header the change needs (If-Match or Idempotency-Key) is missing."""
+
+
 def problem_response(
     status: int,
     code: ProblemCode,
@@ -141,9 +158,38 @@ async def _invalid(_request: Request, exc: Exception) -> JSONResponse:
     return problem_response(422, "invalid_request", "see errors", errors=errors or None)
 
 
+# Each domain error and the problem it becomes. A problem never carries the error's message.
+_SIMPLE: dict[type[Exception], tuple[int, ProblemCode]] = {
+    NotSignedIn: (401, "not_signed_in"),
+    Forbidden: (403, "forbidden"),
+    NotFound: (404, "not_found"),
+    NoteLocked: (409, "note_locked"),
+    StaleVersion: (412, "stale_version"),
+    IdempotencyConflict: (422, "idempotency_key_reused"),
+    PreconditionRequired: (428, "precondition_required"),
+}
+
+
+def _simple_handler(
+    status: int, code: ProblemCode
+) -> Callable[[Request, Exception], Awaitable[JSONResponse]]:
+    async def handle(_request: Request, _exc: Exception) -> JSONResponse:
+        return problem_response(status, code)
+
+    return handle
+
+
+async def _review_incomplete(_request: Request, exc: Exception) -> JSONResponse:
+    lines = exc.line_ids if isinstance(exc, ReviewIncomplete) else []
+    return problem_response(409, "review_incomplete", line_ids=lines)
+
+
 def install_problems(app: FastAPI) -> None:
     """Problem handlers, and an OpenAPI document whose errors are application/problem+json."""
     app.add_exception_handler(NotImplementedRoute, _not_implemented)
+    for error, (status, code) in _SIMPLE.items():
+        app.add_exception_handler(error, _simple_handler(status, code))
+    app.add_exception_handler(ReviewIncomplete, _review_incomplete)
     app.add_exception_handler(RequestValidationError, _invalid)
     plain_openapi = app.openapi
 
