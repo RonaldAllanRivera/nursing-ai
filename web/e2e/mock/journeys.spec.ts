@@ -85,9 +85,10 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
 
   // Save, wait for the draft.
   await page.getByRole("button", { name: "Save note" }).click();
-  await expect(
-    page.getByText("Drafting your note. This usually takes a few seconds."),
-  ).toBeVisible();
+  const drafting = "Drafting your note. This usually takes a few seconds.";
+  // The visible line, not the screen-reader region that says the same words.
+  await expect(page.locator("form p:not([role=status]) span").getByText(drafting)).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText(drafting);
   await shot(page, "drafting");
   await expect(page).toHaveURL(NOTE_URL, { timeout: 8000 });
   await expect(page.getByRole("heading", { name: "Your note" })).toBeVisible();
