@@ -14,7 +14,7 @@ from nursing_core.domain.model_output import (
     ModelLine,
     ProviderResult,
 )
-from nursing_core.domain.notes import ChecklistRule, RoughNote
+from nursing_core.domain.notes import ChecklistRule, MismatchKind, RoughNote
 from nursing_core.domain.patient import PatientRecord, PatientSummary
 from nursing_core.pipeline.fdar import PipelineResult, run_fdar_pipeline
 from nursing_core.prompts import FDAR_PROMPT_VERSION
@@ -161,7 +161,7 @@ async def test_line_ids_number_each_section_per_entry() -> None:
 @pytest.mark.asyncio
 async def test_earlier_notes_count_and_later_or_duplicate_notes_are_skipped() -> None:
     case = CASES[0]
-    tube = case.context.lines_tubes[0].kind
+    tube = case.context.lines_tubes[0].aliases[0]
     patient = _patient(case)
     current = _note(case, text="Patient resting.")
     earlier = current.model_copy(
@@ -183,6 +183,12 @@ async def test_earlier_notes_count_and_later_or_duplicate_notes_are_skipped() ->
     assert skipped.checklist == alone.checklist
     assert _missing(alone, ChecklistRule.LINE_OR_TUBE)
     assert not _missing(counted, ChecklistRule.LINE_OR_TUBE)
+    # the current note is the last one: it does not mention the tube, so no span is pointed at
+    tube_item = next(i for i in counted.checklist if i.rule is ChecklistRule.LINE_OR_TUBE)
+    assert tube_item.note_span is None
+    at_same_moment = earlier.model_copy(update={"written_at": current.written_at})
+    same_time = await run_fdar_pipeline(current, patient, [at_same_moment], provider)
+    assert not _missing(same_time, ChecklistRule.LINE_OR_TUBE)
 
 
 @pytest.mark.asyncio
@@ -197,3 +203,56 @@ async def test_provider_errors_pass_through() -> None:
     case = CASES[0]
     with pytest.raises(AiBudgetReached):
         await run_fdar_pipeline(case.rough_note, _patient(case), [], _Failing())
+
+
+def _unitless_temperature_case() -> tuple[DemoCase, ModelFdarDraft]:
+    case = next(c for c in CASES if c.facility_key == "us-demo")
+    line = ModelLine(
+        text="Temperature 100.2 \u00b0F.", source_quotes=["T 100.2"], own_wording=False
+    )
+    return case, _output(_entry(data=[line]))
+
+
+@pytest.mark.asyncio
+async def test_units_come_from_the_patients_facility() -> None:
+    case, output = _unitless_temperature_case()
+    note = _note(case, text="Resting. T 100.2 at 0400.")
+    us_patient = _patient(case)
+    ph_facility = next(f for f in DEMO_FACILITIES if f.key == "ph-demo")
+    ph_patient = us_patient.model_copy(update={"facility": ph_facility})
+    us = await run_fdar_pipeline(note, us_patient, [], FakeProvider(output))
+    ph = await run_fdar_pipeline(note, ph_patient, [], FakeProvider(output))
+    assert us.draft.entries[0].data[0].number_mismatches == []
+    assert [m.kind for m in ph.draft.entries[0].data[0].number_mismatches] == [MismatchKind.UNIT]
+
+
+@pytest.mark.asyncio
+async def test_generation_info_comes_from_the_provider() -> None:
+    case = CASES[0]
+    provider = FakeProvider(_output(_entry()))
+    result = await run_fdar_pipeline(case.rough_note, _patient(case), [], provider)
+    expected = await provider.draft_fdar(
+        DraftRequest(
+            redacted_text="x",
+            note_format=case.rough_note.note_format,
+            locale=_patient(case).facility.locale,
+            prompt_version="custom-version",
+        )
+    )
+    other = await run_fdar_pipeline(
+        case.rough_note, _patient(case), [], provider, prompt_version="custom-version"
+    )
+    assert result.generation.prompt_version == FDAR_PROMPT_VERSION
+    assert other.generation == expected.generation
+
+
+@pytest.mark.asyncio
+async def test_line_text_gets_the_typed_name_back() -> None:
+    case = next(c for c in CASES if c.patient.relatives)
+    relative = case.patient.relatives[0].name
+    note = _note(case, text=f"{relative} at bedside, informed.")
+    line = ModelLine(text="[RELATIVE_1] at bedside.", source_quotes=[], own_wording=True)
+    result = await run_fdar_pipeline(
+        note, _patient(case), [], FakeProvider(_output(_entry(data=[line])))
+    )
+    assert result.draft.entries[0].data[0].text == f"{relative} at bedside."
