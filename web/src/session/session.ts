@@ -32,10 +32,14 @@ export const personasQuery = queryOptions({
   queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/personas", { signal })),
 });
 
-/** Nothing the last person saw may show for the next one: drop everything but who is signed in (and the sign-in list). */
+/**
+ * Nothing the last person saw may show for the next one: drop everything but who is signed in (and
+ * the sign-in list), and every finished, pending or failed write (it holds her typed text).
+ */
 export function clearPersonData(queryClient: QueryClient) {
   const keep = new Set<unknown>([sessionKey[0], personasQuery.queryKey[0]]);
   queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
+  queryClient.getMutationCache().clear();
 }
 
 export function useSignIn() {

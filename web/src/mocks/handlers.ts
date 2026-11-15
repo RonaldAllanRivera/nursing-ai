@@ -502,5 +502,3 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
     }),
   ];
 }
-
-export const handlers = createHandlers();

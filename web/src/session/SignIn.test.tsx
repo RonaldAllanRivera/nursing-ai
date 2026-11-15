@@ -1,6 +1,8 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
+import { server } from "../test/setup";
 import { renderApp } from "../test/render";
 
 describe("sign-in screen", () => {
@@ -51,5 +53,18 @@ describe("sign-in screen", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("link", { name: /Demo patient/ })).toHaveLength(1);
     });
+  });
+
+  it("keeps the list of people when a refresh of it fails", async () => {
+    const { queryClient } = await renderApp("/sign-in");
+    expect(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    ).toBeVisible();
+    server.use(http.get("*/api/v1/personas", () => HttpResponse.json({}, { status: 500 })));
+    await queryClient.invalidateQueries({ queryKey: ["personas"] });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(queryClient.getQueryState(["personas"])?.status).toBe("error");
+    expect(screen.getByRole("button", { name: "Staff nurse · Sarah Navarro, RN" })).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

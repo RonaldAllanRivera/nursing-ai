@@ -13,6 +13,11 @@ function entryKey(noteId: string) {
   return noteQuery(noteId).queryKey;
 }
 
+/** Every write to one note shares this scope, so TanStack runs them one after the other. */
+function noteScope(noteId: string) {
+  return `note:${noteId}`;
+}
+
 /** The tag of the version this screen shows: what a change must be made against. */
 function currentEtag(queryClient: QueryClient, noteId: string): string | null {
   return queryClient.getQueryData(entryKey(noteId))?.etag ?? null;
@@ -31,6 +36,8 @@ function keepAnswer(
 export function useActOnLine(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
+    // One write to a note at a time: the next one waits, and then sends the version the last returned.
+    scope: { id: noteScope(noteId) },
     mutationFn: async ({ lineId, body }: { lineId: string; body: LineBody }) => {
       const answer = await api.PATCH("/api/v1/notes/{note_id}/lines/{line_id}", {
         params: {
@@ -53,6 +60,7 @@ export function useActOnLine(noteId: string) {
 export function useFinishNote(noteId: string, how: "sign" | "discard") {
   const queryClient = useQueryClient();
   return useMutation({
+    scope: { id: noteScope(noteId) },
     mutationFn: async () => {
       const params = {
         params: {

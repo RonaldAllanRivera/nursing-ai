@@ -13,6 +13,7 @@ import { PatientList } from "../patients/PatientList";
 import { PatientPage } from "../patients/PatientPage";
 import { SignIn } from "../session/SignIn";
 import { sessionQuery } from "../session/session";
+import { ErrorScreen, NotFoundScreen, PendingScreen } from "./RouteScreens";
 import { Shell } from "./Shell";
 
 export interface RouterContext {
@@ -123,6 +124,9 @@ export function createAppRouter({
   return createRouter({
     routeTree,
     context: { queryClient },
+    defaultErrorComponent: ErrorScreen,
+    defaultNotFoundComponent: NotFoundScreen,
+    defaultPendingComponent: PendingScreen,
     ...(history ? { history } : {}),
   });
 }

@@ -217,6 +217,23 @@ describe("patient page", () => {
       expect(keys).toHaveLength(1);
     });
 
+    it("announces how to save again, and ties the hint to the note box", async () => {
+      await openPatientA();
+      failJob();
+      recordPosts(() => undefined);
+      await typeNote("pt c/o hilo");
+      await save();
+      await screen.findByText("To save a new note, change the text.");
+      await waitFor(() => {
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "To save a new note, change the text in the box.",
+        );
+      });
+      expect(screen.getByLabelText("Your note")).toHaveAccessibleDescription(
+        /To save a new note, change the text\./,
+      );
+    });
+
     it("enables Save note again after an edit and sends a new key", async () => {
       await openPatientA();
       failJob();
@@ -290,6 +307,29 @@ describe("patient page", () => {
     await save();
     expect(await screen.findByText("Saving your note…")).toBeVisible();
     await screen.findByText("Drafting your note. This usually takes a few seconds.");
+  });
+
+  it("says each step in one status region that stays on the page", async () => {
+    await openPatientA();
+    const region = screen.getByRole("status");
+    expect(region).toHaveTextContent("");
+    server.use(
+      http.post(ROUGH_URL, async () => {
+        await delay(300);
+        return undefined;
+      }),
+    );
+    await typeNote("pt c/o hilo");
+    await save();
+    await waitFor(() => {
+      expect(region).toHaveTextContent("Saving your note.");
+    });
+    await waitFor(() => {
+      expect(region).toHaveTextContent("Drafting your note.");
+    });
+    expect(screen.getByRole("status")).toBe(region);
+    // The visible lines are not live regions of their own.
+    expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
   it("says it is waiting for the network when the browser is offline", async () => {

@@ -264,6 +264,29 @@ describe("acting on a line", () => {
     expect(seen).toEqual(['"v1"']);
     expect(app.queryClient.getQueryData<{ etag: string }>(["note", NOTE_1])?.etag).toBe('"v2"');
   });
+
+  it("queues a second action on the note behind the first, and sends the version the first returned", async () => {
+    const seen: (string | null)[] = [];
+    await openNote();
+    server.use(
+      http.patch("*/api/v1/notes/:id/lines/:lineId", async ({ request }) => {
+        seen.push(request.headers.get("If-Match"));
+        const first = seen.length === 1;
+        if (first) await delay(250);
+        return HttpResponse.json(demoNote(NOTE_1), { headers: { ETag: first ? '"v2"' : '"v3"' } });
+      }),
+    );
+    await userEvent.click(line(FOCUS));
+    await userEvent.click(card().getByRole("button", { name: "Wording is right" }));
+    // The first PATCH is still out: pick another line and act on it.
+    await userEvent.click(line(PHYSICIAN));
+    await userEvent.click(card().getByRole("button", { name: "Remove line" }));
+    await waitFor(() => {
+      expect(seen).toEqual(['"v1"', '"v2"']);
+    });
+    await said("Line removed.");
+    expect(screen.queryByText(/changed somewhere else/)).toBeNull();
+  });
 });
 
 describe("signing", () => {

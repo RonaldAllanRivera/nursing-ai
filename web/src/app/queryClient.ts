@@ -2,7 +2,7 @@ import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/errors";
 import { sessionKey } from "../session/session";
 
-/** TanStack's default (3 tries), except a 4xx answer: the server meant it, so ask no more. */
+/** TanStack's default (3 retries, so 4 tries), except a 4xx answer: the server meant it, so ask no more. */
 export function retryQuery(failureCount: number, error: Error): boolean {
   if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
   return failureCount < 3;

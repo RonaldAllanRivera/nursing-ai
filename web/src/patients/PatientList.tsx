@@ -14,7 +14,7 @@ export function PatientList() {
   const facility = useFacility(session?.facility_key ?? null);
   const patients = usePatients();
 
-  if (facility.isError) {
+  if (facility.isError && !facility.data) {
     return (
       <p role="alert" className="pt-2 text-stop">
         The ward details did not load. Reload the page to try again.
@@ -51,7 +51,7 @@ export function PatientList() {
             <Skeleton className="h-14" />
             <Skeleton className="h-14" />
           </div>
-        ) : patients.isError ? (
+        ) : patients.isError && !patients.data ? (
           <p role="alert" className="p-4 text-stop">
             The patients did not load. Reload the page to try again.
           </p>

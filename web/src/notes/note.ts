@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import { unwrap } from "../api/errors";
 
 /**
- * One note and its ETag. The tag is kept with the note because every change to it (W5) sends it
+ * One note and its ETag. The tag is kept with the note because every change to the note sends it
  * back as `If-Match`, so the server can tell a stale screen from a current one.
  */
 export const noteQuery = (id: string) =>

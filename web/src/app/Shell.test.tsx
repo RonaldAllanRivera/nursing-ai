@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -96,15 +96,35 @@ describe("shell and guards", () => {
     expect(admin.router.state.location.pathname).toBe("/settings");
   });
 
-  it("says so when the facility's shifts do not load", async () => {
+  it("says so when the facility's shifts do not load, and Try again fetches them", async () => {
     await renderApp("/sign-in");
-    server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
+    let down = true;
+    server.use(
+      http.get("*/api/v1/facilities/:key", () =>
+        down ? HttpResponse.json({}, { status: 500 }) : undefined,
+      ),
+    );
     await userEvent.click(
       await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
     );
     await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
-    expect(
-      await screen.findByText("The shifts did not load. Close this and try again."),
-    ).toBeVisible();
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    expect(await group.findByText("The shifts did not load.")).toBeVisible();
+    down = false;
+    await userEvent.click(group.getByRole("button", { name: "Try again" }));
+    expect(await group.findByRole("button", { name: /^2-10/ })).toBeVisible();
+    expect(group.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the shifts on screen when a refresh of the facility fails", async () => {
+    const { queryClient } = await signInAs("Staff nurse · Sarah Navarro, RN");
+    await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    expect(await group.findByRole("button", { name: /^2-10/ })).toBeVisible();
+    server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
+    await queryClient.invalidateQueries({ queryKey: ["facility"] });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(group.getByRole("button", { name: /^2-10/ })).toBeVisible();
+    expect(group.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

@@ -22,6 +22,7 @@ const SPOKEN_COUNT = {
   "-1": "Over the limit. Shorten your note to save it.",
 } as const;
 
+/** One visible line under the note. Only a failure is a live alert; progress is said by the status region. */
 function Line({
   icon,
   tone,
@@ -30,7 +31,7 @@ function Line({
 }: {
   icon: IconName;
   tone: string;
-  role: "status" | "alert";
+  role?: "alert";
   children: ReactNode;
 }) {
   return (
@@ -84,6 +85,39 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
 
   const refused = isRefused(save.error);
   const step = announceStep(left);
+  const showAgainHint = (failed || lost) && sameAsSent;
+
+  // What a screen reader hears, in one region that is always on the page (a node that appears is
+  // often not read; a change in a node that was there is). The words differ from the visible
+  // lines on purpose, so the page does not say the same thing twice. Failures are alerts instead.
+  const spoken = showAgainHint
+    ? "To save a new note, change the text in the box."
+    : save.isPending && !save.isPaused
+      ? "Saving your note."
+      : save.isPaused
+        ? "Waiting for the network."
+        : drafting && job.isError
+          ? "Couldn't check on the draft just now. Still trying."
+          : drafting
+            ? "Drafting your note."
+            : step === null
+              ? ""
+              : SPOKEN_COUNT[String(step) as keyof typeof SPOKEN_COUNT];
+  const [announcement, setAnnouncement] = useState("");
+  // Clear, then set on the next frame (the same way as the trace view), so a repeat is read again.
+  useEffect(() => {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      setAnnouncement("");
+      second = requestAnimationFrame(() => {
+        setAnnouncement(spoken);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [spoken]);
 
   return (
     <form
@@ -108,7 +142,7 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         readOnly={busy}
         aria-readonly={busy}
         rows={8}
-        aria-describedby="rough-note-hint rough-note-count"
+        aria-describedby={`rough-note-hint rough-note-count${showAgainHint ? " rough-note-again" : ""}`}
         spellCheck
         className="mt-3 block max-h-[60vh] min-h-64 w-full resize-y rounded-control border border-rule-strong bg-sheet px-3 font-note text-18 leading-(--lh-note) text-ink read-only:text-ink-2"
         style={RULED_PAPER}
@@ -123,19 +157,19 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
             : `${String(-left)} ${left === -1 ? "character" : "characters"} too many. Shorten your note to save it.`
           : ""}
       </p>
-      {/* Only at 200, 100, 50, 0 and over: a screen reader would otherwise read every keystroke. */}
+      {/* Always on the page. The count is said only at 200, 100, 50, 0 and over: a screen reader would otherwise read every keystroke. */}
       <p role="status" className="sr-only">
-        {step === null ? "" : SPOKEN_COUNT[String(step) as keyof typeof SPOKEN_COUNT]}
+        {announcement}
       </p>
 
       <div className="mt-3 grid gap-3">
         {save.isPending && !save.isPaused ? (
-          <Line icon="box" tone="text-ink-2" role="status">
+          <Line icon="box" tone="text-ink-2">
             Saving your note…
           </Line>
         ) : null}
         {save.isPaused ? (
-          <Line icon="flag" tone="text-review" role="status">
+          <Line icon="flag" tone="text-review">
             Waiting for the network. Your note is still here.
           </Line>
         ) : null}
@@ -147,12 +181,12 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
           </Line>
         ) : null}
         {drafting && !job.isError ? (
-          <Line icon="box" tone="text-ink-2" role="status">
+          <Line icon="box" tone="text-ink-2">
             Drafting your note. This usually takes a few seconds.
           </Line>
         ) : null}
         {drafting && job.isError ? (
-          <Line icon="flag" tone="text-review" role="status">
+          <Line icon="flag" tone="text-review">
             Couldn't check on the draft just now. Your note is saved. Still trying.
           </Line>
         ) : null}
@@ -166,8 +200,10 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
             {failureMessage(job.data?.failure)}
           </Line>
         ) : null}
-        {(failed || lost) && sameAsSent ? (
-          <p className="text-ink-2">To save a new note, change the text.</p>
+        {showAgainHint ? (
+          <p id="rough-note-again" className="text-ink-2">
+            To save a new note, change the text.
+          </p>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">

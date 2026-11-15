@@ -21,7 +21,7 @@ const INK_EDGE: Record<Ink, string> = {
  * under the header (not floating, so it can never run off a narrow screen).
  */
 export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facilityKey: string }) {
-  const { data: facility, isError: facilityFailed } = useFacility(facilityKey);
+  const { data: facility, isError, refetch, isFetching } = useFacility(facilityKey);
   const change = useChangeShift();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -92,11 +92,7 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
           aria-label="Shifts you can work"
           className="order-last basis-full rounded-sheet border border-rule bg-sheet p-2 shadow-(--lift)"
         >
-          {facilityFailed ? (
-            <p role="alert" className="px-2 py-1 text-14 text-stop">
-              The shifts did not load. Close this and try again.
-            </p>
-          ) : facility ? (
+          {facility ? (
             <ul className="grid gap-1 sm:grid-cols-3">
               {facility.shift_choices.map((choice) => {
                 const current = Date.parse(choice.starts_at) === Date.parse(shift.starts_at);
@@ -126,6 +122,22 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
                 );
               })}
             </ul>
+          ) : isError ? (
+            <div className="flex flex-wrap items-center gap-3 px-2 py-1">
+              <p role="alert" className="text-14 text-stop">
+                The shifts did not load.
+              </p>
+              <button
+                type="button"
+                aria-disabled={isFetching}
+                onClick={() => {
+                  if (!isFetching) void refetch();
+                }}
+                className="min-h-11 cursor-pointer px-2 font-semibold text-pen underline underline-offset-4"
+              >
+                Try again
+              </button>
+            </div>
           ) : (
             <p className="px-2 py-1 text-14 text-ink-2">Loading the shifts…</p>
           )}

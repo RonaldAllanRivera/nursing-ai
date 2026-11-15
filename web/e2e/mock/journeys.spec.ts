@@ -150,6 +150,25 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await expect(card(page).getByRole("button", { name: /Wording|Edit line|Undo/ })).toHaveCount(0);
   await checkScreen(page, { night: true });
   await shot(page, "signed");
+
+  // Back to the patient, inside the app: the signed note is in this shift's list.
+  await page.getByRole("link", { name: "Back to Demo patient A" }).click();
+  await expect(page.getByRole("heading", { name: "Demo patient A" })).toBeVisible();
+  const shiftNotes = page.getByRole("region", { name: "Notes this shift" });
+  await expect(shiftNotes.getByRole("link", { name: "Signed" })).toBeVisible();
+  await checkScreen(page);
+  await shot(page, "patient-signed");
+
+  // Sign out and sign in as the US staff nurse: her list holds only US patients, none of the PH ones.
+  await header.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: EMILY })).toBeVisible();
+  await page.getByRole("button", { name: EMILY }).click();
+  await expect(page.getByRole("heading", { name: "Patients on this unit" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Demo patient C/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Demo patient/ })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: /Demo patient [AB]/ })).toHaveCount(0);
+  await expect(page.getByText("Demo patient A")).toHaveCount(0);
+  await checkScreen(page);
 });
 
 test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape", async ({

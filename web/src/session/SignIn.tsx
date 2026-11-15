@@ -37,7 +37,7 @@ export function SignIn() {
               <Skeleton className="h-11" />
               <Skeleton className="h-11" />
             </div>
-          ) : personas.isError ? (
+          ) : personas.isError && !personas.data ? (
             <p role="alert" className="text-stop">
               The list of people did not load. Reload the page to try again.
             </p>
