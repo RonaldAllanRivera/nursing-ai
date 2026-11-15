@@ -107,4 +107,56 @@ describe("demo API mocks", () => {
     const { data } = await api.GET("/api/v1/health");
     expect(data).toEqual({ status: "healthy", database: "ok" });
   });
+
+  describe("PUT /api/v1/session/shift", () => {
+    const choice = (facility: string, code: string) => {
+      const found = demoApi.facilities[facility]?.shift_choices.find((c) => c.code === code);
+      if (!found) throw new Error(`no ${code} shift`);
+      return found;
+    };
+
+    it("answers 401 without a session", async () => {
+      server.use(...createHandlers());
+      const { response, error } = await api.PUT("/api/v1/session/shift", {
+        body: { starts_at: choice("ph-demo", "2-10").starts_at },
+      });
+      expect(response.status).toBe(401);
+      expect(error?.code).toBe("not_signed_in");
+    });
+
+    it("answers 403 forbidden for the admin", async () => {
+      server.use(...createHandlers());
+      await signIn("admin", null);
+      const { response, error } = await api.PUT("/api/v1/session/shift", {
+        body: { starts_at: choice("ph-demo", "2-10").starts_at },
+      });
+      expect(response.status).toBe(403);
+      expect(error?.code).toBe("forbidden");
+    });
+
+    it("answers 422 invalid_request when starts_at is not one of the facility's shifts", async () => {
+      server.use(...createHandlers());
+      await signIn("staff_nurse", "ph-demo");
+      const { response, error } = await api.PUT("/api/v1/session/shift", {
+        body: { starts_at: "2026-11-11T15:00:00Z" },
+      });
+      expect(response.status).toBe(422);
+      expect(error?.code).toBe("invalid_request");
+      expect(error?.errors?.[0]?.field).toBe("body.starts_at");
+    });
+
+    it("returns the session with the new shift, comparing instants", async () => {
+      server.use(...createHandlers());
+      await signIn("staff_nurse", "ph-demo");
+      const target = choice("ph-demo", "2-10");
+      // Same instant, written with an offset instead of Z.
+      const offset = new Date(target.starts_at).toISOString().replace("Z", "+00:00");
+      const { response, data } = await api.PUT("/api/v1/session/shift", {
+        body: { starts_at: offset },
+      });
+      expect(response.status).toBe(200);
+      expect(data?.shift?.code).toBe("2-10");
+      expect((await api.GET("/api/v1/session")).data?.shift?.code).toBe("2-10");
+    });
+  });
 });
