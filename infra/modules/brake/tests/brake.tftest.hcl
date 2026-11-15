@@ -326,3 +326,12 @@ run "rejects_an_invalid_name" {
 
   expect_failures = [var.name]
 }
+
+run "target_role_names_are_exposed" {
+  command = apply
+
+  assert {
+    condition     = output.target_role_names == toset(["nursing-ai-test-api", "nursing-ai-test-worker"])
+    error_message = "target_role_names must be the two role names the action targets."
+  }
+}

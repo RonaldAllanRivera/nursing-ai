@@ -351,3 +351,12 @@ run "swapped_parameter_arn_and_name_is_refused" {
     var.database_url_parameter_name,
   ]
 }
+
+run "log_groups_are_exposed_by_function" {
+  command = plan
+
+  assert {
+    condition     = output.function_log_groups == { api = "/aws/lambda/nursing-ai-test-api", worker = "/aws/lambda/nursing-ai-test-worker" }
+    error_message = "function_log_groups must give each function's own log group."
+  }
+}

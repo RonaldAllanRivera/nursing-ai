@@ -246,3 +246,25 @@ run "old_site_files_expire" {
     error_message = "Incomplete multipart uploads must be aborted after 7 days."
   }
 }
+
+run "api_origin_is_exposed_only_when_the_route_is_on" {
+  command = apply
+
+  variables {
+    api_origin_domain = "abc123.execute-api.ap-southeast-2.amazonaws.com"
+  }
+
+  assert {
+    condition     = output.api_origin_domain == "abc123.execute-api.ap-southeast-2.amazonaws.com"
+    error_message = "api_origin_domain must be the API origin the distribution has."
+  }
+}
+
+run "no_api_origin_without_an_api_domain" {
+  command = apply
+
+  assert {
+    condition     = output.api_origin_domain == null
+    error_message = "api_origin_domain must be null when the route is off."
+  }
+}

@@ -15,3 +15,9 @@ output "action_id" {
   value       = aws_budgets_budget_action.brake.action_id
   type        = string
 }
+
+output "target_role_names" {
+  description = "Names of the roles the budget action attaches the deny-all policy to."
+  value       = aws_budgets_budget_action.brake.definition[0].iam_action_definition[0].roles
+  type        = set(string)
+}

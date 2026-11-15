@@ -57,3 +57,11 @@ output "dlq_arn" {
   description = "ARN of the dead-letter queue."
   value       = aws_sqs_queue.dlq.arn
 }
+
+output "function_log_groups" {
+  description = "Names of the log groups the two functions write to, keyed api and worker."
+  value = {
+    api    = aws_lambda_function.api.logging_config[0].log_group
+    worker = aws_lambda_function.worker.logging_config[0].log_group
+  }
+}

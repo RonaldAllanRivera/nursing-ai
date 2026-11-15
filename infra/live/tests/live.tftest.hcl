@@ -146,6 +146,10 @@ run "stack_wires_together" {
   # Apply mode: the roles and parameters carry distinct overrides, and the
   # brake's validation fails unless each role's name matches its own ARN.
   assert {
+    condition     = length(module.brake.target_role_names) == 2 && module.brake.target_role_names == toset([module.compute.api_role_name, module.compute.worker_role_name])
+    error_message = "the brake must target exactly compute's API role and worker role"
+  }
+  assert {
     condition     = length(module.brake.deny_policy_arn) > 0 && length(module.brake.brake_role_arn) > 0
     error_message = "the brake must be planned with compute's two roles"
   }
@@ -191,6 +195,14 @@ run "lambdas_log_to_the_groups_ops_made" {
   # function itself is named by compute. The two must agree, or the function
   # would write to a group of its own and ignore the one with retention.
   assert {
+    condition     = module.compute.function_log_groups.api == module.ops.api_log_group_name && module.compute.function_log_groups.worker == module.ops.worker_log_group_name
+    error_message = "each function must log to the group ops made for it"
+  }
+  assert {
+    condition     = module.compute.function_log_groups.api != module.compute.function_log_groups.worker
+    error_message = "the two functions must log to different groups"
+  }
+  assert {
     condition     = module.ops.api_log_group_name == "/aws/lambda/${module.compute.api_function_name}"
     error_message = "ops's API log group must be named after compute's API function"
   }
@@ -222,6 +234,10 @@ run "site_routes_api_calls_to_the_http_api" {
   # The web module only creates its /api/* behaviour and origin when it is
   # given an API host, and it refuses a host that carries https://. The run
   # passing means the root hands it the bare host from compute's endpoint.
+  assert {
+    condition     = module.web.api_origin_domain != null && module.web.api_origin_domain == trimprefix(module.compute.api_endpoint, "https://")
+    error_message = "the distribution must have the HTTP API's host name as its API origin"
+  }
   assert {
     condition     = output.api_endpoint == "https://abc123.execute-api.ap-southeast-2.amazonaws.com"
     error_message = "api_endpoint must be compute's endpoint, scheme included"
