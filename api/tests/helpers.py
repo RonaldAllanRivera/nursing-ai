@@ -1,6 +1,6 @@
 """Helpers the API tests share: a clock the test can move, signing in, and the privacy check."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from nursing_api.app import create_app
 from nursing_api.settings import Settings
 from nursing_core.demo import DemoCase
+from nursing_core.domain.patient import PatientRecord
+from nursing_core.ports import LlmProvider
 
 # The demo night: 08:00 in Manila (the 6-2 shift) and 16:00 the day before in Los Angeles (7a-7p).
 NOW = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
@@ -41,11 +43,22 @@ class MutableClock:
 
 @asynccontextmanager
 async def running_app(
-    database_url: str, clock: MutableClock, app_env: str = "test"
+    database_url: str,
+    clock: MutableClock,
+    app_env: str = "test",
+    *,
+    provider_for: Callable[[PatientRecord], LlmProvider] | None = None,
+    **settings_values: object,
 ) -> AsyncGenerator[FastAPI]:
-    """The app with its lifespan running, on the given database and clock."""
-    settings = Settings.model_validate({"database_url": database_url, "app_env": app_env})
-    app = create_app(settings, clock=clock)
+    """The app with its lifespan running, on the given database and clock.
+
+    `provider_for` replaces the AI provider (tests never reach the network); extra keyword
+    arguments are more settings, such as `ai_mode="live"`.
+    """
+    settings = Settings.model_validate(
+        {"database_url": database_url, "app_env": app_env, **settings_values}
+    )
+    app = create_app(settings, clock=clock, provider_for=provider_for)
     async with app.router.lifespan_context(app):
         yield app
 
@@ -61,6 +74,22 @@ async def sign_in(client: httpx.AsyncClient, persona_id: UUID) -> httpx.Response
     response = await client.post("/api/v1/session", json={"persona_id": str(persona_id)})
     assert response.status_code == 201, response.text
     return response
+
+
+async def post_note(
+    client: httpx.AsyncClient, patient_id: UUID, text: str, key: str = "key-1"
+) -> httpx.Response:
+    """Save a rough note as the signed-in nurse."""
+    return await client.post(
+        f"/api/v1/patients/{patient_id}/rough-notes",
+        json={"text": text},
+        headers={"Idempotency-Key": key},
+    )
+
+
+async def drain(app: FastAPI) -> None:
+    """Wait for every draft job the app has started."""
+    await app.state.queue.drain()
 
 
 def _words(*names: str | None) -> set[str]:

@@ -2,12 +2,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Request, Response, Security
 from nursing_core.demo import DEMO_PERSONAS
-from nursing_core.domain.errors import Forbidden
 from nursing_core.domain.shifts import ShiftRef, default_shift, shift_choices
-from nursing_core.domain.users import can_write_notes
 from nursing_core.storage.repositories import SESSION_LIFETIME, StoredUser
 
-from nursing_api.deps import ClockDep, FacilitiesDep, SessionsDep, SignedInDep, UsersDep
+from nursing_api.deps import (
+    ClockDep,
+    FacilitiesDep,
+    NurseDep,
+    SessionsDep,
+    SignedInDep,
+    UsersDep,
+)
 from nursing_api.problems import FieldError, problem_response, problems
 from nursing_api.routes import SESSION_COOKIE, SIGNED_IN
 from nursing_api.schemas import PersonaOut, SessionIn, SessionOut, ShiftChoiceIn
@@ -103,16 +108,13 @@ async def end_session(
 )
 async def change_shift(
     body: ShiftChoiceIn,
-    signed_in: SignedInDep,
+    nurse: NurseDep,
     clock: ClockDep,
     sessions: SessionsDep,
     facilities: FacilitiesDep,
 ) -> SessionOut | Response:
     """A nurse switches her session to the previous, current or next shift."""
-    user = signed_in.user
-    if not can_write_notes(user.role) or user.facility_key is None:
-        raise Forbidden("only a nurse works a shift")
-    profile = (await facilities.get_facility(user.facility_key)).profile
+    profile = (await facilities.get_facility(nurse.facility_key)).profile
     chosen = next(
         (
             shift
@@ -133,5 +135,5 @@ async def change_shift(
                 )
             ],
         )
-    await sessions.set_shift(signed_in.token, chosen)
-    return session_out(user, chosen)
+    await sessions.set_shift(nurse.token, chosen)
+    return session_out(nurse.user, chosen)

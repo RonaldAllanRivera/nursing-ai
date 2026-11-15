@@ -17,7 +17,15 @@ from nursing_api.logging import ALLOWED_KEYS, LIBRARY_EVENT, QUIET_LOGGERS, conf
 from nursing_core.db import create_engine, ping
 from nursing_core.demo import load_demo_cases
 
-from .helpers import PH_STAFF, STAFF_NURSE, forbidden_words, leaked, sign_in
+from .helpers import (
+    PH_STAFF,
+    STAFF_NURSE,
+    drain,
+    forbidden_words,
+    leaked,
+    post_note,
+    sign_in,
+)
 from .test_problems import throwaway_app
 
 
@@ -110,7 +118,6 @@ async def test_logs_never_contain_note_text_or_names(
     caplog: pytest.LogCaptureFixture,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    del app
     for name in list(logging.root.manager.loggerDict):
         pinned = any(name == pin or name.startswith(pin + ".") for pin in QUIET_LOGGERS)
         if not pinned and isinstance(logging.root.manager.loggerDict[name], logging.Logger):
@@ -131,6 +138,15 @@ async def test_logs_never_contain_note_text_or_names(
         assert (await client.delete("/api/v1/session")).status_code == 204
         unknown = await client.post("/api/v1/session", json={"persona_id": str(uuid4())})
         assert unknown.status_code == 404
+        # Post the case's own note and run its job: the text goes through the real pipeline.
+        await sign_in(client, STAFF_NURSE[case.facility_key])
+        posted = await post_note(client, case.patient_id, case.rough_note.text, key=case.key)
+        assert posted.status_code == 202
+        await drain(app)
+        job = await client.get(f"/api/v1/draft-jobs/{posted.json()['id']}")
+        assert job.json()["status"] == "succeeded"
+        await client.get(f"/api/v1/patients/{case.patient_id}")
+        assert (await client.delete("/api/v1/session")).status_code == 204
     captured = capfd.readouterr()
     everything = (caplog.text + captured.out + captured.err).lower()
     assert "request" in [line.get("event") for line in json_lines(captured.out)]
