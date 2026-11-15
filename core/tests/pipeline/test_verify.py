@@ -148,6 +148,27 @@ def test_edit_is_the_nurses_own_words_not_ai_wording() -> None:
     assert recheck_line(line, "Dizzy.", note, PH).status is LineStatus.SOURCE_FOUND
 
 
+def test_edit_that_fixes_one_of_two_numbers_keeps_the_other_marked_in_the_new_text() -> None:
+    # The edit fixes the first number and changes the line's length, so the second mismatch's
+    # old draft span no longer points at its number: the re-check must find it again.
+    note = prepare("HR 112 BP 130/80 resting")
+    line = check_line(
+        "l1",
+        FdarSection.DATA,
+        ModelLine(text="HR 121, BP 140/80.", source_quotes=["HR 112 BP 130/80"], own_wording=False),
+        note,
+        PH,
+    )
+    assert [m.draft_text for m in line.number_mismatches] == ["121", "140/80"]
+    new_text = "Heart rate 112 bpm, BP 140/80."
+    edited = recheck_line(line, new_text, note, PH)
+    assert edited.status is LineStatus.NUMBER_MISMATCH
+    [left] = edited.number_mismatches
+    assert (left.draft_text, left.note_text) == ("140/80", "130/80")
+    assert left.draft_span is not None
+    assert new_text[left.draft_span.start : left.draft_span.end] == "140/80"
+
+
 def test_ph_temperature_without_unit_may_be_celsius() -> None:
     line = _check("BT 37.4 at 3 AM", "Temperature 37.4 °C.", ["BT 37.4"])
     assert line.status is LineStatus.SOURCE_FOUND
