@@ -42,15 +42,23 @@ def line_url(note_id: UUID, line_id: str) -> str:
     return url(note_id, f"/lines/{line_id}")
 
 
-async def confirm_flagged(client: httpx.AsyncClient, note_id: UUID) -> httpx.Response:
+async def confirm_flagged_from(
+    client: httpx.AsyncClient, note_id: UUID, line_ids: list[str], version: int
+) -> httpx.Response:
+    """Confirm the given lines one after another, starting at the note's current version."""
     response = await client.get(url(note_id))
-    for line_id in FLAGGED:
-        version = response.json()["version"]
+    for line_id in line_ids:
         response = await client.patch(
             line_url(note_id, line_id), json={"action": "confirm"}, headers=ifm(version)
         )
         assert response.status_code == 200, response.text
+        version = response.json()["version"]
     return response
+
+
+async def confirm_flagged(client: httpx.AsyncClient, note_id: UUID) -> httpx.Response:
+    current = (await client.get(url(note_id))).json()["version"]
+    return await confirm_flagged_from(client, note_id, FLAGGED, current)
 
 
 def ifm(version: int) -> dict[str, str]:
@@ -245,9 +253,29 @@ async def test_restore_brings_back_the_ai_text_as_pending(
     line = line_of(restored.json(), "e1-D1")
     assert line["text"] == original["ai_text"]
     assert line["review"] == "pending"
-    # The cautious reading (PLAN 14.11): a restored source-found line may come back as a summary
-    # and need one more confirm, so only the order of the two outcomes is asserted.
-    assert line["status"] in {"source_found", "summary"}
+
+
+@pytest.mark.asyncio
+async def test_a_restored_source_found_line_needs_a_confirm_before_signing(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    await sign_in(client, PH_STAFF)
+    note_id = await make_draft(app, client)
+    drafted = line_of((await client.get(url(note_id))).json(), "e1-D1")
+    assert drafted["status"] == "source_found"  # it needed no confirm as drafted
+    restored = await client.patch(
+        line_url(note_id, "e1-D1"), json={"action": "restore"}, headers=V1
+    )
+    assert restored.status_code == 200
+    line = line_of(restored.json(), "e1-D1")
+    # The cautious reading (PLAN 14.11): restore can't know whether the model called the line its
+    # own wording, so it takes the stricter reading: a summary, which needs one more confirm.
+    assert (line["status"], line["review"]) == ("summary", "pending")
+    await confirm_flagged_from(client, note_id, FLAGGED, restored.json()["version"])
+    refused = await client.post(url(note_id, "/sign"), headers=ifm(5))
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "review_incomplete"
+    assert refused.json()["line_ids"] == ["e1-D1"]
 
 
 @pytest.mark.asyncio
@@ -366,8 +394,18 @@ async def test_another_nurse_of_the_facility_may_sign_and_is_named(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("end", ["sign", "discard"])
-async def test_a_finished_note_rejects_every_change_with_409(
+async def test_signed_note_rejects_edits_with_409(app: FastAPI, client: httpx.AsyncClient) -> None:
+    await finished_note_rejects_every_change(app, client, "sign")
+
+
+@pytest.mark.asyncio
+async def test_discarded_note_rejects_edits_with_409(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    await finished_note_rejects_every_change(app, client, "discard")
+
+
+async def finished_note_rejects_every_change(
     app: FastAPI, client: httpx.AsyncClient, end: str
 ) -> None:
     await sign_in(client, PH_STAFF)

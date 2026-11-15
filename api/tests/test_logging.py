@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from nursing_api.app import create_app
 from nursing_api.logging import ALLOWED_KEYS, LIBRARY_EVENT, QUIET_LOGGERS, configure_logging
 from nursing_core.db import create_engine, ping
-from nursing_core.demo import load_demo_cases
+from nursing_core.demo import DemoCase, load_demo_cases
 
 from .helpers import (
     PH_STAFF,
@@ -111,8 +111,13 @@ async def test_stdlib_loggers_pass_the_same_allowlist(
     assert set(lines[0]) <= ALLOWED_KEYS
 
 
-async def review_and_sign(client: httpx.AsyncClient, note_id: str) -> None:
-    """Edit one line (words of the nurse's own), confirm what still needs her, then sign."""
+def edit_text(case: DemoCase) -> str:
+    """The text of the nurse's edit: a stretch of her own rough note, which `leaked` looks for."""
+    return case.rough_note.text[:30]
+
+
+async def review_and_sign(client: httpx.AsyncClient, note_id: str, text: str) -> None:
+    """Edit one line to `text`, confirm what still needs her, then sign."""
     path = f"/api/v1/notes/{note_id}"
     note = (await client.get(path)).json()
     lines = [
@@ -122,7 +127,7 @@ async def review_and_sign(client: httpx.AsyncClient, note_id: str) -> None:
     ]
     edited = await client.patch(
         f"{path}/lines/{lines[1]['id']}",
-        json={"action": "edit", "text": "Resting quietly."},
+        json={"action": "edit", "text": text},
         headers={"If-Match": '"v1"'},
     )
     assert edited.status_code == 200
@@ -175,7 +180,7 @@ async def test_logs_never_contain_note_text_or_names(
         job = await client.get(f"/api/v1/draft-jobs/{posted.json()['id']}")
         assert job.json()["status"] == "succeeded"
         await client.get(f"/api/v1/patients/{case.patient_id}")
-        await review_and_sign(client, job.json()["note_id"])
+        await review_and_sign(client, job.json()["note_id"], edit_text(case))
         assert (await client.delete("/api/v1/session")).status_code == 204
     captured = capfd.readouterr()
     everything = (caplog.text + captured.out + captured.err).lower()
@@ -186,6 +191,10 @@ async def test_logs_never_contain_note_text_or_names(
     planted = forbidden_words(cases[0])
     logging.getLogger("nursing_core.planted").warning(max(planted, key=len))
     assert leaked(caplog.text + capfd.readouterr().out, cases)
+    # Nor would a logged edit text go unnoticed: it is a stretch of the rough note.
+    caplog.clear()
+    logging.getLogger("nursing_core.planted").warning(edit_text(cases[0]))
+    assert leaked(caplog.text, cases)
 
 
 CANARY = "zebracanary patient Qorvex Dramblin"
