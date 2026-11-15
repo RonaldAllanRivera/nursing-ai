@@ -70,6 +70,8 @@ export function NotePage() {
         note={note.data.note}
         locale={facility.data.profile.locale}
         clock={facility.data.profile.clock}
+        facilityZone={facility.data.profile.timezone}
+        me={{ userId: session?.user_id ?? "", name: session?.display_name ?? "" }}
         selectedId={line}
       />
     </section>

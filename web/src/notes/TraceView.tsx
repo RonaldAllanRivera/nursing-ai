@@ -1,13 +1,16 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import type { components } from "../api/schema";
 import { BedTab } from "../components/BedTab";
+import { Icon } from "../components/Icon";
 import { SyntheticTag } from "../components/SyntheticTag";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { formatDayMonth, formatShiftRange, formatTime } from "../region/format";
 import { words, type Locale } from "../region/words";
 import { Checklist } from "./Checklist";
 import { DraftForm, StatusKey } from "./DraftForm";
+import { SignDialog, DiscardDialog } from "./NoteDialogs";
 import { Segments } from "./Segments";
 import { TraceCard } from "./TraceCard";
 import "./trace.css";
@@ -18,6 +21,7 @@ import {
   nextLineNeedingReview,
   noteMarks,
   spansFor,
+  withoutRemoved,
 } from "./trace";
 
 type Note = components["schemas"]["NoteOut"];
@@ -30,11 +34,17 @@ export function TraceView({
   note,
   locale,
   clock,
+  facilityZone,
+  me,
   selectedId,
 }: {
   note: Note;
   locale: Locale;
   clock: Clock;
+  /** The facility's zone: the time a note was signed is shown in it. */
+  facilityZone: string;
+  /** Who is signed in: who signs, and whether a signature is hers. */
+  me: { userId: string; name: string };
   /** The `?line=` of the address, if it names a line of this draft. */
   selectedId: string | undefined;
 }) {
@@ -42,7 +52,17 @@ export function TraceView({
   const wide = useMediaQuery(WIDE);
   const w = words(locale);
   const { rough_note: rough, patient, draft } = note;
-  const lines = linesInOrder(draft);
+  // A signed note is the record: the lines the nurse removed are not in it.
+  const shownDraft = note.status === "signed" ? withoutRemoved(draft) : draft;
+  const lines = linesInOrder(shownDraft);
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const [signing, setSigning] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  // Where the focus goes when a dialog closes, when its opener is gone or something else needs her.
+  const afterDialog = useRef<(() => void) | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const lock = useRef<HTMLDivElement>(null);
+  const answerLine = useRef<HTMLParagraphElement>(null);
   const selected = lines.find((l) => l.id === selectedId);
   const open = !wide && selected !== undefined;
 
@@ -95,11 +115,28 @@ export function TraceView({
     if (target) pick(target.id);
   };
 
-  const onSign = () => {
+  const onSign = (event: MouseEvent<HTMLButtonElement>) => {
     const next = nextLineNeedingReview(draft, selected?.id);
-    if (!next) return; // W5: nothing is left to check, so this will open the signing dialog.
+    if (!next) {
+      opener.current = event.currentTarget;
+      setSigning(true);
+      return;
+    }
     pick(next.id);
     announce("Check this line before you sign.");
+  };
+  // Radix only gives the focus back to a Dialog.Trigger, and these dialogs are opened by buttons
+  // that stay in the page: so the opener is kept here, and a dialog that ended it sets `afterDialog`.
+  const onCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+    const go = afterDialog.current ?? (() => opener.current?.focus());
+    afterDialog.current = null;
+    go();
+  };
+  const dialog = {
+    container: root,
+    noteId: note.id,
+    onCloseAutoFocus,
   };
 
   // Escape closes the drawer (small screens only: on a wide one the card is always there).
@@ -126,6 +163,11 @@ export function TraceView({
   const timeZone = rough.shift.timezone;
   const typedAt = formatTime(rough.written_at, { timeZone, locale, clock });
   const left = lines.filter(needsReview).length;
+  const { signature } = note;
+  const signedAt =
+    signature === null
+      ? ""
+      : formatTime(signature.signed_at, { timeZone: facilityZone, locale, clock });
   const ready = note.status === "signed" || (note.status === "draft" && left === 0);
   const handlers = {
     selectedId: selected?.id,
@@ -138,7 +180,7 @@ export function TraceView({
   };
 
   return (
-    <div className="trace-view">
+    <div className="trace-view" ref={setRoot}>
       <div className="note-head">
         <BedTab large className="bed-tab" word={w.bed} label={patient.bed_label} />
         <h1 className="who-name">
@@ -171,7 +213,17 @@ export function TraceView({
               </p>
             </div>
           </div>
-          <TraceCard line={selected} noteText={rough.text} open={open} onClose={close} />
+          <TraceCard
+            line={selected}
+            noteText={rough.text}
+            open={open}
+            onClose={close}
+            actions={
+              note.status === "draft"
+                ? { noteId: note.id, announce, onSettled: focusLine }
+                : undefined
+            }
+          />
         </section>
 
         <section className="pane-draft" aria-labelledby="draft-h">
@@ -179,12 +231,17 @@ export function TraceView({
             <h2 id="draft-h">{`${w.noteFormat(rough.note_format)} draft`}</h2>
             <p>Written by AI, checked by code. Tap a line to see the words it came from.</p>
           </div>
-          <p className={ready ? "answer is-ready" : "answer"} aria-live="polite">
+          <p
+            ref={answerLine}
+            tabIndex={-1}
+            className={ready ? "answer is-ready" : "answer"}
+            aria-live="polite"
+          >
             {answerText(draft, note.status)}
           </p>
-          <StatusKey draft={draft} />
+          <StatusKey draft={shownDraft} />
           <DraftForm
-            draft={draft}
+            draft={shownDraft}
             time={{
               date: formatDayMonth(rough.written_at, { timeZone, locale }),
               clock: typedAt,
@@ -192,6 +249,35 @@ export function TraceView({
             handlers={handlers}
           />
           <Checklist items={note.checklist} noteText={rough.text} />
+          {note.status === "draft" ? (
+            <div className="discard-row">
+              <button
+                type="button"
+                className="btn"
+                onClick={(event) => {
+                  opener.current = event.currentTarget;
+                  setDiscarding(true);
+                }}
+              >
+                Discard draft
+              </button>
+            </div>
+          ) : null}
+          {note.status === "signed" && signature ? (
+            <div className="signbar">
+              <div className="signed" ref={lock} tabIndex={-1}>
+                <Icon name="lock" />
+                <div>
+                  <b>
+                    {signature.signed_by === me.userId
+                      ? `Signed by you at ${signedAt}.`
+                      : `Signed at ${signedAt}.`}
+                  </b>
+                  <div className="hash">{`Note hash ${signature.content_hash.slice(0, 12)}`}</div>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {note.status === "draft" ? (
             <div className="signbar">
               <button type="button" className="btn btn-primary" onClick={onSign}>
@@ -210,6 +296,38 @@ export function TraceView({
           ) : null}
         </section>
       </div>
+
+      <SignDialog
+        {...dialog}
+        open={signing}
+        onOpenChange={setSigning}
+        format={w.noteFormat(rough.note_format)}
+        signerName={me.name}
+        missing={note.checklist.filter((item) => item.missing).map((item) => item.subject)}
+        onSigned={() => {
+          announce("Note signed and locked.");
+          afterDialog.current = () => lock.current?.focus();
+        }}
+        onIncomplete={(ids) => {
+          const first = ids[0];
+          if (first === undefined) return;
+          setSwipeId(first);
+          setLine(first);
+          afterDialog.current = () => {
+            focusLine(first);
+          };
+          announce("Check this line before you sign.");
+        }}
+      />
+      <DiscardDialog
+        {...dialog}
+        open={discarding}
+        onOpenChange={setDiscarding}
+        onDiscarded={() => {
+          announce("Draft discarded.");
+          afterDialog.current = () => answerLine.current?.focus();
+        }}
+      />
 
       {/* Always on the page, empty until something is said: a screen reader announces a change, not a new node. */}
       <p role="status" className="sr-only">

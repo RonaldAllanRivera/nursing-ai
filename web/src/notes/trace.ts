@@ -109,6 +109,19 @@ export function wordsAt(text: string, span: Span): string {
   return Array.from(text).slice(span.start, span.end).join("");
 }
 
+/** The text with the code points of `span` replaced (an emoji is one code point, so it can't shift the span). */
+export function replaceAtSpan(text: string, span: Span, replacement: string): string {
+  const chars = Array.from(text);
+  const start = Math.max(0, Math.min(span.start, chars.length));
+  const end = Math.max(start, Math.min(span.end, chars.length));
+  return [...chars.slice(0, start), replacement, ...chars.slice(end)].join("");
+}
+
+/** The differing number is marked only until the nurse has dealt with the line (the mockup's `!resolved`). */
+function showsDifference(line: DraftLine): boolean {
+  return line.status === "number_mismatch" && line.review === "pending";
+}
+
 /** What a selected line lights up in the nurse's note: its quotes, and the number that differs. */
 export function noteMarks(line: DraftLine): Mark[] {
   if (line.review === "removed") return [];
@@ -116,7 +129,7 @@ export function noteMarks(line: DraftLine): Mark[] {
   line.source_quotes.forEach((quote, index) => {
     if (quote.span) marks.push({ kind: "highlight", ...quote.span, index });
   });
-  if (line.status === "number_mismatch") {
+  if (showsDifference(line)) {
     for (const mismatch of line.number_mismatches) {
       if (mismatch.note_span) marks.push({ kind: "bad", ...mismatch.note_span });
     }
@@ -126,10 +139,9 @@ export function noteMarks(line: DraftLine): Mark[] {
 
 /** The line's own text, with the number the draft got wrong marked. */
 export function lineSegments(line: DraftLine): Segment[] {
-  const marks: Mark[] =
-    line.status === "number_mismatch"
-      ? line.number_mismatches.map((m) => ({ kind: "bad", ...m.draft_span }))
-      : [];
+  const marks: Mark[] = showsDifference(line)
+    ? line.number_mismatches.map((m) => ({ kind: "bad", ...m.draft_span }))
+    : [];
   return spansFor(line.text, marks);
 }
 
@@ -148,7 +160,7 @@ export function quoteSegments(
     if (!at) return;
     const words = wordsAt(noteText, at);
     const marks: Mark[] = [{ kind: "highlight", start: 0, end: Array.from(words).length, index }];
-    if (line.status === "number_mismatch") {
+    if (showsDifference(line)) {
       for (const { note_span: bad } of line.number_mismatches) {
         if (bad && at.start <= bad.start && bad.end <= at.end) {
           marks.push({ kind: "bad", start: bad.start - at.start, end: bad.end - at.start });
@@ -269,4 +281,66 @@ export function reasonFor(line: DraftLine): string {
     case "no_source":
       return "Nothing in your note says this. The AI added it. Remove it, or add it to your note first if you did it.";
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// What the nurse can do to a line, and the signed view.
+
+export type LineAction =
+  | { kind: "confirm" }
+  | { kind: "remove" }
+  | { kind: "edit" }
+  | { kind: "undo" }
+  | { kind: "putBack" }
+  /** `replacement` is the note's number; `text` is the line with it in place of the draft's. */
+  | { kind: "use"; replacement: string; text: string };
+
+/** The buttons the trace card shows for a line, the one that settles it first. */
+export function actionsFor(line: DraftLine): LineAction[] {
+  switch (line.review) {
+    case "removed":
+      return [{ kind: "putBack" }];
+    case "confirmed":
+    case "edited":
+      return [{ kind: "undo" }, { kind: "edit" }];
+    case "pending":
+      break;
+  }
+  switch (line.status) {
+    case "summary":
+      return [{ kind: "confirm" }, { kind: "edit" }];
+    case "number_mismatch": {
+      const uses = line.number_mismatches.flatMap((m): LineAction[] =>
+        m.note_text === null
+          ? []
+          : [
+              {
+                kind: "use",
+                replacement: m.note_text,
+                text: replaceAtSpan(line.text, m.draft_span, m.note_text),
+              },
+            ],
+      );
+      return [...uses, { kind: "edit" }];
+    }
+    case "no_source":
+      // A Focus line is the heading of its entry: it can be reworded, not removed.
+      return line.section === "focus" ? [{ kind: "edit" }] : [{ kind: "remove" }];
+    case "source_found":
+      return [{ kind: "edit" }];
+  }
+}
+
+/** The draft as the record has it once signed: the lines the nurse removed are not in it. */
+export function withoutRemoved(draft: Draft): Draft {
+  const kept = (lines: DraftLine[]) => lines.filter((l) => l.review !== "removed");
+  return {
+    ...draft,
+    entries: draft.entries.map((entry) => ({
+      ...entry,
+      data: kept(entry.data),
+      action: kept(entry.action),
+      response: kept(entry.response),
+    })),
+  };
 }

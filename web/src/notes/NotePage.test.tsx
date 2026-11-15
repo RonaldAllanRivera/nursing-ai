@@ -296,6 +296,8 @@ describe("the trace view", () => {
   it("says nothing is missing when the checklist is empty", async () => {
     await openWith((note) => ({ ...note, checklist: [] }));
     expect(await screen.findByText("Nothing is missing.")).toBeVisible();
+    // An empty list would draw a stray rule under the sentence.
+    expect(document.querySelector(".check-items")).toBeNull();
   });
 
   it("Sign note jumps to the next line that needs you and says so, then goes on round", async () => {
@@ -328,7 +330,7 @@ describe("the trace view", () => {
     await said();
   });
 
-  it("does nothing yet when no line needs you", async () => {
+  it("opens the signing dialog, and selects no line, when none needs you", async () => {
     const app = await openWith((note) => {
       for (const line of linesInOrder(note.draft)) line.review = "confirmed";
       return note;
@@ -337,8 +339,8 @@ describe("the trace view", () => {
     expect(screen.getByText("All lines checked. Ready to sign.")).toBeVisible();
     expect(screen.getByText("Every line is checked.")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    expect(await screen.findByRole("dialog", { name: "Sign this FDAR note" })).toBeVisible();
     expect(app.router.state.location.search).toEqual({});
-    expect(screen.getByRole("status")).toHaveTextContent("");
   });
 
   it.each([

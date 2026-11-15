@@ -1,4 +1,5 @@
 import { Icon } from "../components/Icon";
+import { LineActions } from "./LineActions";
 import { Segments } from "./Segments";
 import { quoteSegments, reasonFor, shownStatus, type DraftLine } from "./trace";
 
@@ -12,6 +13,7 @@ export function TraceCard({
   noteText,
   open,
   onClose,
+  actions,
 }: {
   line: DraftLine | undefined;
   /** The nurse's note: the quotes are shown as her own words at their spans. */
@@ -19,6 +21,14 @@ export function TraceCard({
   /** Small screens only: whether the drawer is up. */
   open: boolean;
   onClose: () => void;
+  /** What she can do to the line: only on a draft (a signed or discarded note has none). */
+  actions?:
+    | {
+        noteId: string;
+        announce: (message: string) => void;
+        onSettled: (id: string) => void;
+      }
+    | undefined;
 }) {
   const shown = line ? shownStatus(line) : undefined;
   const quotes = line ? quoteSegments(line, noteText) : [];
@@ -60,6 +70,7 @@ export function TraceCard({
               No words in your note match this line.
             </p>
           )}
+          {actions ? <LineActions key={line.id} line={line} {...actions} /> : null}
         </div>
       ) : (
         <p className="trace-empty">

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../api/client";
+import type { components } from "../api/schema";
 import { server } from "../test/setup";
 import { demoApi } from "./demo-api";
 import { createHandlers } from "./handlers";
@@ -230,6 +231,173 @@ describe("rough-note writes", () => {
     server.use(...createHandlers());
     await signIn("staff_nurse", "ph-demo");
     expect(await notesOf(firstPatient("ph-demo").id)).toEqual([]);
+  });
+});
+
+describe("writes to a note: line actions, sign and discard", () => {
+  const NOTE = "00000000-0000-4000-8000-000000000015";
+  const NOTE_2 = "00000000-0000-4000-8000-000000000025";
+  type Body =
+    | components["schemas"]["ConfirmLine"]
+    | components["schemas"]["EditLine"]
+    | components["schemas"]["RemoveLine"]
+    | components["schemas"]["RestoreLine"];
+
+  async function start() {
+    server.use(...createHandlers());
+    await signIn("staff_nurse", "ph-demo");
+  }
+  const act = (lineId: string, body: Body, ifMatch: string | null = '"v1"', noteId = NOTE) =>
+    api.PATCH("/api/v1/notes/{note_id}/lines/{line_id}", {
+      params: {
+        path: { note_id: noteId, line_id: lineId },
+        header: { "If-Match": ifMatch },
+      },
+      body,
+    });
+  const sign = (ifMatch: string | null = '"v1"', noteId = NOTE) =>
+    api.POST("/api/v1/notes/{note_id}/sign", {
+      params: { path: { note_id: noteId }, header: { "If-Match": ifMatch } },
+    });
+  const discard = (ifMatch: string | null = '"v1"') =>
+    api.POST("/api/v1/notes/{note_id}/discard", {
+      params: { path: { note_id: NOTE }, header: { "If-Match": ifMatch } },
+    });
+  const lineOf = (note: components["schemas"]["NoteOut"] | undefined, id: string) => {
+    const found = note?.draft.entries
+      .flatMap((e) => [e.focus, ...e.data, ...e.action, ...e.response])
+      .find((l) => l.id === id);
+    if (!found) throw new Error(`no line ${id}`);
+    return found;
+  };
+
+  it("refuses a write with no session (401) and the admin (403)", async () => {
+    server.use(...createHandlers());
+    expect((await act("e1-F", { action: "confirm" })).response.status).toBe(401);
+    await signIn("admin", null);
+    expect((await act("e1-F", { action: "confirm" })).response.status).toBe(403);
+    expect((await sign()).response.status).toBe(403);
+    expect((await discard()).response.status).toBe(403);
+  });
+
+  it("asks for If-Match (428) and refuses a stale one (412)", async () => {
+    await start();
+    expect((await act("e1-F", { action: "confirm" }, null)).response.status).toBe(428);
+    expect((await act("e1-F", { action: "confirm" }, '"v7"')).response.status).toBe(412);
+    expect((await sign(null)).response.status).toBe(428);
+    expect((await discard('"v2"')).response.status).toBe(412);
+  });
+
+  it("answers an unknown line with 404", async () => {
+    await start();
+    expect((await act("nope", { action: "confirm" })).response.status).toBe(404);
+  });
+
+  it("confirms, removes and restores a line, each answering the new version's ETag", async () => {
+    await start();
+    const confirmed = await act("e1-F", { action: "confirm" });
+    expect(confirmed.response.headers.get("ETag")).toBe('"v2"');
+    expect(confirmed.data?.version).toBe(2);
+    expect(lineOf(confirmed.data, "e1-F").review).toBe("confirmed");
+
+    const removed = await act("e1-A2", { action: "remove" }, '"v2"');
+    expect(lineOf(removed.data, "e1-A2").review).toBe("removed");
+
+    const back = await act("e1-A2", { action: "restore" }, '"v3"');
+    const line = lineOf(back.data, "e1-A2");
+    expect([line.review, line.status, line.text]).toEqual([
+      "pending",
+      "no_source",
+      "Physician notified.",
+    ]);
+    expect(back.response.headers.get("ETag")).toBe('"v4"');
+  });
+
+  it("refuses to remove a Focus line (422)", async () => {
+    await start();
+    expect((await act("e1-F", { action: "remove" })).response.status).toBe(422);
+  });
+
+  it("edits a line and checks it again: a fixed number clears the mismatch", async () => {
+    await start();
+    const fixed = await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 112 bpm." });
+    const line = lineOf(fixed.data, "e1-D2");
+    expect([line.review, line.status, line.number_mismatches]).toEqual([
+      "edited",
+      "source_found",
+      [],
+    ]);
+    expect(line.text).toBe("BP 90/60 mmHg, HR 112 bpm.");
+    // Restoring puts back the AI's words, its status and its mismatch.
+    const back = await act("e1-D2", { action: "restore" }, '"v2"');
+    const original = lineOf(back.data, "e1-D2");
+    expect([original.review, original.status, original.number_mismatches.length]).toEqual([
+      "pending",
+      "number_mismatch",
+      1,
+    ]);
+    expect(original.text).toBe(original.ai_text);
+  });
+
+  it("keeps the mismatch when an edit leaves the draft's number where it was", async () => {
+    await start();
+    const kept = await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 121 bpm, weak." });
+    const line = lineOf(kept.data, "e1-D2");
+    expect([line.review, line.status]).toEqual(["edited", "number_mismatch"]);
+  });
+
+  it("refuses an empty or over-long edit (422)", async () => {
+    await start();
+    expect((await act("e1-D2", { action: "edit", text: "  " })).response.status).toBe(422);
+    expect((await act("e1-D2", { action: "edit", text: "x".repeat(501) })).response.status).toBe(
+      422,
+    );
+  });
+
+  it("refuses to sign while a line needs review, listing them in draft order (409)", async () => {
+    await start();
+    const refused = await sign();
+    expect(refused.response.status).toBe(409);
+    expect(refused.error?.code).toBe("review_incomplete");
+    expect(refused.error?.line_ids).toEqual(["e1-F", "e1-D2", "e1-A2"]);
+  });
+
+  it("signs once every line is dealt with, then locks the note (409 note_locked)", async () => {
+    await start();
+    await act("e1-F", { action: "confirm" });
+    await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 112 bpm." }, '"v2"');
+    await act("e1-A2", { action: "remove" }, '"v3"');
+    const signed = await sign('"v4"');
+    expect(signed.response.status).toBe(200);
+    expect(signed.response.headers.get("ETag")).toBe('"v5"');
+    expect(signed.data?.status).toBe("signed");
+    expect(signed.data?.signature?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(signed.data?.signature?.signed_by).toBeTruthy();
+    const locked = await act("e1-F", { action: "restore" }, '"v5"');
+    expect(locked.response.status).toBe(409);
+    expect(locked.error?.code).toBe("note_locked");
+    expect((await sign('"v5"')).error?.code).toBe("note_locked");
+    expect((await discard('"v5"')).error?.code).toBe("note_locked");
+  });
+
+  it("discards a draft, and reads as discarded", async () => {
+    await start();
+    const done = await discard();
+    expect(done.data?.status).toBe("discarded");
+    expect(done.data?.discard?.discarded_at).toBeTruthy();
+    expect(done.response.headers.get("ETag")).toBe('"v2"');
+    const read = await api.GET("/api/v1/notes/{note_id}", { params: { path: { note_id: NOTE } } });
+    expect(read.data?.status).toBe("discarded");
+  });
+
+  it("answers an unknown note with 404, and leaves other notes alone", async () => {
+    await start();
+    expect((await sign('"v1"', "00000000-0000-4000-8000-0000000000ff")).response.status).toBe(404);
+    await discard();
+    const other = await api.GET("/api/v1/notes/{note_id}", {
+      params: { path: { note_id: NOTE_2 } },
+    });
+    expect(other.data?.status).toBe("draft");
   });
 });
 

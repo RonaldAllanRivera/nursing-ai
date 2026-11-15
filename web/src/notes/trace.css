@@ -7,9 +7,11 @@
    - The page chrome (.top, .aid, the theme toggle, body, the :root tokens) is the app shell's.
      .top-inner became .note-head: the same grid without the toggle column, and no band of its own.
    - .layout became .trace-layout and lost its max-width and side padding: the shell's <main> has them.
-   - Left out for later tasks: glossary chips and ambiguous status (P3), the edit box and its
-     buttons, the sign dialog and the PIN field (W5, P2), the signed block (W5).
-   - Added: .dar-empty ("Not written") and .line-text .num-bad on the draft's own number. */
+   - Left out for later tasks: glossary chips and ambiguous status (P3), the PIN field (P2).
+   - Added: .dar-empty ("Not written") and .line-text .num-bad on the draft's own number;
+     .write-problem (why a change was refused, with its next step), .discard-row (a quiet
+     "Discard draft" apart from the sign bar), and aria-disabled on .btn while a change saves.
+   - The signed block drops the mockup's "Any change now becomes an amendment": P1 has no amendments. */
 
 .trace-view {
   /* ---------- Header ---------- */
@@ -206,6 +208,90 @@
   .btn-primary:hover {
     background: var(--primary);
     filter: brightness(1.15);
+  }
+  .btn-firm {
+    border-color: var(--pen);
+    color: var(--pen);
+  }
+  .btn-firm:hover {
+    background: var(--pen-tint);
+  }
+  /* A change is being saved: the button stays where it is (and keeps the focus) but does nothing. */
+  .btn[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: progress;
+  }
+
+  /* ---------- Line actions ---------- */
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin-top: var(--sp-5);
+  }
+  .edit-box {
+    display: grid;
+    gap: var(--sp-2);
+    margin-top: var(--sp-4);
+  }
+  .edit-box label {
+    font-weight: 700;
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
+  .edit-box textarea {
+    font: inherit;
+    font-size: var(--fs-18);
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-control);
+    padding: var(--sp-2) var(--sp-3);
+    min-height: 88px;
+    resize: vertical;
+  }
+  .edit-box .edit-actions {
+    margin-top: 0;
+  }
+  /* Added: why a change was refused, and what to do. Icon, words and colour. */
+  .write-problem {
+    display: grid;
+    justify-items: start;
+    gap: var(--sp-2);
+    margin-top: var(--sp-3);
+    color: var(--stop);
+    font-weight: 600;
+  }
+  .write-problem p {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: flex-start;
+  }
+  p.write-problem {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-2);
+  }
+  .write-problem .ic {
+    margin-top: 2px;
+  }
+  .write-problem .btn {
+    color: var(--ink);
+  }
+  /* Added: the way out of a draft, quiet and apart from the sign bar. */
+  .discard-row {
+    margin-top: var(--sp-5);
+  }
+
+  /* ---------- Sign and discard dialogs (the shell is components/ui/Dialog.tsx) ---------- */
+  .note-dialog .dialog-list {
+    margin-top: var(--sp-3);
+    padding: var(--sp-3);
+    background: var(--review-tint);
+    border-radius: var(--r-control);
+  }
+  .note-dialog .dialog-list p {
+    margin: 0;
   }
 
   /* ---------- Draft ---------- */
@@ -424,6 +510,21 @@
   .signbar-msg b {
     color: var(--ink);
   }
+  .signed {
+    display: flex;
+    gap: var(--sp-3);
+    align-items: flex-start;
+  }
+  .signed .ic {
+    color: var(--ok);
+    width: 1.5em;
+    height: 1.5em;
+  }
+  .hash {
+    font-family: var(--stack-note);
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
 
   /* ---------- Small screens: stacked, source drawer ---------- */
   @media (width < 960px) {
@@ -542,6 +643,9 @@
     .signbar-msg {
       font-size: var(--fs-14);
     }
+    .actions .btn {
+      flex: 1 1 auto;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -579,6 +683,6 @@
 /* Below 960 px the sign bar is fixed to the bottom: a focused line scrolls clear of it (WCAG 2.4.11). */
 @media (width < 960px) {
   :root:has(.trace-view) {
-    scroll-padding-bottom: 120px;
+    scroll-padding-bottom: 7.5rem;
   }
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { components } from "../api/schema";
 import { demoApi } from "../mocks/demo-api";
 import {
+  actionsFor,
   answerText,
   lineSegments,
   linesInOrder,
@@ -10,9 +11,11 @@ import {
   noteMarks,
   quoteSegments,
   reasonFor,
+  replaceAtSpan,
   shownStatus,
   spansFor,
   wordsAt,
+  withoutRemoved,
 } from "./trace";
 
 type Line = components["schemas"]["DraftLine"];
@@ -426,5 +429,105 @@ describe("what a selected line lights up", () => {
   it("cuts the words at a span by code point", () => {
     expect(wordsAt("😀 BP 90/60", { start: 2, end: 7 })).toBe("BP 90");
     expect(wordsAt("abc", { start: 2, end: 99 })).toBe("c");
+  });
+});
+
+describe("the differing number's mark follows the review", () => {
+  const confirmed = (id: string): Line => ({ ...demoLine(id), review: "confirmed" });
+
+  it("marks it only while the line's review is pending", () => {
+    const pending = demoLine("e1-D2");
+    expect(noteMarks(pending).some((m) => m.kind === "bad")).toBe(true);
+    for (const review of ["confirmed", "edited"] as const) {
+      const resolved = { ...pending, review };
+      expect(noteMarks(resolved).some((m) => m.kind === "bad")).toBe(false);
+      expect(
+        lineSegments(resolved)
+          .flatMap((s) => s.parts)
+          .some((p) => p.bad),
+      ).toBe(false);
+      const [quote] = quoteSegments(resolved, DEMO_1.rough_note.text);
+      expect((quote?.segments ?? []).flatMap((s) => s.parts).some((p) => p.bad)).toBe(false);
+    }
+  });
+
+  it("still lights up the quotes of a resolved line", () => {
+    expect(noteMarks(confirmed("e1-D2")).filter((m) => m.kind === "highlight")).toHaveLength(1);
+  });
+});
+
+describe("replaceAtSpan", () => {
+  it("swaps the draft's number for the note's, by code point", () => {
+    const text = demoLine("e1-D2").text;
+    const [mismatch] = demoLine("e1-D2").number_mismatches;
+    if (!mismatch) throw new Error("no mismatch");
+    expect(replaceAtSpan(text, mismatch.draft_span, "112")).toBe(text.replace("121", "112"));
+  });
+
+  it("can drop a unit-bearing number's extra words (37.8 °F becomes 37.8)", () => {
+    expect(replaceAtSpan("Temp 37.8 °F.", { start: 5, end: 12 }, "37.8")).toBe("Temp 37.8.");
+  });
+
+  it("counts an emoji as one code point, so it can't shift the span", () => {
+    expect(replaceAtSpan("😀 HR 121", { start: 5, end: 8 }, "112")).toBe("😀 HR 112");
+  });
+
+  it("keeps the whole text when the span is outside it", () => {
+    expect(replaceAtSpan("abc", { start: 5, end: 9 }, "x")).toBe("abcx");
+  });
+});
+
+describe("actionsFor", () => {
+  const kinds = (l: Line) => actionsFor(l).map((a) => a.kind);
+
+  it("offers a pending summary line Wording is right and Edit line", () => {
+    expect(kinds(demoLine("e1-F"))).toEqual(["confirm", "edit"]);
+  });
+
+  it("offers a pending number mismatch the note's number, then Edit line", () => {
+    const actions = actionsFor(demoLine("e1-D2"));
+    expect(actions.map((a) => a.kind)).toEqual(["use", "edit"]);
+    const use = actions[0];
+    expect(use?.kind === "use" && use.replacement).toBe("112");
+    expect(use?.kind === "use" && use.text).toBe(demoLine("e1-D2").text.replace("121", "112"));
+  });
+
+  it("offers no number when the note has none to match", () => {
+    const l = demoLine("e1-D2");
+    const mismatch = l.number_mismatches[0];
+    if (!mismatch) throw new Error("no mismatch");
+    const none = { ...l, number_mismatches: [{ ...mismatch, note_text: null, note_span: null }] };
+    expect(kinds(none)).toEqual(["edit"]);
+  });
+
+  it("offers a line with no source Remove line, but a Focus line Edit line", () => {
+    expect(kinds(demoLine("e1-A2"))).toEqual(["remove"]);
+    expect(kinds({ ...demoLine("e1-A2"), section: "focus" })).toEqual(["edit"]);
+  });
+
+  it("offers a line whose source was found only Edit line", () => {
+    expect(kinds(demoLine("e1-D1"))).toEqual(["edit"]);
+  });
+
+  it("offers a removed line Put line back, and a confirmed or edited one Undo and Edit line", () => {
+    expect(kinds({ ...demoLine("e1-A2"), review: "removed" })).toEqual(["putBack"]);
+    expect(kinds({ ...demoLine("e1-F"), review: "confirmed" })).toEqual(["undo", "edit"]);
+    expect(kinds({ ...demoLine("e1-F"), review: "edited" })).toEqual(["undo", "edit"]);
+  });
+});
+
+describe("withoutRemoved", () => {
+  it("leaves the lines the nurse removed out, and keeps the rest in order", () => {
+    const draft = structuredClone(DEMO_1.draft);
+    const target = draft.entries[0]?.action.at(-1);
+    if (!target) throw new Error("no action line");
+    target.review = "removed";
+    const kept = linesInOrder(withoutRemoved(draft)).map((l) => l.id);
+    expect(kept).not.toContain(target.id);
+    expect(kept).toEqual(
+      linesInOrder(draft)
+        .filter((l) => l.id !== target.id)
+        .map((l) => l.id),
+    );
   });
 });
