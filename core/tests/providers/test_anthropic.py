@@ -392,6 +392,16 @@ async def test_any_other_sdk_error_is_unavailable_without_retry_or_its_text(
     assert raised.__suppress_context__
 
 
+def _message_with(**changes: Any) -> str:
+    body = json.loads(_message().content)
+    for key, value in changes.items():
+        if key.startswith("usage_"):
+            body["usage"][key.removeprefix("usage_")] = value
+        else:
+            body[key] = value
+    return json.dumps(body)
+
+
 _UNREADABLE_BODIES = [
     "not json",
     "[]",
@@ -402,6 +412,11 @@ _UNREADABLE_BODIES = [
     '{"content": 5, "stop_reason": "end_turn", "note": "SYNTHETIC-LEAK"}',
     '{"content": [5], "stop_reason": "end_turn", "note": "SYNTHETIC-LEAK"}',
     '{"content": [], "stop_reason": "end_turn", "model": "SYNTHETIC-LEAK"}',
+    _message_with(usage_input_tokens=None),
+    _message_with(usage_input_tokens="12"),
+    _message_with(usage_output_tokens=True),
+    _message_with(model=None),
+    _message_with(stop_reason=5),
 ]
 
 
@@ -438,3 +453,23 @@ async def test_a_message_without_usage_is_unavailable() -> None:
     with pytest.raises(ProviderUnavailable, match="the AI service call failed"):
         await _provider(server).draft_fdar(_request())
     assert len(server.bodies) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_utf8_200_body_is_unavailable_without_retry() -> None:
+    server = _Server(
+        httpx2.Response(200, content=b"\xff\xfe", headers={"content-type": "application/json"})
+    )
+    with pytest.raises(ProviderUnavailable, match="the AI service call failed"):
+        await _provider(server).draft_fdar(_request())
+    assert len(server.bodies) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_prompt_version_is_not_reported_as_an_outage() -> None:
+    server = _Server(_message())
+    request = _request().model_copy(update={"prompt_version": "nope"})
+    with pytest.raises(ValueError, match="prompt") as caught:
+        await _provider(server).draft_fdar(request)
+    assert not isinstance(caught.value, ProviderUnavailable)
+    assert len(server.bodies) == 0

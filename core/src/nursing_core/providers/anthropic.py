@@ -5,10 +5,12 @@ a spend limit, and never lets the key, the note or the model's words into an err
 """
 
 import asyncio
+import json
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Literal
 
 import anthropic
 import httpx2
@@ -78,22 +80,55 @@ class _Message:
     cache_read: int
 
 
+def _count(value: object, *, optional: bool = False) -> int | None:
+    """A token count, or None if it isn't a whole number (a missing optional count is 0)."""
+    if value is None and optional:
+        return 0
+    return value if type(value) is int else None
+
+
+def _word(value: object) -> str | Literal[False] | None:
+    """A string field as is, None if it is null, or False if it isn't a string at all."""
+    if value is None or isinstance(value, str):
+        return value
+    return False
+
+
 def _read_message(response: anthropic.types.Message) -> _Message | None:
     """Read the answer's fields once, or None if it isn't a message. The SDK builds the answer
-    without checking its shape, so a 200 that isn't a message fails here, and only here."""
+    without checking its shape, so each field is read and type-checked here, and only here."""
     try:
         usage = response.usage
-        return _Message(
-            stop_reason=response.stop_reason,
-            text="".join(block.text for block in response.content if block.type == "text"),
-            model=response.model,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_creation=usage.cache_creation_input_tokens or 0,
-            cache_read=usage.cache_read_input_tokens or 0,
+        stop_reason = _word(response.stop_reason)
+        model = _word(response.model)
+        text = "".join(block.text for block in response.content if block.type == "text")
+        counts = (
+            _count(usage.input_tokens),
+            _count(usage.output_tokens),
+            _count(usage.cache_creation_input_tokens, optional=True),
+            _count(usage.cache_read_input_tokens, optional=True),
         )
     except (AttributeError, TypeError):
         return None
+    input_tokens, output_tokens, cache_creation, cache_read = counts
+    if (
+        input_tokens is None
+        or output_tokens is None
+        or cache_creation is None
+        or cache_read is None
+        or not isinstance(model, str)
+        or stop_reason is False
+    ):
+        return None
+    return _Message(
+        stop_reason=stop_reason,
+        text=text,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation=cache_creation,
+        cache_read=cache_read,
+    )
 
 
 class AnthropicProvider:
@@ -119,6 +154,8 @@ class AnthropicProvider:
 
     async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
         started = perf_counter()
+        system = load_prompt(request.prompt_version)
+        user_text = _user_text(request)
         attempt = 0
         while True:
             wait: float | None = None
@@ -127,8 +164,8 @@ class AnthropicProvider:
                 response = await self._client.messages.create(
                     model=self.model,
                     max_tokens=_MAX_OUTPUT_TOKENS,
-                    system=load_prompt(request.prompt_version),
-                    messages=[{"role": "user", "content": _user_text(request)}],
+                    system=system,
+                    messages=[{"role": "user", "content": user_text}],
                     output_config={
                         "effort": "medium",
                         "format": {"type": "json_schema", "schema": self._schema},
@@ -142,8 +179,8 @@ class AnthropicProvider:
                 wait = _retry_after(error.response)
             except anthropic.APIConnectionError:
                 pass
-            except ValueError:
-                unreadable = True  # a 200 body that isn't JSON; never retried
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                unreadable = True  # a 200 body that isn't JSON text; never retried
             except anthropic.APIError:
                 # Anything else from the SDK, such as an answer it couldn't read; never retried.
                 raise ProviderUnavailable("the AI service call failed") from None
