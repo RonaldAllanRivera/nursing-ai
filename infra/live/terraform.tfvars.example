@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (git-ignored) and fill in your own values. CI passes
+# image_uri itself.
+environment = "demo"
+image_uri   = "ACCOUNT_ID.dkr.ecr.ap-southeast-2.amazonaws.com/nursing-ai:<tag>"
+alert_email = "you@example.com"
+
+# Local runs only: the profile to sign in with. CI leaves it unset.
+aws_profile = "nursing-ai"
+
+ai_mode            = "mock"
+ai_monthly_cap_usd = 10
