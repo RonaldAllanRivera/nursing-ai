@@ -1,11 +1,10 @@
 """The patient repository: each patient on their open encounter, with identity and context."""
 
 from datetime import date
-from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, Row, select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from nursing_core.domain.errors import NotFound
@@ -19,8 +18,7 @@ from nursing_core.domain.patient import (
 from nursing_core.ports import Clock
 from nursing_core.storage import tables
 from nursing_core.storage.facilities import load_facilities
-
-AnyRow = Row[*tuple[Any, ...]]
+from nursing_core.storage.rows import AnyRow
 
 _PATIENT = tables.patient
 _ENCOUNTER = tables.encounter

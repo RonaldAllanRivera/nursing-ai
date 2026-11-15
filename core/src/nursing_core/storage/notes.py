@@ -4,10 +4,10 @@ Every method is one transaction. Domain errors carry fixed messages: a database 
 echoes row values (note text, keys), so none is ever passed on.
 """
 
-from typing import Any, NoReturn
+from typing import NoReturn
 from uuid import UUID, uuid4
 
-from sqlalchemy import Row, insert, select, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -26,8 +26,7 @@ from nursing_core.domain.notes import (
 from nursing_core.domain.shifts import ShiftRef
 from nursing_core.ports import Clock
 from nursing_core.storage import tables
-
-AnyRow = Row[*tuple[Any, ...]]
+from nursing_core.storage.rows import AnyRow, shift_columns, shift_from_row
 
 _ROUGH = tables.rough_note
 _JOB = tables.draft_job
@@ -41,14 +40,7 @@ def _rough_note(row: AnyRow) -> RoughNote:
         author_id=row.author_id,
         text=row.text,
         written_at=row.written_at,
-        shift=ShiftRef(
-            code=row.shift_code,
-            label=row.shift_label,
-            starts_at=row.shift_starts_at,
-            ends_at=row.shift_ends_at,
-            shift_date=row.shift_date,
-            timezone=row.shift_timezone,
-        ),
+        shift=shift_from_row(row),
         note_format=row.note_format,
     )
 
@@ -90,17 +82,6 @@ def _note(row: AnyRow) -> Note:
     )
 
 
-def _shift_columns(shift: ShiftRef) -> dict[str, object]:
-    return {
-        "shift_code": shift.code,
-        "shift_label": shift.label,
-        "shift_starts_at": shift.starts_at,
-        "shift_ends_at": shift.ends_at,
-        "shift_date": shift.shift_date,
-        "shift_timezone": shift.timezone,
-    }
-
-
 async def _refuse_change(conn: AsyncConnection, note_id: UUID, expected_version: int) -> NoReturn:
     """Explains why a conditional update touched no row: the lock is checked before the version."""
     row = (
@@ -134,7 +115,7 @@ class PgNoteRepository:
                     note_format=note.note_format.value,
                     idempotency_key=idempotency_key,
                     body_hash=body_hash,
-                    **_shift_columns(note.shift),
+                    **shift_columns(note.shift),
                 )
                 .on_conflict_do_nothing(index_elements=["author_id", "idempotency_key"])
                 .returning(*_ROUGH.c)

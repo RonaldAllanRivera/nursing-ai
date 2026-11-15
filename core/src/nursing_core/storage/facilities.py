@@ -9,6 +9,7 @@ from nursing_core.domain.errors import NotFound, StaleVersion
 from nursing_core.domain.facility import FacilityProfile, FacilitySettings, StoredFacility
 from nursing_core.ports import Clock
 from nursing_core.storage import tables
+from nursing_core.storage.rows import facility_columns, shift_rows
 
 _FACILITY = tables.facility
 _SHIFT = tables.shift_definition
@@ -102,37 +103,14 @@ class PgFacilityRepository:
                 update(_FACILITY)
                 .where(_FACILITY.c.id == current.id)
                 .values(
-                    name=settings.name,
-                    timezone=settings.timezone,
-                    locale=settings.locale.value,
-                    day_starts_at=settings.day_starts_at,
-                    note_formats=[f.value for f in settings.note_formats],
-                    default_note_format=settings.default_note_format.value,
-                    unit_temperature=settings.units.temperature.value,
-                    unit_weight=settings.units.weight.value if settings.units.weight else None,
-                    unit_volume=settings.units.volume.value,
-                    clock=settings.clock,
+                    **facility_columns(settings),
                     version=version,
                     updated_by=changed_by,
                     updated_at=now,
                 )
             )
             await conn.execute(delete(_SHIFT).where(_SHIFT.c.facility_id == current.id))
-            await conn.execute(
-                insert(_SHIFT),
-                [
-                    {
-                        "facility_id": current.id,
-                        "position": position,
-                        "code": shift.code,
-                        "label": shift.label,
-                        "starts_local": shift.starts_local,
-                        "ends_local": shift.ends_local,
-                        "ink": shift.ink.value,
-                    }
-                    for position, shift in enumerate(settings.shifts)
-                ],
-            )
+            await conn.execute(insert(_SHIFT), shift_rows(current.id, settings.shifts))
             await conn.execute(
                 insert(tables.facility_change).values(
                     id=uuid4(),

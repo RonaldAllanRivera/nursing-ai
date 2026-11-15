@@ -16,6 +16,7 @@ from nursing_core.domain.notes import GenerationInfo
 from nursing_core.domain.shifts import ShiftRef
 from nursing_core.domain.users import Role
 from nursing_core.storage import tables
+from nursing_core.storage.rows import optional_shift_from_row, shift_columns
 
 SESSION_LIFETIME = timedelta(hours=12)
 _SESSION = tables.session
@@ -37,17 +38,6 @@ class StoredSession(DomainModel):
 
 def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _shift_columns(shift: ShiftRef | None) -> dict[str, object]:
-    return {
-        "shift_code": shift.code if shift else None,
-        "shift_label": shift.label if shift else None,
-        "shift_starts_at": shift.starts_at if shift else None,
-        "shift_ends_at": shift.ends_at if shift else None,
-        "shift_date": shift.shift_date if shift else None,
-        "shift_timezone": shift.timezone if shift else None,
-    }
 
 
 class PgUserRepository:
@@ -100,7 +90,7 @@ class PgSessionRepository:
                     user_id=user_id,
                     created_at=now,
                     expires_at=now + SESSION_LIFETIME,
-                    **_shift_columns(shift),
+                    **shift_columns(shift),
                 )
             )
         return token
@@ -117,18 +107,7 @@ class PgSessionRepository:
             ).one_or_none()
         if row is None:
             return None
-        shift = (
-            ShiftRef(
-                code=row.shift_code,
-                label=row.shift_label,
-                starts_at=row.shift_starts_at,
-                ends_at=row.shift_ends_at,
-                shift_date=row.shift_date,
-                timezone=row.shift_timezone,
-            )
-            if row.shift_code is not None
-            else None
-        )
+        shift = optional_shift_from_row(row)
         return StoredSession(user_id=row.user_id, shift=shift, expires_at=row.expires_at)
 
     async def set_shift(self, token: str, shift: ShiftRef) -> None:
@@ -136,7 +115,7 @@ class PgSessionRepository:
             await conn.execute(
                 update(_SESSION)
                 .where(_SESSION.c.token_hash == _hash(token))
-                .values(**_shift_columns(shift))
+                .values(**shift_columns(shift))
             )
 
     async def delete(self, token: str) -> None:

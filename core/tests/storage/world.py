@@ -23,6 +23,7 @@ from nursing_core.domain.notes import (
 from nursing_core.domain.patient import PatientIdentity, Relative
 from nursing_core.domain.users import Role
 from nursing_core.storage import tables
+from nursing_core.storage.rows import facility_columns, shift_rows
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -63,16 +64,7 @@ def _facility_values(profile: FacilityProfile, facility_id: UUID) -> dict[str, o
     return {
         "id": facility_id,
         "key": profile.key,
-        "name": profile.name,
-        "timezone": profile.timezone,
-        "locale": profile.locale.value,
-        "day_starts_at": profile.day_starts_at,
-        "note_formats": [f.value for f in profile.note_formats],
-        "default_note_format": profile.default_note_format.value,
-        "unit_temperature": profile.units.temperature.value,
-        "unit_weight": profile.units.weight.value if profile.units.weight else None,
-        "unit_volume": profile.units.volume.value,
-        "clock": profile.clock,
+        **facility_columns(profile),
         "version": 1,
         "updated_by": None,
         "updated_at": NOW,
@@ -151,21 +143,7 @@ async def build_world(engine: AsyncEngine) -> World:
                 settings=profile.model_dump(mode="json", exclude={"key"}),
             )
         )
-        await conn.execute(
-            insert(tables.shift_definition),
-            [
-                {
-                    "facility_id": facility_id,
-                    "position": position,
-                    "code": shift.code,
-                    "label": shift.label,
-                    "starts_local": shift.starts_local,
-                    "ends_local": shift.ends_local,
-                    "ink": shift.ink.value,
-                }
-                for position, shift in enumerate(profile.shifts)
-            ],
-        )
+        await conn.execute(insert(tables.shift_definition), shift_rows(facility_id, profile.shifts))
         await conn.execute(
             insert(tables.app_user),
             [
