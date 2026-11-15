@@ -22,6 +22,15 @@ const SPOKEN_COUNT = {
   "-1": "Over the limit. Shorten your note to save it.",
 } as const;
 
+// The visible lines and the status region say these sentences from the same constants, so they can't drift.
+const WAITING = "Waiting for the network.";
+const NOTE_STILL_HERE = "Your note is still here.";
+const DRAFTING = "Drafting your note.";
+const FEW_SECONDS = "This usually takes a few seconds.";
+const COULDNT_CHECK = "Couldn't check on the draft just now.";
+const NOTE_SAVED = "Your note is saved.";
+const STILL_TRYING = "Still trying.";
+
 /** One visible line under the note. Only a failure is a live alert; progress is said by the status region. */
 function Line({
   icon,
@@ -88,23 +97,24 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
   const showAgainHint = (failed || lost) && sameAsSent;
 
   // What a screen reader hears, in one region that is always on the page (a node that appears is
-  // often not read; a change in a node that was there is). The words differ from the visible
-  // lines on purpose, so the page does not say the same thing twice. Failures are alerts instead.
+  // often not read; a change in a node that was there is). Where a visible line has no role of
+  // its own, this says the same sentences, word for word. Failures are alerts instead.
   const spoken = showAgainHint
     ? "To save a new note, change the text in the box."
     : save.isPending && !save.isPaused
       ? "Saving your note."
       : save.isPaused
-        ? "Waiting for the network."
+        ? `${WAITING} ${NOTE_STILL_HERE}`
         : drafting && job.isError
-          ? "Couldn't check on the draft just now. Still trying."
+          ? `${COULDNT_CHECK} ${NOTE_SAVED} ${STILL_TRYING}`
           : drafting
-            ? "Drafting your note."
+            ? `${DRAFTING} ${FEW_SECONDS}`
             : step === null
               ? ""
               : SPOKEN_COUNT[String(step) as keyof typeof SPOKEN_COUNT];
   const [announcement, setAnnouncement] = useState("");
-  // Clear, then set on the next frame (the same way as the trace view), so a repeat is read again.
+  // Clear, then set on the next frame (the same way as the trace view), so a change of words is read
+  // as new. This runs only when `spoken` changes, so the same words are not read again.
   useEffect(() => {
     let second = 0;
     const first = requestAnimationFrame(() => {
@@ -170,7 +180,7 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         ) : null}
         {save.isPaused ? (
           <Line icon="flag" tone="text-review">
-            Waiting for the network. Your note is still here.
+            {WAITING} {NOTE_STILL_HERE}
           </Line>
         ) : null}
         {save.isError ? (
@@ -182,12 +192,12 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         ) : null}
         {drafting && !job.isError ? (
           <Line icon="box" tone="text-ink-2">
-            Drafting your note. This usually takes a few seconds.
+            {DRAFTING} {FEW_SECONDS}
           </Line>
         ) : null}
         {drafting && job.isError ? (
           <Line icon="flag" tone="text-review">
-            Couldn't check on the draft just now. Your note is saved. Still trying.
+            {COULDNT_CHECK} {NOTE_SAVED} {STILL_TRYING}
           </Line>
         ) : null}
         {lost ? (

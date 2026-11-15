@@ -351,6 +351,61 @@ describe("patient page", () => {
     await screen.findByText("Drafting your note. This usually takes a few seconds.");
   });
 
+  describe("the status region says what the visible line says", () => {
+    const inRegion = () => within(screen.getByRole("status"));
+
+    it("says the whole drafting line", async () => {
+      await openPatientA();
+      await typeNote("pt c/o hilo");
+      await save();
+      await screen.findByText("Drafting your note. This usually takes a few seconds.");
+      await waitFor(() => {
+        expect(
+          inRegion().getByText("Drafting your note. This usually takes a few seconds."),
+        ).toBeInTheDocument();
+      });
+    });
+
+    it("says the whole waiting-for-the-network line", async () => {
+      await openPatientA();
+      await typeNote("pt c/o hilo");
+      act(() => {
+        onlineManager.setOnline(false);
+      });
+      try {
+        await save();
+        await screen.findByText("Waiting for the network. Your note is still here.");
+        await waitFor(() => {
+          expect(
+            inRegion().getByText("Waiting for the network. Your note is still here."),
+          ).toBeInTheDocument();
+        });
+      } finally {
+        act(() => {
+          onlineManager.setOnline(true);
+        });
+      }
+      await screen.findByText("Drafting your note. This usually takes a few seconds.");
+    });
+
+    it("says the whole couldn't-check line", async () => {
+      await openPatientA();
+      server.use(http.get("*/api/v1/draft-jobs/:id", () => HttpResponse.json({}, { status: 500 })));
+      await typeNote("pt c/o hilo");
+      await save();
+      await screen.findByText(
+        "Couldn't check on the draft just now. Your note is saved. Still trying.",
+      );
+      await waitFor(() => {
+        expect(
+          inRegion().getByText(
+            "Couldn't check on the draft just now. Your note is saved. Still trying.",
+          ),
+        ).toBeInTheDocument();
+      });
+    });
+  });
+
   it("stops following a draft the server can't find, and says so", async () => {
     await openPatientA();
     server.use(
