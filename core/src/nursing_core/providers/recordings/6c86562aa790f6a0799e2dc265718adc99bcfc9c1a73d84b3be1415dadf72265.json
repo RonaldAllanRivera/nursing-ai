@@ -1,0 +1,127 @@
+{
+  "request": {
+    "locale": "en-PH",
+    "note_format": "fdar",
+    "prompt_version": "fdar-v1",
+    "redacted_text": "pt c/o hilo since 2am, BP 90/60 HR 112. pinainom ng water 200ml, still weak.\nnanginginig around 3am, T 37.9. nagsuka x1 ~4am, mga 100ml.\nIVF D5LR 1L @ 30gtts/min infusing well L arm"
+  },
+  "result": {
+    "generation": {
+      "cost_usd": "0.023776",
+      "input_tokens": 1409,
+      "latency_ms": 9382,
+      "model": "claude-opus-5-5",
+      "output_tokens": 907,
+      "prompt_version": "fdar-v1",
+      "provider": "anthropic"
+    },
+    "output": {
+      "entries": [
+        {
+          "action": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "pinainom ng water 200ml"
+              ],
+              "text": "Patient was given 200ml of water to drink."
+            }
+          ],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "pt c/o hilo since 2am"
+              ],
+              "text": "Patient complained of dizziness since 2am."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "BP 90/60 HR 112"
+              ],
+              "text": "BP 90/60, HR 112."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "c/o hilo"
+            ],
+            "text": "Dizziness"
+          },
+          "response": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "still weak"
+              ],
+              "text": "Patient still weak."
+            }
+          ]
+        },
+        {
+          "action": [],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "nanginginig around 3am, T 37.9"
+              ],
+              "text": "Patient was shivering around 3am, T 37.9."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "nanginginig",
+              "T 37.9"
+            ],
+            "text": "Shivering with elevated temperature"
+          },
+          "response": []
+        },
+        {
+          "action": [],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "nagsuka x1 ~4am, mga 100ml"
+              ],
+              "text": "Patient vomited once at approximately 4am, about 100ml."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "nagsuka"
+            ],
+            "text": "Vomiting"
+          },
+          "response": []
+        },
+        {
+          "action": [],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "IVF D5LR 1L @ 30gtts/min infusing well L arm"
+              ],
+              "text": "IVF D5LR 1L at 30gtts/min infusing well on the left arm."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "IVF D5LR 1L"
+            ],
+            "text": "IV fluid therapy"
+          },
+          "response": []
+        }
+      ]
+    }
+  }
+}

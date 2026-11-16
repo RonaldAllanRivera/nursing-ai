@@ -1,0 +1,152 @@
+{
+  "request": {
+    "locale": "en-US",
+    "note_format": "fdar",
+    "prompt_version": "fdar-v1",
+    "redacted_text": "0830 pt A&Ox4, c/o R hip pain 6/10, oxycodone 5mg PO given per MAR. T 100.2F HR 96 BP 142/84\nRR 18 SpO2 95% 2L NC. wt 176 lb this AM. dtr [RELATIVE_1] at bedside, updated on POC. 1015 pain 3/10.\nambulated 10 ft w/ walker with PT, tolerated. SCDs on, bed alarm on, call light within reach."
+  },
+  "result": {
+    "generation": {
+      "cost_usd": "0.02352",
+      "input_tokens": 1470,
+      "latency_ms": 7630,
+      "model": "claude-opus-5-5",
+      "output_tokens": 882,
+      "prompt_version": "fdar-v1",
+      "provider": "anthropic"
+    },
+    "output": {
+      "entries": [
+        {
+          "action": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "oxycodone 5mg PO given per MAR"
+              ],
+              "text": "Oxycodone 5mg PO given per MAR."
+            }
+          ],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "0830 pt A&Ox4",
+                "c/o R hip pain 6/10"
+              ],
+              "text": "At 0830, patient alert and oriented x4, complains of right hip pain rated 6/10."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "c/o R hip pain 6/10"
+            ],
+            "text": "Acute pain, right hip"
+          },
+          "response": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "1015 pain 3/10"
+              ],
+              "text": "At 1015, pain rated 3/10."
+            }
+          ]
+        },
+        {
+          "action": [],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "T 100.2F HR 96 BP 142/84",
+                "RR 18 SpO2 95% 2L NC"
+              ],
+              "text": "T 100.2F, HR 96, BP 142/84, RR 18, SpO2 95% on 2L nasal cannula."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "wt 176 lb this AM"
+              ],
+              "text": "Weight 176 lb this morning."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "T 100.2F HR 96 BP 142/84"
+            ],
+            "text": "Vital signs monitoring"
+          },
+          "response": []
+        },
+        {
+          "action": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "ambulated 10 ft w/ walker with PT"
+              ],
+              "text": "Ambulated 10 ft with walker with PT."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "SCDs on, bed alarm on, call light within reach"
+              ],
+              "text": "SCDs on, bed alarm on, call light within reach."
+            }
+          ],
+          "data": [],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "ambulated 10 ft w/ walker with PT",
+              "SCDs on, bed alarm on, call light within reach"
+            ],
+            "text": "Mobility and safety"
+          },
+          "response": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "tolerated"
+              ],
+              "text": "Tolerated ambulation."
+            }
+          ]
+        },
+        {
+          "action": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "updated on POC"
+              ],
+              "text": "Daughter updated on plan of care."
+            }
+          ],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "dtr [RELATIVE_1] at bedside"
+              ],
+              "text": "Daughter [RELATIVE_1] at bedside."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "dtr [RELATIVE_1] at bedside, updated on POC"
+            ],
+            "text": "Family communication"
+          },
+          "response": []
+        }
+      ]
+    }
+  }
+}

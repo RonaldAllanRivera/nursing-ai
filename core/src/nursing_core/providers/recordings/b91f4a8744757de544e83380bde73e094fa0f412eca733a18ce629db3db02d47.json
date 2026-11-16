@@ -1,0 +1,122 @@
+{
+  "request": {
+    "locale": "en-PH",
+    "note_format": "fdar",
+    "prompt_version": "fdar-v1",
+    "redacted_text": "hindi makatulog since 11pm, restless. repositioned, lights dimmed. nakatulog ng 0100.\n0330 [NICKNAME_1] febrile, T 37.8, chilling. TSB done, paracetamol 500mg given per order. anak na si [RELATIVE_1] at bedside, informed."
+  },
+  "result": {
+    "generation": {
+      "cost_usd": "0.022044",
+      "input_tokens": 1411,
+      "latency_ms": 7306,
+      "model": "claude-opus-5-5",
+      "output_tokens": 820,
+      "prompt_version": "fdar-v1",
+      "provider": "anthropic"
+    },
+    "output": {
+      "entries": [
+        {
+          "action": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "repositioned"
+              ],
+              "text": "Repositioned."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "lights dimmed"
+              ],
+              "text": "Lights dimmed."
+            }
+          ],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "hindi makatulog since 11pm"
+              ],
+              "text": "Unable to sleep since 11pm."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "restless"
+              ],
+              "text": "Restless."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "hindi makatulog since 11pm, restless"
+            ],
+            "text": "Disturbed sleep"
+          },
+          "response": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "nakatulog ng 0100"
+              ],
+              "text": "Fell asleep at 0100."
+            }
+          ]
+        },
+        {
+          "action": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "TSB done"
+              ],
+              "text": "TSB done."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "paracetamol 500mg given per order"
+              ],
+              "text": "Paracetamol 500mg given per order."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "anak na si [RELATIVE_1] at bedside, informed"
+              ],
+              "text": "Child, [RELATIVE_1], at bedside and informed."
+            }
+          ],
+          "data": [
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "0330 [NICKNAME_1] febrile, T 37.8"
+              ],
+              "text": "At 0330, [NICKNAME_1] febrile, T 37.8."
+            },
+            {
+              "own_wording": false,
+              "source_quotes": [
+                "chilling"
+              ],
+              "text": "Chilling."
+            }
+          ],
+          "focus": {
+            "own_wording": true,
+            "source_quotes": [
+              "febrile, T 37.8"
+            ],
+            "text": "Fever"
+          },
+          "response": []
+        }
+      ]
+    }
+  }
+}
