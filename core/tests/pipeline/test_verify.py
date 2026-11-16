@@ -835,15 +835,58 @@ def test_a_word_after_a_slash_that_is_not_a_denominator_is_not_a_rate() -> None:
         assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
 
 
-def test_a_slash_before_a_heart_rate_is_a_separator_not_per_hour() -> None:
+def test_a_slash_before_a_heart_rate_makes_the_rate_unsure_so_both_readings_flag() -> None:
+    for note in ["insulin 5 units / HR 88", "insulin 5 units/HR 88", "insulin 5 units/hr 88"]:
+        _flagged_unit(note, "Insulin 5 units/hr.")
+        _flagged_unit(note, "Insulin 5 units.")
+    line = _rate_status("insulin 5 units / HR 88", "Insulin 5 units.")
+    assert [m.note_text for m in line.number_mismatches] == ["5 units / HR"]
+    _flagged_unit("heparin 1000 units, HR 88", "Heparin 1000 units/hr 88.")
+    _flagged_unit("IVF 100/hr 88", "IVF 100 mL.")
+    assert _rate_status("insulin 5 units, HR 88", "Insulin 5 units.").status is (
+        LineStatus.SOURCE_FOUND
+    )
+
+
+def test_a_rate_followed_by_a_time_volume_weight_or_other_number_is_still_a_rate() -> None:
     for note, text in [
-        ("insulin 5 units / HR 88", "Insulin 5 units."),
-        ("insulin 5 units / HR 88", "Insulin 5 units, HR 88."),
-        ("insulin 5 units/HR 88", "Insulin 5 units."),
+        ("heparin 1000 units/hr 10am", "Heparin 1000 units."),
+        ("heparin 1000 units/hr 10 am", "Heparin 1000 units."),
+        ("heparin 1000 units/hr \t10am", "Heparin 1000 units."),
+        ("heparin 1000 units/hr 1000", "Heparin 1000 units."),
+        ("insulin 5 units/hr 0800", "Insulin 5 units."),
+        ("insulin 5 units / hr 0800", "Insulin 5 units."),
+        ("insulin 5 units/HR 0800", "Insulin 5 units."),
+        ("IVF 100 mL/hr 2L total", "IVF 100 mL."),
+        ("IVF 100 mL/hr 2 L total", "IVF 100 mL."),
+        ("IVF 100 cc/hr 1L", "IVF 100 mL."),
+        ("NS 100 mL/hr 8 hrs", "NS 100 mL."),
+        ("IVF 100/hr 0800", "IVF 100 mL."),
+        ("dopamine 5 mcg/kg/hr 70kg", "Dopamine 5 mcg/kg."),
+        ("heparin 18 units/kg/hr 1300", "Heparin 18 units/kg."),
+        ("drip 5 mg/hr 0800", "Drip 5 mg."),
+        ("drip 5 mg/kg/hr 0800", "Drip 5 mg/kg."),
+        ("insulin 5 units/hour 2", "Insulin 5 units."),
+        ("insulin 5 units/hrs 2", "Insulin 5 units."),
+        ("insulin 5 units/h 88", "Insulin 5 units."),
+        ("insulin 5 units / hour 88", "Insulin 5 units."),
+        ("insulin 5 units/hr 1:30", "Insulin 5 units."),
+        ("insulin 5 units/hr 88.5", "Insulin 5 units."),
+        ("insulin 5 units/hr\n88", "Insulin 5 units."),
+        ("heparin 1000 units 10am", "Heparin 1000 units/hr 10am."),
     ]:
-        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
-    _flagged_unit("insulin 5 units / HR 88", "Insulin 5 units/hr.")
-    _flagged_unit("insulin 5 units / HR 88", "Insulin 5 units per hr.")
+        _flagged_unit(note, text)
+    assert _rate_status("insulin 5 units/hr 0800", "Insulin 5 units/hr.").status is (
+        LineStatus.SOURCE_FOUND
+    )
+
+
+def test_units_per_litre_per_with_a_line_break_and_naming_without_a_rate() -> None:
+    _flagged_unit("ALT 40 U/L", "ALT 40 units.")
+    _flagged_unit("heparin 5 mg\nper hr", "Heparin 5 mg.")
+    line = _rate_status("IVF 100/hr, NS 100 mL bolus", "Infusing at 100 kg.")
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    assert [m.note_text for m in line.number_mismatches] == ["100 mL"]
 
 
 def test_a_spaced_rate_with_no_number_after_the_denominator_is_still_a_rate() -> None:

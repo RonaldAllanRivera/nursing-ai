@@ -20,11 +20,14 @@ the unit with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8
 "1 L / 8 hrs"). A rate is read whole when it fits in the 64 characters after the unit (after the
 number, for a rate written right after a number: "100/hr"), as "5 mcg per kilograms per minute"
 does, and the word the read ends in is finished; a rate starting after more than that is not read.
-A "/" then "hr" and a number of its own ("5 units / HR 88") is a separator before a heart rate, not
-a rate. Whitespace inside a rate includes a line break between "5 mg/" and "hr". A concentration is
-a unit with its volume as the denominator: "g/dL", "mg/dL", "g/L", "mmol/L" and "mEq/L" are each
-kept whole, so none equals another, a bare unit, or a rate per hour. "g/L" and "u/L" are not
-shorthand.
+A "/" then the spelling "hr" and a number of two or three digits on the same line ("5 units / HR
+88") may be per hour or a separator before a heart rate: the rate is then unsure, and a line that
+uses that number with a unit is a mismatch whether it writes a rate or not. Any other hour spelling
+or number after it ("units/hr 0800", "mL/hr 2L", "units/h 88") is the rate.
+Whitespace inside a rate includes a line break between "5 mg/" and "hr".
+A concentration is a unit with its volume as the denominator: "g/dL", "mg/dL", "g/L", "mmol/L" and
+"mEq/L" are each kept whole, so none equals another, a bare unit, or a rate per hour. "g/L" and
+"u/L" are not shorthand.
 A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more
 letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
 and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
@@ -146,8 +149,10 @@ _PER_LITRE_UNITS = frozenset("ug")  # "g/L" and "u/L" are per litre, not shortha
 # Whitespace inside a rate includes a line break, so "5 mg/" then "hr" on the next line is a rate.
 _PER = re.compile(r"\s+per\s+", re.IGNORECASE)
 _SLASH = re.compile(r"\s*/\s*")
-# "units / HR 88": a "/" then "hr" and its own number is a separator before a heart rate.
-_HEART_RATE_NUMBER = re.compile(r"[ \t]+\.?\d")
+# "units / HR 88": a "/", the spelling "hr" and then a heart-rate-like number (two or three digits,
+# on the same line, not a time like "0800" or "10am", a volume or a weight) may be a heart rate.
+_HEART_RATE_NUMBER = re.compile(r"[ \t]+\d{2,3}(?![\w:/]|\.\d)")
+_AMBIGUOUS = "?"  # a denominator no line can write, so it equals no rate and always flags
 type NumberValue = tuple[str | Decimal, ...]
 _WINDOW = 64  # typed characters read after a number (a unit, a bare rate) or a unit (a rate)
 
@@ -299,8 +304,11 @@ def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
         denominator = _DENOMINATORS.get(spelling)
         if denominator is None:
             break
-        if slash and denominator == "hour" and _HEART_RATE_NUMBER.match(folded, letters.end()):
-            break  # "units / HR 88": the "/" separates a heart rate, it is not per hour
+        if slash and spelling == "hr" and _HEART_RATE_NUMBER.match(folded, letters.end()):
+            # "units / HR 88": per hour, or a "/" before a heart rate? Unsure, so it equals nothing.
+            rate.append(_AMBIGUOUS)
+            end = origin[letters.end() - 1] + 1
+            break
         rate.append(denominator)
         position = end_in_folded = letters.end()
         end = origin[end_in_folded - 1] + 1
