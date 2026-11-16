@@ -277,6 +277,23 @@ describe("the settings screen", () => {
     expect(screen.getByRole("radio", { name: "None" })).toBeChecked();
   });
 
+  it("names the note format in the facility's own words, as its locale is set", async () => {
+    await openSettings();
+    expect(screen.getByText("FDAR")).toBeVisible();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Facility" }), "us-demo");
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Facility name" })).toHaveValue(
+        "SYNTHETIC Demo Hospital (US)",
+      );
+    });
+    expect(screen.getByText("DAR")).toBeVisible();
+    expect(screen.queryByText("FDAR")).toBeNull();
+    // It follows the locale picked in the form, before the change is saved.
+    await userEvent.click(screen.getByRole("radio", { name: "English (Philippines)" }));
+    expect(screen.getByText("FDAR")).toBeVisible();
+    expect(screen.queryByText("DAR")).toBeNull();
+  });
+
   it("switches facility without a question when nothing changed", async () => {
     await openSettings();
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Facility" }), "us-demo");

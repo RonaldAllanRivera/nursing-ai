@@ -6,6 +6,7 @@ import { ApiError } from "../api/errors";
 import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
 import { Button } from "../components/ui/Button";
+import { words } from "../region/words";
 import { checkShifts } from "./checkShifts";
 import { facilitySettingsQuery, useSaveFacility } from "./facilities";
 import { Field, INPUT, RadioGroup } from "./fields";
@@ -284,7 +285,9 @@ function Editor({
         </div>
         <p>
           <span className="mb-1 block text-14 font-semibold text-ink-2">Note format</span>
-          <span className="font-semibold">FDAR</span>{" "}
+          <span className="font-semibold">
+            {words(values.locale ?? loaded.facility.profile.locale).noteFormat("fdar")}
+          </span>{" "}
           <span className="ml-3 text-ink-2">More formats come later</span>
         </p>
       </Sheet>
