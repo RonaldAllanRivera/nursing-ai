@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     Locally, Compose and the Makefile pass the values in; in AWS, the Lambda environment does.
     """
 
-    model_config = SettingsConfigDict(env_file=None)
+    model_config = SettingsConfigDict(env_file=None, hide_input_in_errors=True)
 
     app_env: Literal["dev", "test", "demo", "prod"] = "dev"
     database_url: str
