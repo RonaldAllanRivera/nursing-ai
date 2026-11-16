@@ -3,16 +3,16 @@
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from nursing_core.db import create_engine
-from nursing_core.domain.facility import Locale, NoteFormat, ShiftInk
+from nursing_core.domain.facility import FacilitySettings, Locale, NoteFormat, ShiftInk
 from nursing_core.domain.jobs import JobFailure, JobStatus
 from nursing_core.domain.notes import NoteStatus
-from nursing_core.domain.units import Ucum
+from nursing_core.domain.units import TEMPERATURE_UNITS, VOLUME_UNITS, WEIGHT_UNITS, Ucum
 from nursing_core.domain.users import Role
 from nursing_core.storage import tables
 from nursing_core.storage.migrate import upgrade
@@ -416,3 +416,89 @@ async def test_enum_checks_list_exactly_the_enum_values(
     for member in enum:
         assert f"'{member.value}'" in definition
     assert definition.count("::text") == len(enum)
+
+
+async def _constraint_definition(engine: AsyncEngine, name: str) -> str:
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :n"),
+                {"n": name},
+            )
+        ).scalar_one()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("column", "allowed"),
+    [
+        ("unit_temperature", TEMPERATURE_UNITS),
+        ("unit_weight", WEIGHT_UNITS),
+        ("unit_volume", VOLUME_UNITS),
+        ("clock", set(get_args(FacilitySettings.model_fields["clock"].annotation))),
+    ],
+)
+async def test_unit_and_clock_checks_list_exactly_the_domain_values(
+    engine: AsyncEngine, column: str, allowed: set[str]
+) -> None:
+    definition = await _constraint_definition(engine, f"ck_facility_{column}_values")
+    for value in allowed:
+        assert f"'{value}'" in definition
+    assert definition.count("::text") == len(allowed)
+
+
+@pytest.mark.asyncio
+async def test_facility_note_formats_hold_only_known_formats(engine: AsyncEngine) -> None:
+    definition = await _constraint_definition(engine, "ck_facility_note_formats_values")
+    for member in NoteFormat:
+        assert f"'{member.value}'" in definition
+    assert definition.count("::text") == len(NoteFormat)
+    await _build_world(engine)
+    with pytest.raises(IntegrityError, match="ck_facility_note_formats_values"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE facility SET note_formats = ARRAY['fdar', 'soap'], "
+                    "default_note_format = 'fdar'"
+                )
+            )
+
+
+SIGNED_ALL: dict[str, Any] = {"signed_by": "nurse", "signed_at": NOW, "content_hash": HASH}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "extra", "constraint"),
+    [
+        ("draft", {"signed_by": "nurse"}, "signature_only_when_signed"),
+        ("draft", {"signed_at": NOW}, "signature_only_when_signed"),
+        ("draft", {"content_hash": HASH}, "signature_only_when_signed"),
+        ("signed", {"signed_by": "nurse", "signed_at": NOW}, "signature_only_when_signed"),
+        ("draft", {"discarded_by": "nurse"}, "discard_only_when_discarded"),
+        ("draft", {"discarded_at": NOW}, "discard_only_when_discarded"),
+        ("discarded", {"discarded_by": "nurse"}, "discard_only_when_discarded"),
+        ("signed", SIGNED_ALL | {"discarded_at": NOW}, "discard_only_when_discarded"),
+    ],
+)
+async def test_a_note_never_holds_part_of_a_signature_or_discard(
+    engine: AsyncEngine, status: str, extra: dict[str, Any], constraint: str
+) -> None:
+    ids = await _build_world(engine)
+    values = _note_values(ids) | {"status": status}
+    values |= {k: ids["nurse"] if v == "nurse" else v for k, v in extra.items()}
+    with pytest.raises(IntegrityError, match=f"ck_note_{constraint}"):
+        async with engine.begin() as conn:
+            await conn.execute(insert(tables.note).values(values))
+
+
+@pytest.mark.asyncio
+async def test_the_secondary_indexes_exist(engine: AsyncEngine) -> None:
+    async with engine.connect() as conn:
+        found = set((await conn.execute(text("SELECT indexname FROM pg_indexes"))).scalars().all())
+    assert {
+        "ix_rough_note_encounter_id_shift_starts_at",
+        "ix_draft_job_status",
+        "ix_ai_usage_created_at",
+        "ix_session_user_id",
+    } <= found

@@ -64,10 +64,11 @@ def upgrade() -> None:
         _check(
             "facility",
             "unit_weight_values",
-            "unit_weight IS NULL OR unit_weight IN ('kg', '[lb_av]')",
+            "unit_weight IS NULL OR unit_weight IN ('[lb_av]', 'kg')",
         ),
         _check("facility", "unit_volume_values", "unit_volume IN ('mL')"),
         _check("facility", "clock_values", "clock IN ('24h', '12h')"),
+        _check("facility", "note_formats_values", "note_formats <@ ARRAY['fdar']::text[]"),
         _check("facility", "version_positive", "version > 0"),
         _check("facility", "has_a_note_format", "cardinality(note_formats) > 0"),
         _check("facility", "default_is_offered", "default_note_format = ANY (note_formats)"),
@@ -292,13 +293,16 @@ def upgrade() -> None:
         _check(
             "note",
             "signature_only_when_signed",
-            "(status = 'signed') = (signed_by IS NOT NULL "
-            "AND signed_at IS NOT NULL AND content_hash IS NOT NULL)",
+            "(status = 'signed' AND signed_by IS NOT NULL "
+            "AND signed_at IS NOT NULL AND content_hash IS NOT NULL) "
+            "OR (status <> 'signed' AND signed_by IS NULL "
+            "AND signed_at IS NULL AND content_hash IS NULL)",
         ),
         _check(
             "note",
             "discard_only_when_discarded",
-            "(status = 'discarded') = (discarded_by IS NOT NULL AND discarded_at IS NOT NULL)",
+            "(status = 'discarded' AND discarded_by IS NOT NULL AND discarded_at IS NOT NULL) "
+            "OR (status <> 'discarded' AND discarded_by IS NULL AND discarded_at IS NULL)",
         ),
     )
 
@@ -372,7 +376,20 @@ def upgrade() -> None:
         _check("ai_usage", "cost_not_negative", "cost_usd >= 0"),
     )
 
+    _add_indexes()
     _lock_the_record()
+
+
+def _add_indexes() -> None:
+    """For the reads the app makes often: a shift's notes, the job queue, the month's spend."""
+    op.create_index(
+        op.f("ix_rough_note_encounter_id_shift_starts_at"),
+        "rough_note",
+        ["encounter_id", "shift_starts_at"],
+    )
+    op.create_index(op.f("ix_draft_job_status"), "draft_job", ["status"])
+    op.create_index(op.f("ix_ai_usage_created_at"), "ai_usage", ["created_at"])
+    op.create_index(op.f("ix_session_user_id"), "session", ["user_id"])
 
 
 def _lock_the_record() -> None:

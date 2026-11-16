@@ -6,7 +6,9 @@ Every instant is `timestamptz`. A status column has a check constraint listing t
 the domain enum it holds, read from the enum here so the two can't drift.
 """
 
+from collections.abc import Iterable
 from enum import StrEnum
+from typing import get_args
 
 from sqlalchemy import (
     ARRAY,
@@ -16,6 +18,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     Numeric,
@@ -28,9 +31,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from nursing_core.domain.facility import Locale, NoteFormat, ShiftInk
+from nursing_core.domain.facility import FacilitySettings, Locale, NoteFormat, ShiftInk
 from nursing_core.domain.jobs import JobFailure, JobStatus
 from nursing_core.domain.notes import NoteStatus
+from nursing_core.domain.units import TEMPERATURE_UNITS, VOLUME_UNITS, WEIGHT_UNITS
 from nursing_core.domain.users import Role
 
 NAMING_CONVENTION = {
@@ -46,10 +50,30 @@ metadata = MetaData(naming_convention=NAMING_CONVENTION)
 _HEX64 = "'^[0-9a-f]{64}$'"
 
 
+def _listed(values: Iterable[str]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
+
+
 def _values(column: str, enum: type[StrEnum]) -> CheckConstraint:
     """A check that the column holds one of the enum's values (a null passes: add NOT NULL)."""
-    listed = ", ".join(f"'{member.value}'" for member in enum)
-    return CheckConstraint(f"{column} IN ({listed})", name=f"{column}_values")
+    return CheckConstraint(
+        f"{column} IN ({_listed(m.value for m in enum)})", name=f"{column}_values"
+    )
+
+
+def _one_of(column: str, values: Iterable[str], *, or_null: bool = False) -> CheckConstraint:
+    """The same check for a set of allowed values (sorted, so the SQL doesn't change run to run)."""
+    allowed = f"{column} IN ({_listed(sorted(values))})"
+    return CheckConstraint(
+        f"{column} IS NULL OR {allowed}" if or_null else allowed, name=f"{column}_values"
+    )
+
+
+def _all_or_none(status: str, columns: list[str]) -> str:
+    """Every column is set when the note has this status, and every one is null when it hasn't."""
+    set_ = " AND ".join(f"{c} IS NOT NULL" for c in columns)
+    unset = " AND ".join(f"{c} IS NULL" for c in columns)
+    return f"(status = '{status}' AND {set_}) OR (status <> '{status}' AND {unset})"
 
 
 def _pk() -> Column[object]:
@@ -86,12 +110,14 @@ facility = Table(
     UniqueConstraint("key"),
     _values("locale", Locale),
     _values("default_note_format", NoteFormat),
-    CheckConstraint("unit_temperature IN ('Cel', '[degF]')", name="unit_temperature_values"),
+    _one_of("unit_temperature", TEMPERATURE_UNITS),
+    _one_of("unit_weight", WEIGHT_UNITS, or_null=True),
+    _one_of("unit_volume", VOLUME_UNITS),
+    _one_of("clock", get_args(FacilitySettings.model_fields["clock"].annotation)),
     CheckConstraint(
-        "unit_weight IS NULL OR unit_weight IN ('kg', '[lb_av]')", name="unit_weight_values"
+        f"note_formats <@ ARRAY[{_listed(f.value for f in NoteFormat)}]::text[]",
+        name="note_formats_values",
     ),
-    CheckConstraint("unit_volume IN ('mL')", name="unit_volume_values"),
-    CheckConstraint("clock IN ('24h', '12h')", name="clock_values"),
     CheckConstraint("version > 0", name="version_positive"),
     CheckConstraint("cardinality(note_formats) > 0", name="has_a_note_format"),
     CheckConstraint("default_note_format = ANY (note_formats)", name="default_is_offered"),
@@ -228,6 +254,7 @@ session = Table(
         name="shift_all_or_none",
     ),
     CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+    Index("ix_session_user_id", "user_id"),
 )
 
 rough_note = Table(
@@ -251,6 +278,7 @@ rough_note = Table(
     _values("note_format", NoteFormat),
     CheckConstraint(f"body_hash ~ {_HEX64}", name="body_hash_is_hex"),
     CheckConstraint("shift_ends_at > shift_starts_at", name="shift_has_a_length"),
+    Index("ix_rough_note_encounter_id_shift_starts_at", "encounter_id", "shift_starts_at"),
 )
 
 note = Table(
@@ -276,12 +304,11 @@ note = Table(
     CheckConstraint("version > 0", name="version_positive"),
     CheckConstraint(f"content_hash ~ {_HEX64}", name="content_hash_is_hex"),
     CheckConstraint(
-        "(status = 'signed') = (signed_by IS NOT NULL "
-        "AND signed_at IS NOT NULL AND content_hash IS NOT NULL)",
+        _all_or_none("signed", ["signed_by", "signed_at", "content_hash"]),
         name="signature_only_when_signed",
     ),
     CheckConstraint(
-        "(status = 'discarded') = (discarded_by IS NOT NULL AND discarded_at IS NOT NULL)",
+        _all_or_none("discarded", ["discarded_by", "discarded_at"]),
         name="discard_only_when_discarded",
     ),
 )
@@ -303,6 +330,7 @@ draft_job = Table(
     CheckConstraint(
         "(status = 'succeeded') = (note_id IS NOT NULL)", name="note_only_when_succeeded"
     ),
+    Index("ix_draft_job_status", "status"),
 )
 
 note_version = Table(
@@ -335,4 +363,5 @@ ai_usage = Table(
     CheckConstraint("provider IN ('fake', 'replay', 'anthropic')", name="provider_values"),
     CheckConstraint("input_tokens >= 0 AND output_tokens >= 0", name="tokens_not_negative"),
     CheckConstraint("cost_usd >= 0", name="cost_not_negative"),
+    Index("ix_ai_usage_created_at", "created_at"),
 )
