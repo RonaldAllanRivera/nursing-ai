@@ -37,7 +37,7 @@ exclude = ["**/.claude", "**/node_modules", "web", ".tools", "**/.venv"]
 
 [tool.pytest.ini_options]
 testpaths = ["core", "api", "mcp", "evals", "tests"]
-norecursedirs = [".claude", ".git", ".tools", "node_modules", "web"]
+norecursedirs = [".claude", ".git", ".hypothesis", ".tools", "node_modules", "web"]
 pythonpath = ["scripts"]
 addopts = "--import-mode=importlib"
 asyncio_default_fixture_loop_scope = "function"

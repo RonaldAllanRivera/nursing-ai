@@ -1,5 +1,13 @@
 name: ${COMPOSE_PROJECT_NAME:-nursing-ai-0}
 
+# The API's image and database, shared by the one-shot jobs that run before it starts.
+x-api-image: &api-image
+  build:
+    context: .
+    dockerfile: api/Dockerfile
+  environment:
+    DATABASE_URL: postgresql+asyncpg://app:${POSTGRES_PASSWORD:-localdev}@db:5432/app
+
 services:
   db:
     image: pgvector/pgvector:0.8.2-pg17-bookworm
@@ -17,17 +25,36 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
 
+  # Compose runs only on a developer's PC and in CI's end-to-end job, and both need the demo
+  # people and patients, so every `up` migrates and then seeds; a re-seed never undoes an edit.
+  # The live stack migrates from its deploy job and is never seeded.
+  migrate:
+    <<: *api-image
+    command: ["python", "-m", "nursing_core.storage.migrate"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  seed:
+    <<: *api-image
+    command: ["python", "-m", "nursing_core.storage.seed"]
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   api:
-    build:
-      context: .
-      dockerfile: api/Dockerfile
-    environment:
-      DATABASE_URL: postgresql+asyncpg://app:${POSTGRES_PASSWORD:-localdev}@db:5432/app
+    <<: *api-image
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD

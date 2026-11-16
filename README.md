@@ -221,8 +221,9 @@ tests/    repository-level tests
 
 ```bash
 make setup    # install the Python and web dependencies, the test browser, the pinned tools and the git hooks
-make dev      # Postgres + API + web; open http://localhost:5173, the Sign in page shows "API: healthy"
+make dev      # Postgres (migrated, with the synthetic demo data) + API + web on http://localhost:5173
 make down     # stop Postgres and the API (Ctrl+C in make dev stops only the web app)
+make spend    # the AI mode, the monthly cap and this month's AI spend
 make check    # lint, type-check and test everything
 make e2e      # Playwright end-to-end tests against the real stack
 make e2e-mock # the browser journeys against the mock API, no Docker needed
@@ -234,10 +235,9 @@ On a fresh Ubuntu or WSL machine, install the test browser's system libraries on
 If a port is already taken, add `PORT_OFFSET=1` to the command (every port moves up by 10), for
 example `make dev PORT_OFFSET=1`. `make help` lists every target.
 
-**Mock mode.** So far the real API answers only its health check (`/api/v1/health`); every other
-route returns `501 Not Implemented`, so the Sign in page under `make dev` can't list anyone yet. To
-click through the screens, run the web app alone with a mock API in the browser that answers from
-the synthetic demo cases:
+**Mock mode.** The real API and database are built, and `make up` migrates and seeds them; running
+the web app against them end to end comes next. To click through the screens without Docker, run
+the web app alone with a mock API in the browser that answers from the synthetic demo cases:
 
 ```bash
 pnpm -C web dev:mock   # open http://localhost:5173; sign in as a demo persona, write a note, check it, sign

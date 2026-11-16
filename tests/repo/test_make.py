@@ -12,12 +12,30 @@ CANARY = "FAKE-canary"
 FAKE_ENV = (
     f"ANTHROPIC_API_KEY=sk-ant-{CANARY}-123\nAI_MODE=replay\nAI_MONTHLY_CAP_USD=7\nPORT_OFFSET=0\n"
 )
+# Stands in for uv: prints what the recipe handed it ("unset" when a variable is absent).
+FAKE_UV = """#!/bin/sh
+echo "DATABASE_URL=${DATABASE_URL-unset}"
+echo "AI_MODE=${AI_MODE-unset}"
+echo "AI_MONTHLY_CAP_USD=${AI_MONTHLY_CAP_USD-unset}"
+echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY-unset}"
+echo "uv $*"
+"""
+LOCAL_URL = "postgresql+asyncpg://app:localdev@127.0.0.1:55432/app"
 
 
 def run_make(
     *args: str, cwd: Path = ROOT, extra_env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    dropped = ("MAKEFLAGS", "MAKELEVEL", "PORT_OFFSET", "AI_MODE", "AI_MONTHLY_CAP_USD")
+    dropped = (
+        "MAKEFLAGS",
+        "MAKELEVEL",
+        "PORT_OFFSET",
+        "AI_MODE",
+        "AI_MONTHLY_CAP_USD",
+        "ANTHROPIC_API_KEY",
+        "DATABASE_URL",
+        "POSTGRES_PASSWORD",
+    )
     env = {k: v for k, v in os.environ.items() if k not in dropped}
     env.update(extra_env or {})
     return subprocess.run(  # noqa: S603
@@ -34,6 +52,12 @@ def run_make(
 def fake_repo(tmp_path: Path) -> Path:
     shutil.copy(ROOT / "Makefile", tmp_path / "Makefile")
     (tmp_path / ".env").write_text(FAKE_ENV)
+    # The Makefile puts .tools/bin first on PATH, so this uv stands in for the real one.
+    fake_bin = tmp_path / ".tools" / "bin"
+    fake_bin.mkdir(parents=True)
+    uv = fake_bin / "uv"
+    uv.write_text(FAKE_UV)
+    uv.chmod(0o755)
     return tmp_path
 
 
@@ -56,14 +80,69 @@ def test_port_offset_must_be_0_to_9(offset: str) -> None:
     assert "PORT_OFFSET must be a whole number from 0 to 9" in result.stderr
 
 
-def test_spend_prints_the_three_facts_from_env(fake_repo: Path) -> None:
+def test_spend_runs_the_report_on_the_local_database_with_the_env_settings(
+    fake_repo: Path,
+) -> None:
     result = run_make("spend", cwd=fake_repo)
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
+        f"DATABASE_URL={LOCAL_URL}",
         "AI_MODE=replay",
         "AI_MONTHLY_CAP_USD=7",
-        "no AI usage recorded yet (no provider before P1)",
+        "ANTHROPIC_API_KEY=unset",
+        "uv run python -m nursing_api.spend",
     ]
+
+
+@pytest.mark.parametrize("shell_env", [{}, {"AI_MONTHLY_CAP_USD": ""}])
+def test_spend_leaves_an_empty_cap_unset(fake_repo: Path, shell_env: dict[str, str]) -> None:
+    # `.env.example` ships `AI_MONTHLY_CAP_USD=`; an empty string makes the app's settings invalid.
+    (fake_repo / ".env").write_text("AI_MONTHLY_CAP_USD=\n")
+    lines = run_make("spend", cwd=fake_repo, extra_env=shell_env).stdout.splitlines()
+    assert "AI_MONTHLY_CAP_USD=unset" in lines
+    assert "AI_MODE=mock" in lines
+
+
+@pytest.mark.parametrize(
+    ("target", "module"),
+    [("migrate", "nursing_core.storage.migrate"), ("seed", "nursing_core.storage.seed")],
+)
+def test_database_targets_run_on_the_offset_database_with_the_env_password(
+    fake_repo: Path, target: str, module: str
+) -> None:
+    (fake_repo / ".env").write_text("POSTGRES_PASSWORD=not-the-default\n")
+    result = run_make(target, "PORT_OFFSET=2", cwd=fake_repo)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert "DATABASE_URL=postgresql+asyncpg://app:not-the-default@127.0.0.1:55452/app" in lines
+    assert lines[-1] == f"uv run python -m {module}"
+
+
+def test_seed_migrates_first(fake_repo: Path) -> None:
+    lines = run_make("seed", cwd=fake_repo).stdout.splitlines()
+    assert [line for line in lines if line.startswith("uv ")] == [
+        "uv run python -m nursing_core.storage.migrate",
+        "uv run python -m nursing_core.storage.seed",
+    ]
+
+
+@pytest.mark.parametrize("target", ["spend", "migrate", "seed"])
+def test_database_targets_never_pass_the_api_key(fake_repo: Path, target: str) -> None:
+    # Not from .env (the fixture's), and not from a shell that exports one either.
+    result = run_make(
+        target, cwd=fake_repo, extra_env={"ANTHROPIC_API_KEY": f"sk-ant-{CANARY}-456"}
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ANTHROPIC_API_KEY=unset" in result.stdout.splitlines()
+    assert CANARY not in result.stdout + result.stderr
+
+
+def test_help_lists_the_database_targets() -> None:
+    lines = run_make("help").stdout.splitlines()
+    for target in ("migrate", "seed", "spend"):
+        assert any(line.startswith(f"{target} ") for line in lines), target
+    spend = next(line for line in lines if line.startswith("spend "))
+    assert "this month's AI spend" in spend
 
 
 @pytest.mark.parametrize("target", ["ports", "help", "spend"])
@@ -130,9 +209,7 @@ def test_check_leaves_out_the_terraform_check() -> None:
 
 def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path) -> None:
     # The Makefile puts .tools/bin first on PATH, so this pnpm stands in for the real one.
-    fake_bin = fake_repo / ".tools" / "bin"
-    fake_bin.mkdir(parents=True)
-    pnpm = fake_bin / "pnpm"
+    pnpm = fake_repo / ".tools" / "bin" / "pnpm"
     pnpm.write_text('#!/bin/sh\necho "WEB_PORT=$WEB_PORT pnpm $*"\n')
     pnpm.chmod(0o755)
     result = run_make("e2e-mock", "PORT_OFFSET=1", cwd=fake_repo)

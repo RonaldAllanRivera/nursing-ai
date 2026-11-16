@@ -18,15 +18,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
   don't mention. Fake, replay and Anthropic providers come with the first FDAR prompt, the pipeline
   reproduces all three demo drafts and checklists exactly, and a decision record explains why it
   uses structured output instead of the Citations API.
-- The web app, built against a mock API (MSW) that answers from the synthetic demo cases; the real
-  endpoints come next. Sign in as a demo persona, pick a patient, write a rough note (saved once
-  even when the request is retried) and follow the draft's progress. In the trace view, tapping a
+- The web app, built against a mock API (MSW) that answers from the synthetic demo cases. Sign in
+  as a demo persona, pick a patient, write a rough note (saved once even when the request is
+  retried) and follow the draft's progress. In the trace view, tapping a
   draft line lights up its source words in the note and marks a differing number; each line can be
   confirmed, edited, removed or put back, and the note signed (it locks and shows its hash) or
   discarded. An admin edits a facility's timezone, locale, shifts, units and clock, and every
   screen shows dates, times and ward words from those settings. Error, not-found and loading
   screens are included. Fonts: Atkinson Hyperlegible Next and Mono, under the SIL Open Font
   License 1.1.
+- The API and database behind those screens. Postgres tables come with a first migration, and
+  the database itself refuses to change or delete a signed note version or a facility's settings
+  history, and locks a note once it is signed. Demo personas sign in to a session that starts on
+  the nearest shift. A rough note is saved once per `Idempotency-Key` in the session's shift and
+  drafted in the background by the core pipeline (mock, replay, or live behind the monthly AI
+  cap). Each draft line can be confirmed, edited, removed or put back, and the note then signed
+  into a hashed record or discarded; every change sends the note's `ETag` back as `If-Match`. The
+  admin edits each facility's settings and every save is kept; only nurses write and sign notes.
+  Errors are RFC 9457 problems, and the JSON logs keep an allowlist of fields, so note text, names
+  and keys never reach them. A synthetic seed fills both demo facilities, and a mock hospital
+  record importer checks each patient's chart before saving it.
+- `make migrate` and `make seed`, and `make up` runs both before the API starts. `make spend` now
+  adds this month's AI spend from the usage table.
 - `make e2e-mock`, which runs the Playwright journeys (three screen widths, a keyboard path and axe
   accessibility checks) against the mock API with no database or API container. CI runs it after
   the web checks.

@@ -19,6 +19,12 @@ def test_python_tools_ignore_claude_folder(repo_root: Path) -> None:
     assert ".claude" in cfg["pytest"]["ini_options"]["norecursedirs"]
 
 
+def test_pytest_skips_the_hypothesis_folder(repo_root: Path) -> None:
+    # norecursedirs replaces pytest's defaults, so Hypothesis warns unless its folder is listed.
+    cfg = tomllib.loads((repo_root / "pyproject.toml").read_text())["tool"]
+    assert ".hypothesis" in cfg["pytest"]["ini_options"]["norecursedirs"]
+
+
 @pytest.mark.parametrize("name", ["vite.config.ts", "eslint.config.js", ".prettierignore"])
 def test_web_tools_ignore_claude_folder(repo_root: Path, name: str) -> None:
     assert ".claude" in (repo_root / "web" / name).read_text()
