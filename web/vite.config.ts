@@ -11,7 +11,7 @@ export default defineConfig({
     host: true,
     strictPort: true,
     port: webPort,
-    proxy: { "/api": `http://localhost:${apiPort}` },
+    proxy: { "/api": `http://127.0.0.1:${apiPort}` },
   },
   test: {
     environment: "jsdom",
