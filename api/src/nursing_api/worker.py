@@ -16,10 +16,9 @@ from nursing_core.domain.errors import (
     ReplayMissing,
 )
 from nursing_core.domain.jobs import JobFailure
-from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.notes import Note, NoteStatus, RoughNote
 from nursing_core.pipeline.fdar import run_fdar_pipeline
-from nursing_core.ports import Clock, LlmProvider
+from nursing_core.ports import Clock
 from nursing_core.storage.repositories import (
     PgNoteRepository,
     PgPatientRepository,
@@ -27,6 +26,7 @@ from nursing_core.storage.repositories import (
 )
 
 from nursing_api.providers import ProviderFor
+from nursing_api.usage import UsageRecorder
 
 log = structlog.get_logger("nursing_api.worker")
 
@@ -45,27 +45,6 @@ def failure_for(error: Exception) -> JobFailure:
         if isinstance(error, kind):
             return failure
     return JobFailure.PROVIDER_ERROR
-
-
-class _UsageRecorder:
-    """Wraps a job's provider: one `ai_usage` row for every answer the provider gives.
-
-    The row is written as soon as the provider returns, so a billed answer that the pipeline then
-    refuses (an empty draft) is still counted against the cap.
-    """
-
-    def __init__(
-        self, inner: LlmProvider, usage: PgUsageRepository, clock: Clock, job_id: UUID
-    ) -> None:
-        self._inner = inner
-        self._usage = usage
-        self._clock = clock
-        self._job_id = job_id
-
-    async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
-        result = await self._inner.draft_fdar(request)
-        await self._usage.record(self._job_id, result.generation, self._clock.now())
-        return result
 
 
 class DraftWorker:
@@ -106,7 +85,7 @@ class DraftWorker:
     async def _draft(self, job_id: UUID, rough: RoughNote) -> Note:
         patient = await self._patients.get_patient_by_encounter(rough.encounter_id)
         shift_notes = await self._notes.shift_rough_notes(rough.encounter_id, rough.shift)
-        provider = _UsageRecorder(self._provider_for(patient), self._usage, self._clock, job_id)
+        provider = UsageRecorder(self._provider_for(patient), self._usage, self._clock, job_id)
         result = await run_fdar_pipeline(rough, patient, shift_notes, provider)
         return Note(
             id=uuid4(),

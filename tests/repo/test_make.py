@@ -216,3 +216,34 @@ def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path)
     assert result.returncode == 0, result.stderr
     # One command and no `up`: the mock API runs in the browser, so no stack starts.
     assert result.stdout.splitlines() == ["WEB_PORT=5183 pnpm -C web e2e:mock"]
+
+
+def test_record_replays_passes_the_key_only_through_the_environment(fake_repo: Path) -> None:
+    key = f"sk-ant-{CANARY}-123"  # the fixture's .env value
+    result = run_make("record-replays", "AI_MODE=live", cwd=fake_repo)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        f"DATABASE_URL={LOCAL_URL}",
+        "AI_MODE=live",
+        "AI_MONTHLY_CAP_USD=7",
+        f"ANTHROPIC_API_KEY={key}",
+        "uv run python -m nursing_api.record_replays",
+    ]
+    # Neither a dry run nor the process list (the command line) can show it.
+    dry = run_make("-n", "record-replays", "AI_MODE=live", cwd=fake_repo)
+    assert key not in dry.stdout + dry.stderr
+    assert "record_replays" in dry.stdout
+
+
+def test_record_replays_prefers_the_shells_key_to_the_env_files(fake_repo: Path) -> None:
+    result = run_make(
+        "record-replays", cwd=fake_repo, extra_env={"ANTHROPIC_API_KEY": f"sk-ant-{CANARY}-456"}
+    )
+    assert f"ANTHROPIC_API_KEY=sk-ant-{CANARY}-456" in result.stdout.splitlines()
+
+
+def test_help_says_record_replays_costs_money() -> None:
+    line = next(
+        row for row in run_make("help").stdout.splitlines() if row.startswith("record-replays")
+    )
+    assert "calls the live model and costs money" in line

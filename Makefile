@@ -4,7 +4,7 @@
 # Precedence: command line > environment > .env > default (the order pydantic-settings uses).
 # A makefile assignment beats an environment variable, so keep the environment's
 # value of these three across the include and put it back afterwards.
-ENV_SETTINGS := PORT_OFFSET AI_MODE AI_MONTHLY_CAP_USD
+ENV_SETTINGS := PORT_OFFSET AI_MODE AI_MONTHLY_CAP_USD ANTHROPIC_API_KEY
 $(foreach v,$(ENV_SETTINGS),$(if $(filter environment,$(origin $v)),$(eval saved_$v := $($v))))
 -include .env
 $(foreach v,$(ENV_SETTINGS),$(if $(filter-out undefined,$(origin saved_$v)),$(eval $v := $(saved_$v))))
@@ -26,13 +26,16 @@ quote = '$(subst ','\'',$(1))'
 # The environment of the commands that use the local database (Compose publishes it on DB_PORT).
 # They get the URL and the AI settings, and never the API key, even from a shell that exports one.
 # An empty cap stays unset: `.env.example` ships `AI_MONTHLY_CAP_USD=`, which the app refuses.
-LOCAL_DB_ENV = env -u ANTHROPIC_API_KEY $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHLY_CAP_USD) \
-	DATABASE_URL=$(call quote,postgresql+asyncpg://app:$(or $(POSTGRES_PASSWORD),localdev)@127.0.0.1:$(DB_PORT)/app) \
+LOCAL_DB_VARS = DATABASE_URL=$(call quote,postgresql+asyncpg://app:$(or $(POSTGRES_PASSWORD),localdev)@127.0.0.1:$(DB_PORT)/app) \
 	AI_MODE=$(call quote,$(or $(AI_MODE),mock)) \
 	$(if $(AI_MONTHLY_CAP_USD),AI_MONTHLY_CAP_USD=$(call quote,$(AI_MONTHLY_CAP_USD)))
+LOCAL_DB_ENV = env -u ANTHROPIC_API_KEY $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHLY_CAP_USD) $(LOCAL_DB_VARS)
+# The one command that may use the key: record-replays. It gets the key through its environment
+# (the target-specific export below), never on the command line, which `ps` and `make -n` show.
+RECORD_ENV = env $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHLY_CAP_USD) $(LOCAL_DB_VARS)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e e2e-mock check-py check-web check actionlint infra-check gen-api openapi spend migrate seed private-words accept-binary tools public-check public-check-ci hooks setup
+.PHONY: help ports up down dev e2e e2e-mock check-py check-web check actionlint infra-check gen-api openapi spend migrate seed record-replays private-words accept-binary tools public-check public-check-ci hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -94,6 +97,10 @@ migrate: ## Bring the local database's tables up to date (needs `make up`)
 
 seed: migrate ## Add the synthetic demo facilities, people and patients (never undoes an edit)
 	@$(LOCAL_DB_ENV) uv run python -m nursing_core.storage.seed
+
+record-replays: export ANTHROPIC_API_KEY := $(ANTHROPIC_API_KEY)
+record-replays: ## Record the demo drafts from the live model (calls the live model and costs money; needs AI_MODE=live)
+	@$(RECORD_ENV) uv run python -m nursing_api.record_replays
 
 # Interactive: the words are typed at a hidden prompt, so don't pipe it.
 private-words: ## Add private words to the hashed word list (hidden prompt)

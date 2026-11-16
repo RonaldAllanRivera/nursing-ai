@@ -4,7 +4,6 @@ A recording is one JSON file named by the SHA-256 of the request and the model's
 the request and the provider's result, so a replay can check it is answering the same request.
 """
 
-import asyncio
 import hashlib
 import json
 from decimal import Decimal
@@ -45,13 +44,23 @@ class ReplayProvider:
 async def record(request: DraftRequest, provider: LlmProvider, out_dir: Path) -> Path:
     """Asks the provider once and saves its answer, keyed by the model that gave it."""
     result = await provider.draft_fdar(request)
-    path = out_dir / f"{replay_key(request, result.generation.model)}.json"
+    return save_recording(request, result, out_dir, result.generation.model)
+
+
+def save_recording(
+    request: DraftRequest, result: ProviderResult, out_dir: Path, model: str
+) -> Path:
+    """Saves an answer under the model the request asked for, which is the model replay looks up.
+
+    The model that answered can be a longer snapshot name; replay would never find that file.
+    """
+    path = out_dir / f"{replay_key(request, model)}.json"
     document = {
         "request": request.model_dump(mode="json"),
         "result": result.model_dump(mode="json"),
     }
     text = json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
-    await asyncio.to_thread(_write, path, text)
+    _write(path, text)
     return path
 
 

@@ -17,7 +17,13 @@ from nursing_core.domain.model_output import (
 from nursing_core.domain.notes import GenerationInfo
 from nursing_core.ports import LlmProvider
 from nursing_core.providers.fake import FakeProvider
-from nursing_core.providers.replay import RECORDINGS_DIR, ReplayProvider, record, replay_key
+from nursing_core.providers.replay import (
+    RECORDINGS_DIR,
+    ReplayProvider,
+    record,
+    replay_key,
+    save_recording,
+)
 
 OUTPUT = ModelFdarDraft(
     entries=[
@@ -120,3 +126,18 @@ async def test_record_keys_by_the_models_name(tmp_path: Path) -> None:
     path = await record(_request(), FakeProvider(OUTPUT), tmp_path)
     assert path.name == f"{replay_key(_request(), 'fake')}.json"
     assert await ReplayProvider(tmp_path, model="fake").draft_fdar(_request())
+
+
+@pytest.mark.asyncio
+async def test_a_recording_is_keyed_by_the_model_asked_not_the_one_that_answered(
+    tmp_path: Path,
+) -> None:
+    request = _request()
+    answered = await FakeProvider(OUTPUT).draft_fdar(request)
+    answered = answered.model_copy(
+        update={"generation": answered.generation.model_copy(update={"model": "claude-x-20261101"})}
+    )
+    path = save_recording(request, answered, tmp_path, "claude-x")
+    assert path.name == f"{replay_key(request, 'claude-x')}.json"
+    replayed = await ReplayProvider(tmp_path, model="claude-x").draft_fdar(request)
+    assert replayed.output == OUTPUT
