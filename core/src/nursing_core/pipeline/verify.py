@@ -32,6 +32,7 @@ from nursing_core.pipeline.text import MatchText, find_span
 from nursing_core.pipeline.unit_check import (
     NumberValue,
     WrittenUnit,
+    bare_rate_after,
     number_value,
     numbers_in,
     words_with_numbers,
@@ -56,6 +57,7 @@ class _NoteNumber:
     span: Span  # in the note as typed
     label: str | None
     unit: WrittenUnit | None  # the unit written after it, if any
+    bare_rate: tuple[str, ...]  # a rate written right after it with no unit ("100/hr")
     with_unit: Span  # the number and the unit written after it, in the note as typed
     typed_with_unit: str
 
@@ -157,6 +159,7 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
                     span=span,
                     label=label,
                     unit=unit,
+                    bare_rate=() if unit is not None else bare_rate_after(raw, span),
                     with_unit=with_unit,
                     typed_with_unit=raw[with_unit.start : with_unit.end],
                 )
@@ -174,13 +177,17 @@ def default_unit(unit: Ucum, units: UnitDefaults) -> Ucum | None:
     return None
 
 
-def _same_unit(drafted: WrittenUnit, written: WrittenUnit | None, units: UnitDefaults) -> bool:
+def _same_unit(drafted: WrittenUnit, note: _NoteNumber, units: UnitDefaults) -> bool:
     """Whether the unit a note writes after a value agrees with the one the line writes after it.
 
     A unit the alias table reads must be the note's unit, or the facility's default when the note
     writes no unit at all. A dose or volume unit written on both sides must be the same unit, and
-    so must its rate: a bolus of 1000 units is not 1000 units per hour.
+    so must its rate: a bolus of 1000 units is not 1000 units per hour. A line's rate needs a rate
+    in the note, whether after a unit or straight after the number ("100/hr").
     """
+    written = note.unit
+    if written is None and drafted.rate and drafted.rate != note.bare_rate:
+        return False
     if written is not None and written.rate != drafted.rate:
         return False
     if drafted.unit is not None:
@@ -232,9 +239,12 @@ def _mismatches(
             )
             continue
         drafted = written_unit(text, span)
-        if drafted is None or any(_same_unit(drafted, n.unit, units) for n in same_value):
+        # A note number that writes a unit settles it: a bare same-valued number can't excuse a
+        # unit the nurse wrote differently elsewhere.
+        candidates = [n for n in same_value if n.unit is not None] or same_value
+        if drafted is None or any(_same_unit(drafted, n, units) for n in candidates):
             continue
-        first = same_value[0]
+        first = candidates[0]
         out.append(
             NumberMismatch(
                 kind=MismatchKind.UNIT,

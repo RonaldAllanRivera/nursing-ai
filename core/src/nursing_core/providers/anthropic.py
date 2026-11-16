@@ -81,10 +81,11 @@ class _Message:
 
 
 def _count(value: object, *, optional: bool = False) -> int | None:
-    """A token count, or None if it isn't a whole number (a missing optional count is 0)."""
+    """A token count, or None if it isn't a whole number of zero or more (a missing optional count
+    is 0)."""
     if value is None and optional:
         return 0
-    return value if type(value) is int else None
+    return value if type(value) is int and value >= 0 else None
 
 
 def _word(value: object) -> str | Literal[False] | None:

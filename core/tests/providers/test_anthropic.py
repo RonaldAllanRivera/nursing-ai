@@ -415,6 +415,8 @@ _UNREADABLE_BODIES = [
     _message_with(usage_input_tokens=None),
     _message_with(usage_input_tokens="12"),
     _message_with(usage_output_tokens=True),
+    _message_with(usage_input_tokens=-5),
+    _message_with(usage_cache_read_input_tokens=-1),
     _message_with(model=None),
     _message_with(stop_reason=5),
 ]

@@ -8,13 +8,16 @@ unit ("D5LR", "q4h") belong to a word; "HR121bpm" and "BT37.9C" keep their numbe
 converts units. It only reads the few spellings below, so a unit the nurse didn't write can be
 told apart from one she did.
 
-A dose, volume or drop unit followed by "/" or "per" and a time word or "kg" is a rate: "units/hr"
-and "units per hour" are units per hour, "mcg / kg / min" is mcg per kg per minute. Spaces around
-a "/" are fine. Each denominator is kept by meaning ("h", "hr" and "hours" are one) and must be a
-whole word ("1L/D5LR" has no rate). A "/" followed by a digit ("1L/8hrs", "1 L / 8 hrs") ends the
-unit, and so does "per" and anything else ("5 mg per NGT"). Any other unit followed by "/" is read
-as written with no rate ("37.8C/HR 110"). A one-letter unit, "/" and one more letter is clinical
-shorthand, not a unit ("c/o", "f/u", "u/a"), except "u/h", "L/m" and "g/d", which are rates.
+A dose, volume or drop unit followed by "/" (spaces around it are fine) or "per" and a
+denominator is a rate: "units/hr" and "units per hour" are units per hour, "mcg / kg / min" is mcg
+per kg per minute. Only a closed set counts as a denominator: a time word (h, hr, hrs, hour, hours,
+min, mins, minute, minutes, d, day, days), kg, kgs, kilogram or kilograms, or a volume (ml, cc,
+milliliter, millilitre, l, liter, litre, with their plurals). Each is kept by meaning ("h", "hr"
+and "hours" are one) and must be a whole word ("1L/D5LR" has no rate). Any other word ends the unit
+with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8hrs", "1 L / 8 hrs"). A
+unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more
+letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
+and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates. "lpm" is litres per minute.
 """
 
 import re
@@ -71,6 +74,7 @@ _WORD_ALIASES: tuple[tuple[re.Pattern[str], Ucum], ...] = (
     (re.compile(rf"{_DEGREES}?celsius|{_DEGREES}c", re.IGNORECASE), Ucum.CEL),
     (re.compile(r"kilograms?", re.IGNORECASE), Ucum.KG),
     (re.compile(r"pounds?", re.IGNORECASE), Ucum.LB),
+    (re.compile(r"millilit(?:er|re)s?", re.IGNORECASE), Ucum.ML),
 )
 _DEGREE_UNITS = {"F": Ucum.DEG_F, "C": Ucum.CEL}
 # masculine ordinal, ring above, superscript zero
@@ -91,9 +95,14 @@ _COMPARED_UNITS = {
     "iu": "iu",
     "meq": "meq",
     "mmol": "mmol",
+    **dict.fromkeys(("milligram", "milligrams"), "mg"),
+    **dict.fromkeys(("microgram", "micrograms"), "mcg"),
+    **dict.fromkeys(("gram", "grams"), "g"),
     "l": "l",
+    **dict.fromkeys(("liter", "liters", "litre", "litres"), "l"),
     "ml": "ml",
     "cc": "ml",
+    **dict.fromkeys(("milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
     "gtt": "gtt",
     "gtts": "gtt",
 }
@@ -105,13 +114,17 @@ _UNIT_SPELLINGS = frozenset(
     | {"bpm", "cpm", "mmhg", "lpm", "gtts", "kcal", "cm", "mm"}
     | {"degf", "degc", "fahrenheit", "celsius", "kilogram", "kilograms", "pound", "pounds"}
 )
-# Rate denominators compared by meaning. Any other letter run is compared by its folded spelling.
+# The only words that count as a denominator after "/" or "per", compared by meaning. Any other
+# word ends the unit with no rate.
 _DENOMINATORS = {
     **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), "hour"),
     **dict.fromkeys(("m", "min", "mins", "minute", "minutes"), "minute"),
     **dict.fromkeys(("d", "day", "days"), "day"),
-    **dict.fromkeys(("kg", "kgs"), "kg"),
+    **dict.fromkeys(("kg", "kgs", "kilogram", "kilograms"), "kg"),
+    **dict.fromkeys(("ml", "cc", "milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
+    **dict.fromkeys(("l", "liter", "liters", "litre", "litres"), "l"),
 }
+_LITRES_PER_MINUTE = "lpm"
 _TEMPERATURE_LETTERS = frozenset("cf")  # "c/o" and "f/u" are shorthand, whatever the letter after
 _RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are rates, "u/a" is not
 _PER = re.compile(r"[ \t]+per[ \t]+", re.IGNORECASE)
@@ -227,7 +240,10 @@ def written_unit(text: str, number_span: Span) -> WrittenUnit | None:
     spelling, spelling_end = (None, number_span.end) if spelled is None else spelled
     compared = None if spelling is None else _COMPARED_UNITS.get(spelling)
     end = max(unit_end, spelling_end)
-    rate, end = ((), end) if compared is None else _rate_after(text, end)
+    if spelling == _LITRES_PER_MINUTE:
+        compared, rate = "l", ("minute",)
+    else:
+        rate, end = ((), end) if compared is None else _rate_after(text, end)
     return WrittenUnit(
         unit=unit,
         compared=compared,
@@ -236,11 +252,15 @@ def written_unit(text: str, number_span: Span) -> WrittenUnit | None:
     )
 
 
+def bare_rate_after(text: str, number_span: Span) -> tuple[str, ...]:
+    """The rate written right after a number with no unit between ("100/hr", "100 per hour")."""
+    return _rate_after(text, number_span.end)[0]
+
+
 def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
     """What the unit ending at `unit_end` is per ("/hr", " per kg / min"), and where the rate ends.
 
-    Each denominator is a whole word. After a "/" any letter run counts; after "per" only a time
-    word or "kg" does.
+    Each denominator is a whole word from the closed set above; any other word ends the rate.
     """
     folded, origin = _fold_after(text, unit_end)
     rate: list[str] = []
@@ -255,8 +275,6 @@ def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
             break
         spelling = letters.group().casefold()
         denominator = _DENOMINATORS.get(spelling)
-        if denominator is None and slash:
-            denominator = _COMPARED_UNITS.get(spelling) or spelling
         if denominator is None:
             break
         rate.append(denominator)
@@ -311,8 +329,10 @@ def _read_unit(folded: str) -> tuple[Ucum, int] | None:
 def _word_ends(folded: str, stop: int) -> bool:
     """A unit isn't followed by a letter or a digit ("2 Foley"), or by one-letter shorthand.
 
-    A "/" after the unit is allowed: it starts a rate ("100 mL/hr"), unless the unit is one letter
-    and the "/" is followed by one letter more, as in "c/o", "f/u" and "u/a".
+    A "/" after the unit is allowed: the unit may start a rate ("100 mL/hr"). Whether it does is
+    decided later, since only dose, volume and drop units take one ("37.8C/HR 110" has none). The
+    "/" is not allowed when the unit is one letter and the "/" is followed by one letter more, as
+    in "c/o", "f/u" and "u/a".
     """
     following = folded[stop : stop + 1]
     if following.isalnum():
@@ -323,7 +343,8 @@ def _word_ends(folded: str, stop: int) -> bool:
 def _is_shorthand(folded: str, stop: int) -> bool:
     """One-letter unit, "/", one more letter, then no digit: "c/o", "f/u", "u/a".
 
-    After u, l or g the letters h, d and m make a rate instead ("u/h", "g/d", "L/m").
+    A digit after the second letter means it isn't shorthand ("c/o2"). After u, l or g the letters
+    h, d and m make a rate instead ("u/h", "g/d", "L/m").
     """
     if not _ends_a_one_letter_word(folded, stop):
         return False

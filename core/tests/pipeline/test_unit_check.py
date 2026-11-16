@@ -274,7 +274,11 @@ def test_rate_denominators_are_read_by_meaning() -> None:
         ("1000 u/h", "1000", ("hour",)),
         ("5 mg/kgs/day", "5", ("kg", "day")),
         ("5 mg/cc", "5", ("ml",)),
-        ("5 mg/dL", "5", ("dl",)),
+        ("5 mg/dL", "5", ()),
+        ("5 mg/kilogram/min", "5", ("kg", "minute")),
+        ("5 mg/liter", "5", ("l",)),
+        ("2 lpm", "2", ("minute",)),
+        ("500 mg/tab", "500", ()),
         ("1000 units", "1000", ()),
     ]:
         written = _written(text, number)
@@ -282,7 +286,7 @@ def test_rate_denominators_are_read_by_meaning() -> None:
         assert written.rate == rate, text
 
 
-def test_a_slash_then_a_digit_or_a_space_ends_the_unit() -> None:
+def test_a_slash_then_a_digit_ends_the_unit() -> None:
     written = _written("D5LR 1L/8hrs", "1")
     assert written is not None
     assert (written.compared, written.rate, written.end) == ("l", (), 7)
@@ -313,7 +317,7 @@ def test_spaces_around_a_slash_and_per_make_a_rate_only_for_known_denominators()
         ("5 mg per NGT", "5", ()),
         ("1 L / 8 hrs", "1", ()),
         ("1L/D5LR", "1", ()),
-        ("5 mg/dose", "5", ("dose",)),
+        ("5 mg/dose", "5", ()),
     ]:
         written = _written(text, number)
         assert written is not None, text

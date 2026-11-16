@@ -1,5 +1,6 @@
 """Deciding each line's status from its quotes, numbers and units."""
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.demo import DEMO_FACILITIES, load_demo_cases
@@ -723,7 +724,6 @@ def test_spaced_and_worded_rates_are_compared_too() -> None:
         ("heparin 1000 units /hr", "Heparin bolus 1000 units."),
         ("heparin 1000 units per hr", "Heparin 1000 units per min."),
         ("heparin 1000 units per hour", "Heparin bolus 1000 units."),
-        ("oxygen 2 L/m", "Oxygen at 2 mL/min."),
     ]:
         _flagged_unit(note, text)
 
@@ -753,6 +753,89 @@ def test_drops_are_compared_and_gtt_equals_gtts() -> None:
     assert _rate_status("30gtts/min", "30 gtt/min.").status is LineStatus.SOURCE_FOUND
 
 
-def test_a_rate_on_the_line_alone_keeps_the_facility_default_rule() -> None:
+def test_a_rate_on_the_line_needs_a_rate_in_the_note() -> None:
     line = _check("heparin 1000 at noon", "Heparin 1000 mL/hr.", ["heparin 1000"])
-    assert line.status is LineStatus.SOURCE_FOUND
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    _flagged_unit("heparin 1000", "Heparin 1000 units/hr.")
+    assert _rate_status("heparin 1000", "Heparin 1000 units.").status is LineStatus.SOURCE_FOUND
+
+
+def test_a_bare_rate_after_the_note_number_is_the_rate_the_line_may_write() -> None:
+    assert _rate_status("IVF 100/hr", "IVF 100 mL/hr.").status is LineStatus.SOURCE_FOUND
+    assert _rate_status("IVF 100 per hour", "IVF 100 mL/hr.").status is LineStatus.SOURCE_FOUND
+    _flagged_unit("IVF 100/hr", "IVF 100 mL/min.")
+
+
+def test_a_same_valued_note_number_without_a_unit_does_not_excuse_a_wrong_unit() -> None:
+    for note, text, on in [
+        ("SpO2 95% 2L NC", "On 2 mL NC.", "2 mL"),
+        ("on O2 2 LPM via NC, SpO2 95%", "On O2 at 2 mL/min via NC.", "2 mL/min"),
+        (
+            "at 1000 started heparin 1000 units/hr",
+            "Heparin bolus 1000 units given at 1000.",
+            "1000 units",
+        ),
+    ]:
+        line = _rate_status(note, text)
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+        [mismatch] = line.number_mismatches
+        assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.UNIT, on), (note, text)
+
+
+def test_oxygen_in_litres_per_minute_is_checked_against_the_note() -> None:
+    _flagged_unit("oxygen 2 L/m", "Oxygen at 2 mL/min.")
+    for note, text in [
+        ("SpO2 95% 2L NC", "On 2 L NC."),
+        ("SpO2 95% 2L NC", "SpO2 95%, on 2 L NC."),
+        ("on O2 2 lpm via NC, SpO2 95%", "On O2 at 2 L/min via NC."),
+        ("on O2 2 LPM", "On O2 at 2 lpm."),
+        ("O2 2 L/min", "On O2 at 2 lpm."),
+        ("O2 2 lpm", "On O2 2 L/min."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+    _flagged_unit("O2 2 lpm", "On O2 2 mL/min.")
+
+
+def test_a_weight_value_shared_with_a_dose_flags_in_a_pound_facility() -> None:
+    line = _check(
+        "wt 80, furosemide 80 mg IV", "Weight 80 lb.", ["wt 80, furosemide 80 mg IV"], units=US_LB
+    )
+    assert line.status is LineStatus.NUMBER_MISMATCH
+
+
+def test_per_kilogram_is_a_rate_in_either_spelling() -> None:
+    _flagged_unit("dopamine 5 mcg per kilogram per minute", "Dopamine 5 mcg.")
+    assert (
+        _rate_status("dopamine 5 mcg/kilogram/min", "Dopamine 5 mcg/kg/min.").status
+        is LineStatus.SOURCE_FOUND
+    )
+
+
+def test_dose_units_spelled_as_words_are_compared() -> None:
+    _flagged_unit("norepi 0.05 micrograms/kg/min", "Norepinephrine 0.05 mg/kg/min.")
+    _flagged_unit("1 mg", "1 gram given.")
+    for note, text in [
+        ("100 mL", "100 milliliters given."),
+        ("100 milliliters", "100 mL given."),
+        ("100 millilitres", "100 cc given."),
+        ("500 milligrams", "500 mg given."),
+        ("500 mg", "500 milligrams given."),
+        ("2 litres", "2 L given."),
+        ("1 gram", "1 g given."),
+        ("5 micrograms", "5 mcg given."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_word_after_a_slash_that_is_not_a_denominator_is_not_a_rate() -> None:
+    for note, text in [
+        ("paracetamol 500mg/tab", "Paracetamol 500 mg given."),
+        ("2 mg/dose", "2 mg."),
+        ("30 mg / IV", "30 mg IV."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+@pytest.mark.xfail(strict=True, reason="a slash then HR is read as per hour, not as a heart rate")
+def test_a_slash_before_a_heart_rate_is_not_read_as_per_hour() -> None:
+    _flagged_unit("insulin 5 units / HR 88", "Insulin 5 units/hr.")
