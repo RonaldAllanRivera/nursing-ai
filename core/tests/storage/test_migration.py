@@ -19,7 +19,7 @@ from nursing_core.storage.migrate import upgrade
 from nursing_core.storage.testdb import fresh_database
 from sqlalchemy import Connection, insert, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 NOW = datetime(2026, 11, 15, 8, 0, tzinfo=UTC)
 HASH = "a" * 64
@@ -126,36 +126,58 @@ def _note_values(ids: dict[str, uuid.UUID]) -> dict[str, Any]:
     }
 
 
+def _version_values(note_id: uuid.UUID, ids: dict[str, uuid.UUID]) -> dict[str, Any]:
+    """The record of a note signed at version 2 by the nurse at NOW with HASH."""
+    return {
+        "id": _id(),
+        "note_id": note_id,
+        "version": 2,
+        "content": {"text": "signed"},
+        "content_hash": HASH,
+        "signed_by": ids["nurse"],
+        "signed_at": NOW,
+    }
+
+
+async def _sign(conn: AsyncConnection, note_id: uuid.UUID, ids: dict[str, uuid.UUID]) -> None:
+    await conn.execute(
+        update(tables.note)
+        .where(tables.note.c.id == note_id)
+        .values(
+            status=NoteStatus.SIGNED,
+            version=2,
+            signed_by=ids["nurse"],
+            signed_at=NOW,
+            content_hash=HASH,
+        )
+    )
+
+
 async def _signed_note(engine: AsyncEngine) -> tuple[uuid.UUID, uuid.UUID, dict[str, uuid.UUID]]:
-    """A signed note with its signed version: returns (note id, version id, world ids)."""
+    """A signed note with its signed version: returns (note id, version id, world ids).
+
+    As `sign()` does, the note is signed first and its version written in the same transaction.
+    """
     ids = await _build_world(engine)
     note = _note_values(ids)
-    version_id = _id()
+    version = _version_values(note["id"], ids)
     async with engine.begin() as conn:
         await conn.execute(insert(tables.note).values(note))
-        await conn.execute(
-            insert(tables.note_version).values(
-                id=version_id,
-                note_id=note["id"],
-                version=2,
-                content={"text": "signed"},
-                content_hash=HASH,
-                signed_by=ids["nurse"],
-                signed_at=NOW,
-            )
-        )
-        await conn.execute(
-            update(tables.note)
-            .where(tables.note.c.id == note["id"])
-            .values(
-                status=NoteStatus.SIGNED,
-                version=2,
-                signed_by=ids["nurse"],
-                signed_at=NOW,
-                content_hash=HASH,
-            )
-        )
-    return note["id"], version_id, ids
+        await _sign(conn, note["id"], ids)
+        await conn.execute(insert(tables.note_version).values(version))
+    return note["id"], version["id"], ids
+
+
+def _sqlstate(raised: pytest.ExceptionInfo[DBAPIError]) -> object:
+    return getattr(raised.value.orig, "sqlstate", None)
+
+
+def _discarded(ids: dict[str, uuid.UUID]) -> dict[str, Any]:
+    return _note_values(ids) | {
+        "status": NoteStatus.DISCARDED,
+        "discarded_by": ids["nurse"],
+        "discarded_at": NOW,
+    }
 
 
 @pytest.mark.asyncio
@@ -230,6 +252,140 @@ async def test_database_refuses_changing_a_signed_note(engine: AsyncEngine) -> N
     with pytest.raises(DBAPIError, match=r"note.*not allowed"):
         async with engine.begin() as conn:
             await conn.execute(tables.note.delete().where(tables.note.c.id == note_id))
+
+
+@pytest.mark.asyncio
+async def test_database_refuses_a_version_for_a_draft_note(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    note = _note_values(ids)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.note).values(note))
+    with pytest.raises(DBAPIError, match=r"note_version.*INSERT not allowed") as raised:
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.note_version).values(
+                    _version_values(note["id"], ids) | {"version": 1}
+                )
+            )
+    assert _sqlstate(raised) == "23001"
+
+
+@pytest.mark.asyncio
+async def test_database_refuses_a_version_for_a_discarded_note(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    note = _discarded(ids)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.note).values(note))
+    with pytest.raises(DBAPIError, match=r"note_version.*INSERT not allowed") as raised:
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.note_version).values(
+                    _version_values(note["id"], ids) | {"version": 1}
+                )
+            )
+    assert _sqlstate(raised) == "23001"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["content_hash", "signed_by", "signed_at", "version"])
+async def test_database_refuses_a_version_whose_hash_signer_time_or_version_is_not_the_notes(
+    engine: AsyncEngine, field: str
+) -> None:
+    ids = await _build_world(engine)
+    note = _note_values(ids)
+    other_nurse = _id()
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(tables.app_user).values(
+                id=other_nurse,
+                display_name="Other Demo Nurse",
+                initials="OD",
+                role=Role.STAFF_NURSE,
+                facility_id=ids["facility"],
+            )
+        )
+        await conn.execute(insert(tables.note).values(note))
+        await _sign(conn, note["id"], ids)
+    wrong = {
+        "content_hash": "b" * 64,
+        "signed_by": other_nurse,
+        "signed_at": NOW + timedelta(seconds=1),
+        "version": 3,
+    }[field]
+    with pytest.raises(DBAPIError, match=r"note_version.*INSERT not allowed") as raised:
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.note_version).values(
+                    _version_values(note["id"], ids) | {field: wrong}
+                )
+            )
+    assert _sqlstate(raised) == "23001"
+    async with engine.begin() as conn:  # the note's own version is still taken
+        await conn.execute(insert(tables.note_version).values(_version_values(note["id"], ids)))
+
+
+@pytest.mark.asyncio
+async def test_database_refuses_reopening_a_discarded_note(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    note = _discarded(ids)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.note).values(note))
+    reopen = (
+        update(tables.note)
+        .where(tables.note.c.id == note["id"])
+        .values(status=NoteStatus.DRAFT, discarded_by=None, discarded_at=None)
+    )
+    change = update(tables.note).where(tables.note.c.id == note["id"]).values(draft={"x": 1})
+    delete = tables.note.delete().where(tables.note.c.id == note["id"])
+    for statement, action in ((reopen, "UPDATE"), (change, "UPDATE"), (delete, "DELETE")):
+        with pytest.raises(DBAPIError, match=rf"note.*discarded.*{action} not allowed") as raised:
+            async with engine.begin() as conn:
+                await conn.execute(statement)
+        assert _sqlstate(raised) == "23001"
+
+
+@pytest.mark.asyncio
+async def test_database_refuses_changing_a_rough_note(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    rough = tables.rough_note
+    for statement, action in (
+        (update(rough).where(rough.c.id == ids["rough_note"]).values(text="changed"), "UPDATE"),
+        (rough.delete().where(rough.c.id == ids["rough_note"]), "DELETE"),
+        (text("TRUNCATE rough_note CASCADE"), "TRUNCATE"),
+    ):
+        with pytest.raises(DBAPIError, match=rf"rough_note.*{action} not allowed") as raised:
+            async with engine.begin() as conn:
+                await conn.execute(statement)
+        assert _sqlstate(raised) == "23001"
+
+
+@pytest.mark.asyncio
+async def test_the_record_guards_apply_to_a_database_that_already_holds_notes(
+    postgres_url: str,
+) -> None:
+    # `make up` on a local database at 0001: the new guards check new writes, not old rows.
+    async with fresh_database(postgres_url, "template1") as url:
+        await upgrade(url, "0001")
+        engine = create_engine(url)
+        try:
+            ids = await _build_world(engine)
+            note = _note_values(ids)
+            async with engine.begin() as conn:
+                await conn.execute(insert(tables.note).values(note))
+                # At 0001 a version could be written for a draft: an old row the upgrade keeps.
+                await conn.execute(
+                    insert(tables.note_version).values(_version_values(note["id"], ids))
+                )
+            await upgrade(url)
+            async with engine.connect() as conn:
+                head = (await conn.execute(text("SELECT version_num FROM alembic_version"))).one()
+                kept = (await conn.execute(text("SELECT count(*) FROM note_version"))).scalar_one()
+            assert (head[0], kept) == ("0002", 1)
+            with pytest.raises(DBAPIError, match=r"rough_note.*UPDATE not allowed"):
+                async with engine.begin() as conn:
+                    await conn.execute(update(tables.rough_note).values(text="changed"))
+        finally:
+            await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -333,19 +489,32 @@ async def test_content_hash_must_be_lowercase_hex(engine: AsyncEngine, bad: str)
     note = _note_values(ids)
     async with engine.begin() as conn:
         await conn.execute(insert(tables.note).values(note))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError, match="ck_note_content_hash_is_hex"):
         async with engine.begin() as conn:
             await conn.execute(
-                insert(tables.note_version).values(
-                    id=_id(),
-                    note_id=note["id"],
+                update(tables.note)
+                .where(tables.note.c.id == note["id"])
+                .values(
+                    status=NoteStatus.SIGNED,
                     version=2,
-                    content={},
-                    content_hash=bad,
                     signed_by=ids["nurse"],
                     signed_at=NOW,
+                    content_hash=bad,
                 )
             )
+    # The version's own check, past the guard that wants the signed note's hash (which is hex).
+    # The guard is switched off inside a transaction that is rolled back, so it comes back on.
+    async with engine.connect() as conn:
+        await conn.execute(
+            text("ALTER TABLE note_version DISABLE TRIGGER note_version_only_of_a_signed_note")
+        )
+        with pytest.raises(IntegrityError, match="ck_note_version_content_hash_is_hex"):
+            await conn.execute(
+                insert(tables.note_version).values(
+                    _version_values(note["id"], ids) | {"content_hash": bad}
+                )
+            )
+        await conn.rollback()
 
 
 @pytest.mark.asyncio
