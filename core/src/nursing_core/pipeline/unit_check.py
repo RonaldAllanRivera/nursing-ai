@@ -21,9 +21,11 @@ the unit with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8
 number, for a rate written right after a number: "100/hr"), as "5 mcg per kilograms per minute"
 does, and the word the read ends in is finished; a rate starting after more than that is not read.
 A "/" then the spelling "hr" and a number of two or three digits on the same line ("5 units / HR
-88") may be per hour or a separator before a heart rate: the rate is then unsure, and a line that
-uses that number with a unit is a mismatch whether it writes a rate or not. Any other hour spelling
-or number after it ("units/hr 0800", "mL/hr 2L", "units/h 88") is the rate.
+88", "HR: 88", "HR=88", "HR - 88", "HR of 88", "HR 88bpm") may be per hour or a separator before a
+heart rate: the rate is then unsure. It equals only itself, so a line that repeats the same
+"/ HR 88" form passes, and a line that uses that number with a unit, with or without a rate, is a
+mismatch. Any other hour spelling or number after it ("units/hr 0800", "mL/hr 2L", "units/h 88",
+"units/hr 10:30") is the rate.
 Whitespace inside a rate includes a line break between "5 mg/" and "hr".
 A concentration is a unit with its volume as the denominator: "g/dL", "mg/dL", "g/L", "mmol/L" and
 "mEq/L" are each kept whole, so none equals another, a bare unit, or a rate per hour. "g/L" and
@@ -149,10 +151,16 @@ _PER_LITRE_UNITS = frozenset("ug")  # "g/L" and "u/L" are per litre, not shortha
 # Whitespace inside a rate includes a line break, so "5 mg/" then "hr" on the next line is a rate.
 _PER = re.compile(r"\s+per\s+", re.IGNORECASE)
 _SLASH = re.compile(r"\s*/\s*")
-# "units / HR 88": a "/", the spelling "hr" and then a heart-rate-like number (two or three digits,
-# on the same line, not a time like "0800" or "10am", a volume or a weight) may be a heart rate.
-_HEART_RATE_NUMBER = re.compile(r"[ \t]+\d{2,3}(?![\w:/]|\.\d)")
-_AMBIGUOUS = "?"  # a denominator no line can write, so it equals no rate and always flags
+# "units / HR 88": a "/", the spelling "hr", then (spaces, ":", "=", "-" or "of") and a
+# heart-rate-like number: two or three digits on the same line, not a time like "0800" or "10am",
+# a volume or a weight. "bpm" may follow it. That may be a heart rate instead of per hour.
+_HEART_RATE_NUMBER = re.compile(
+    r"(?:[ \t]*[:=-][ \t]*|[ \t]+of[ \t]+|[ \t]+)\d{2,3}(?:(?![\w:/]|\.\d)|[ \t]*bpm(?!\w))",
+    re.IGNORECASE,
+)
+# A denominator no line can write: it equals only itself, so a line that repeats the same
+# "/ HR 88" form passes, and any other reading of that number with a unit flags.
+_AMBIGUOUS = "?"
 type NumberValue = tuple[str | Decimal, ...]
 _WINDOW = 64  # typed characters read after a number (a unit, a bare rate) or a unit (a rate)
 

@@ -836,7 +836,23 @@ def test_a_word_after_a_slash_that_is_not_a_denominator_is_not_a_rate() -> None:
 
 
 def test_a_slash_before_a_heart_rate_makes_the_rate_unsure_so_both_readings_flag() -> None:
-    for note in ["insulin 5 units / HR 88", "insulin 5 units/HR 88", "insulin 5 units/hr 88"]:
+    for note in [
+        "insulin 5 units / HR 88",
+        "insulin 5 units/HR 88",
+        "insulin 5 units/hr 88",
+        "insulin 5 units / HR 88, RR 18",
+        "insulin 5 units / HR 88.",
+        "insulin 5 units / HR 88 bpm",
+        "insulin 5 units / HR 88 given",
+        "insulin 5 units / HR 102",
+        "insulin 5 units / HR: 88",
+        "insulin 5 units / HR:88",
+        "insulin 5 units / HR=88",
+        "insulin 5 units / HR - 88",
+        "insulin 5 units / HR of 88",
+        "insulin 5 units / HR 88bpm",
+        "insulin 5 units / HR 88 BPM",
+    ]:
         _flagged_unit(note, "Insulin 5 units/hr.")
         _flagged_unit(note, "Insulin 5 units.")
     line = _rate_status("insulin 5 units / HR 88", "Insulin 5 units.")
@@ -871,14 +887,17 @@ def test_a_rate_followed_by_a_time_volume_weight_or_other_number_is_still_a_rate
         ("insulin 5 units/h 88", "Insulin 5 units."),
         ("insulin 5 units / hour 88", "Insulin 5 units."),
         ("insulin 5 units/hr 1:30", "Insulin 5 units."),
+        ("insulin 5 units/hr 10:30", "Insulin 5 units."),
+        ("insulin 5 units/hr of 5", "Insulin 5 units."),
+        ("heparin 1000 units/hr 25000 units in 250 mL", "Heparin 1000 units."),
+        ("insulin 5 units/hr 88mL", "Insulin 5 units."),
         ("insulin 5 units/hr 88.5", "Insulin 5 units."),
         ("insulin 5 units/hr\n88", "Insulin 5 units."),
         ("heparin 1000 units 10am", "Heparin 1000 units/hr 10am."),
     ]:
         _flagged_unit(note, text)
-    assert _rate_status("insulin 5 units/hr 0800", "Insulin 5 units/hr.").status is (
-        LineStatus.SOURCE_FOUND
-    )
+    for note in ["insulin 5 units/hr 0800", "insulin 5 units/hr 10:30"]:
+        assert _rate_status(note, "Insulin 5 units/hr.").status is LineStatus.SOURCE_FOUND, note
 
 
 def test_units_per_litre_per_with_a_line_break_and_naming_without_a_rate() -> None:
