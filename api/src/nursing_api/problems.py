@@ -32,7 +32,7 @@ ProblemCode = Literal[
     "precondition_required",
     "idempotency_key_reused",
     "invalid_request",
-    "not_implemented",
+    "not_implemented",  # no route answers it now; it stays because openapi.json names it
 ]
 
 TITLES: dict[int, str] = {
@@ -43,7 +43,6 @@ TITLES: dict[int, str] = {
     412: "The note or setting has changed",
     422: "The request isn't valid",
     428: "A required header is missing",
-    501: "Not built yet",
 }
 
 
@@ -94,10 +93,6 @@ _SAFE_MESSAGES = frozenset(
 )
 
 
-class NotImplementedRoute(Exception):
-    """A declared route that a lane hasn't filled in yet."""
-
-
 class NotSignedIn(Exception):
     """No session cookie, or one that names no live session."""
 
@@ -133,10 +128,6 @@ def problem_response(
 def problems(*statuses: int) -> dict[int | str, dict[str, Any]]:
     """The `responses=` entry declaring a route's problem statuses."""
     return {status: {"model": Problem, "description": TITLES[status]} for status in statuses}
-
-
-async def _not_implemented(_request: Request, _exc: Exception) -> JSONResponse:
-    return problem_response(501, "not_implemented")
 
 
 def field_errors(exc: RequestValidationError) -> list[FieldError]:
@@ -200,7 +191,6 @@ async def _review_incomplete(_request: Request, exc: Exception) -> JSONResponse:
 
 def install_problems(app: FastAPI) -> None:
     """Problem handlers, and an OpenAPI document whose errors are application/problem+json."""
-    app.add_exception_handler(NotImplementedRoute, _not_implemented)
     for error, (status, code) in _SIMPLE.items():
         app.add_exception_handler(error, _simple_handler(status, code))
     app.add_exception_handler(ReviewIncomplete, _review_incomplete)

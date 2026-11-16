@@ -7,7 +7,7 @@ from fastapi import Depends, Request, Security
 from nursing_core.domain.errors import Forbidden, NotFound
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.domain.shifts import ShiftRef
-from nursing_core.domain.users import can_see_facility, can_write_notes
+from nursing_core.domain.users import can_edit_settings, can_see_facility, can_write_notes
 from nursing_core.ports import Clock
 from nursing_core.storage.repositories import (
     PgFacilityRepository,
@@ -118,6 +118,16 @@ async def require_nurse(signed_in: SignedInDep) -> Nurse:
 
 
 NurseDep = Annotated[Nurse, Depends(require_nurse)]
+
+
+async def require_admin(signed_in: SignedInDep) -> StoredUser:
+    """The signed-in admin; `Forbidden` (403) for a nurse. A dependency: 403 beats body checks."""
+    if not can_edit_settings(signed_in.user.role):
+        raise Forbidden("only the admin edits settings")
+    return signed_in.user
+
+
+AdminDep = Annotated[StoredUser, Depends(require_admin)]
 
 
 def ensure_own_facility(nurse: Nurse, patient: PatientRecord) -> None:

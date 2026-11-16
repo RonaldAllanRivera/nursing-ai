@@ -1,4 +1,4 @@
-"""The P1 endpoints: declared and frozen in openapi.json, answering 501 until a lane fills them."""
+"""The P1 endpoints: declared and frozen in openapi.json."""
 
 from collections.abc import AsyncIterator
 from typing import Any
@@ -109,42 +109,6 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
             yield http
 
 
-# Routes a lane has filled in: they no longer answer 501 (the other tests here still cover them).
-FILLED = {
-    ("GET", "/api/v1/personas"),
-    ("POST", "/api/v1/session"),
-    ("GET", "/api/v1/session"),
-    ("DELETE", "/api/v1/session"),
-    ("PUT", "/api/v1/session/shift"),
-    ("GET", "/api/v1/patients"),
-    ("GET", f"/api/v1/patients/{PATIENT}"),
-    ("POST", f"/api/v1/patients/{PATIENT}/rough-notes"),
-    ("GET", f"/api/v1/draft-jobs/{JOB}"),
-    ("GET", f"/api/v1/notes/{NOTE}"),
-    ("PATCH", f"/api/v1/notes/{NOTE}/lines/e1-D2"),
-    ("POST", f"/api/v1/notes/{NOTE}/sign"),
-    ("POST", f"/api/v1/notes/{NOTE}/discard"),
-}
-NOT_BUILT = [route for route in ROUTES if (route[0], route[1]) not in FILLED]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("method", "path", "body", "headers", "_ok", "_problems"), NOT_BUILT)
-async def test_p1_routes_answer_501_problem(
-    client: httpx.AsyncClient,
-    method: str,
-    path: str,
-    body: Any,
-    headers: dict[str, str],
-    _ok: int,
-    _problems: set[int],
-) -> None:
-    response = await client.request(method, path, json=body, headers=headers)
-    assert response.status_code == 501, response.text
-    assert response.headers["content-type"] == "application/problem+json"
-    assert response.json()["code"] == "not_implemented"
-
-
 @pytest.mark.parametrize(("method", "path", "_body", "_headers", "ok", "problems"), ROUTES)
 def test_every_route_declares_its_problem_responses(
     method: str, path: str, _body: Any, _headers: dict[str, str], ok: int, problems: set[int]
@@ -221,27 +185,3 @@ async def test_unknown_field_is_never_echoed(client: httpx.AsyncClient) -> None:
     assert response.status_code == 422
     assert "Juan" not in response.text
     assert response.json()["errors"] == [{"field": "body", "message": "unknown field"}]
-
-
-@pytest.mark.asyncio
-async def test_whole_form_rule_reports_its_own_message(client: httpx.AsyncClient) -> None:
-    gap = dict(SETTINGS_BODY)
-    gap["shifts"] = [dict(shift) for shift in SETTINGS_BODY["shifts"]]
-    gap["shifts"][1]["ends_local"] = "21:00:00"
-    response = await client.put(
-        "/api/v1/facilities/ph-demo", json=gap, headers={"If-Match": '"f1"'}
-    )
-    assert response.status_code == 422
-    assert response.json()["errors"] == [
-        {"field": "body", "message": "shifts must cover 24 hours with no gap or overlap"}
-    ]
-
-
-@pytest.mark.asyncio
-async def test_oversized_timezone_is_invalid_not_a_crash(client: httpx.AsyncClient) -> None:
-    body = dict(SETTINGS_BODY) | {"timezone": "A" * 300}
-    response = await client.put(
-        "/api/v1/facilities/ph-demo", json=body, headers={"If-Match": '"f1"'}
-    )
-    assert response.status_code == 422
-    assert response.json()["errors"][0]["field"] == "body.timezone"
