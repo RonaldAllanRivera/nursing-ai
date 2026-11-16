@@ -36,14 +36,19 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
   const retried = useRef(false);
 
   useEffect(() => {
-    if (!facility || !retried.current) return;
+    if (!retried.current || isFetching) return;
+    // The Try again has settled, either way: it must not stay armed for a later load.
     retried.current = false;
+    if (!facility) return;
+    // Only when focus was lost with the Try again button. If she has moved on, leave it alone.
+    const active = document.activeElement;
+    if (active && active !== document.body && !panel.current?.contains(active)) return;
     const buttons = panel.current?.querySelectorAll<HTMLButtonElement>("ul button");
     const target = panel.current?.querySelector<HTMLButtonElement>(
       'ul button[aria-pressed="true"]',
     );
     (target ?? buttons?.[0])?.focus();
-  }, [facility]);
+  }, [facility, isFetching]);
 
   useEffect(() => {
     if (!open) return;

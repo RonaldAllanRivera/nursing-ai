@@ -141,6 +141,36 @@ describe("shell and guards", () => {
     });
   });
 
+  it("does not pull focus back when she has moved on before Try again succeeds", async () => {
+    await renderApp("/sign-in");
+    let gate: Promise<void> | null = null;
+    server.use(
+      http.get("*/api/v1/facilities/:key", async () => {
+        if (!gate) return HttpResponse.json({}, { status: 500 });
+        await gate;
+        return undefined;
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    const toggle = await screen.findByRole("button", { name: "Change shift" });
+    await userEvent.click(toggle);
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    await group.findByText("The shifts did not load.");
+    let release = () => {};
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await userEvent.click(group.getByRole("button", { name: "Try again" }));
+    act(() => {
+      toggle.focus();
+    });
+    release();
+    await group.findByRole("button", { name: /^2-10/ });
+    expect(toggle).toHaveFocus();
+  });
+
   it("announces again when Try again fails again", async () => {
     await renderApp("/sign-in");
     server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
