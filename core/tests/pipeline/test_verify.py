@@ -1,6 +1,5 @@
 """Deciding each line's status from its quotes, numbers and units."""
 
-import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.demo import DEMO_FACILITIES, load_demo_cases
@@ -836,9 +835,94 @@ def test_a_word_after_a_slash_that_is_not_a_denominator_is_not_a_rate() -> None:
         assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
 
 
-@pytest.mark.xfail(strict=True, reason="a slash then HR is read as per hour, not as a heart rate")
-def test_a_slash_before_a_heart_rate_is_not_read_as_per_hour() -> None:
+def test_a_slash_before_a_heart_rate_is_a_separator_not_per_hour() -> None:
+    for note, text in [
+        ("insulin 5 units / HR 88", "Insulin 5 units."),
+        ("insulin 5 units / HR 88", "Insulin 5 units, HR 88."),
+        ("insulin 5 units/HR 88", "Insulin 5 units."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
     _flagged_unit("insulin 5 units / HR 88", "Insulin 5 units/hr.")
+    _flagged_unit("insulin 5 units / HR 88", "Insulin 5 units per hr.")
+
+
+def test_a_spaced_rate_with_no_number_after_the_denominator_is_still_a_rate() -> None:
+    for note, text in [
+        ("heparin 5 units / hr", "Heparin 5 units."),
+        ("heparin 5 units / hr x 2", "Heparin 5 units."),
+        ("heparin 5 units / hr then stop", "Heparin 5 units."),
+    ]:
+        _flagged_unit(note, text)
+    assert _rate_status("heparin 5 units / hr", "Heparin 5 units/hr.").status is (
+        LineStatus.SOURCE_FOUND
+    )
+
+
+def test_a_line_break_inside_a_rate_is_read_like_a_space() -> None:
+    for note, text in [
+        ("heparin 5 mg/\nhr", "Heparin 5 mg."),
+        ("heparin 5 mg\n/hr", "Heparin 5 mg."),
+        ("heparin 5 mg per\nhr", "Heparin 5 mg."),
+        ("heparin 5 mg/\r\nhr", "Heparin 5 mg/min."),
+        ("heparin 5 mg/hr", "Heparin 5 mg/\nmin."),
+        ("heparin 5 mg/hr", "Heparin 5 mg."),
+        ("IVF 100/\nhr", "IVF 100 mL."),
+    ]:
+        _flagged_unit(note, text)
+    for note, text in [
+        ("heparin 5 mg/\nhr", "Heparin 5 mg/hr."),
+        ("heparin 5 mg/hr", "Heparin 5 mg per\nhour."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_concentration_unit_must_match_whole() -> None:
+    for note, text in [
+        ("Hgb 12 g/dL", "Hgb 12 g/L."),
+        ("Hgb 12 g/L", "Hgb 12 g/dL."),
+        ("Hgb 12 g/dL", "Hgb 12 mg/dL."),
+        ("Glucose 12 mg/dL", "Glucose 12 g/dL."),
+        ("Glucose 12 mg/dL", "Glucose 12 mg."),
+        ("Glucose 12 mg/dL", "Glucose 12 mg/hr."),
+        ("Glucose 12 mg", "Glucose 12 mg/dL."),
+        ("Glucose 12 mg/hr", "Glucose 12 mg/dL."),
+        ("Hgb 12 g", "Hgb 12 g/L."),
+        ("Hgb 12 g/L", "Hgb 12 g."),
+        ("K 4 mmol/L", "K 4 mEq/L."),
+        ("K 4 mEq/L", "K 4 mmol/L."),
+        ("K 4 mmol/L", "K 4 mmol."),
+        ("Hgb 12 g/dL", "Hgb 12 g."),
+    ]:
+        _flagged_unit(note, text)
+    for note, text in [
+        ("Hgb 12 g/dL", "Hgb 12 g/dL."),
+        ("Hgb 12 g/dL", "Hgb 12 g / dL."),
+        ("Hgb 12 g/L", "Hgb 12 g/L."),
+        ("Hgb 12 g/L", "Hgb 12 g / L."),
+        ("Hgb 12 gm/L", "Hgb 12 g/L."),
+        ("Glucose 12 mg/dl", "Glucose 12 mg/dL."),
+        ("K 4 mEq/L", "K 4 meq/l."),
+        ("K 4 mmol/L", "K 4 mmol/L."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_one_letter_shorthand_with_a_slash_is_still_not_a_unit() -> None:
+    for note, text in [
+        ("pt c/o pain 5", "Pain 5."),
+        ("f/u 3 days", "Follow up 3 days."),
+        ("u/a 2 done", "Urinalysis 2 done."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_the_mismatch_names_the_note_number_that_carries_the_rate() -> None:
+    line = _rate_status("IVF 100/hr, NS 100 mL bolus", "Infusing at 100 mL/min.")
+    [mismatch] = line.number_mismatches
+    assert mismatch.note_text == "100/hr"
+    line = _rate_status("IVF 100 mL/hr, NS 100 mL bolus", "Infusing at 100 mL/min.")
+    [mismatch] = line.number_mismatches
+    assert mismatch.note_text == "100 mL/hr"
 
 
 def test_litres_are_a_volume_unit_for_the_facility_default() -> None:

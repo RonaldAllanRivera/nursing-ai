@@ -254,7 +254,8 @@ def _mismatches(
         # unit the nurse wrote differently elsewhere.
         candidates = [n for n in same_value if n.unit is not None] or same_value
         # A rate the note writes for this value must come back in the line, whatever rate-less
-        # same-valued number the note also has: those can't excuse a rate the line drops or changes.
+        # same-valued number the note also has, but only when the line writes a rate or a dose or
+        # volume unit: a rate-less number can't excuse a rate the line drops or changes.
         rated = [n for n in same_value if _note_rate(n)]
         rates = {_note_rate(n) for n in rated}
         if drafted is None:
@@ -267,7 +268,9 @@ def _mismatches(
             drafted is None or any(_same_unit(drafted, n, units) for n in candidates)
         ):
             continue
-        first = rated[0] if dropped else candidates[0]
+        line_rate = bare_rate_end_after(text, span)[0] if drafted is None else drafted.rate
+        # The note number named is the one that carries a rate when the line writes one.
+        first = rated[0] if dropped or (line_rate and rated) else candidates[0]
         out.append(
             NumberMismatch(
                 kind=MismatchKind.UNIT,

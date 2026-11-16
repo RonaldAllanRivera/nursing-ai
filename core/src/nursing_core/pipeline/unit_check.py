@@ -12,13 +12,19 @@ A dose, volume or drop unit followed by "/" (spaces around it are fine) or "per"
 denominator is a rate: "units/hr" and "units per hour" are units per hour, "mcg / kg / min" is mcg
 per kg per minute, and "15 mg/week" is mg per week. Only a closed set counts as a denominator: a
 time word (h, hr, hrs, hour, hours, min, mins, minute, minutes, d, day, days, wk, wks, week,
-weeks, mo, mos, month, months, shift, shifts), kg, kgs, kilogram or kilograms, or a volume (ml,
-cc, milliliter, millilitre, l, liter, litre, with their plurals). Each is kept by meaning ("h",
+weeks, mo, mos, month, months, shift, shifts; "m" is minute after a unit, "L/m"), kg, kgs,
+kilogram or kilograms, or a volume (ml, cc, milliliter, millilitre, dl, deciliter, decilitre, l,
+liter, litre, with their plurals). Each is kept by meaning ("h",
 "hr" and "hours" are one) and must be a whole word ("1L/D5LR" has no rate). Any other word ends
 the unit with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8hrs",
 "1 L / 8 hrs"). A rate is read whole when it fits in the 64 characters after the unit (after the
 number, for a rate written right after a number: "100/hr"), as "5 mcg per kilograms per minute"
 does, and the word the read ends in is finished; a rate starting after more than that is not read.
+A "/" then "hr" and a number of its own ("5 units / HR 88") is a separator before a heart rate, not
+a rate. Whitespace inside a rate includes a line break between "5 mg/" and "hr". A concentration is
+a unit with its volume as the denominator: "g/dL", "mg/dL", "g/L", "mmol/L" and "mEq/L" are each
+kept whole, so none equals another, a bare unit, or a rate per hour. "g/L" and "u/L" are not
+shorthand.
 A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more
 letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
 and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
@@ -131,12 +137,17 @@ _DENOMINATORS = {
     **dict.fromkeys(("kg", "kgs", "kilogram", "kilograms"), "kg"),
     **dict.fromkeys(("ml", "cc", "milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
     **dict.fromkeys(("l", "liter", "liters", "litre", "litres"), "l"),
+    **dict.fromkeys(("dl", "deciliter", "deciliters", "decilitre", "decilitres"), "dl"),
 }
 _LITRES_PER_MINUTE = "lpm"
 _TEMPERATURE_LETTERS = frozenset("cf")  # "c/o" and "f/u" are shorthand, whatever the letter after
 _RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are rates, "u/a" is not
-_PER = re.compile(r"[ \t]+per[ \t]+", re.IGNORECASE)
-_SLASH = re.compile(r"[ \t]*/[ \t]*")
+_PER_LITRE_UNITS = frozenset("ug")  # "g/L" and "u/L" are per litre, not shorthand
+# Whitespace inside a rate includes a line break, so "5 mg/" then "hr" on the next line is a rate.
+_PER = re.compile(r"\s+per\s+", re.IGNORECASE)
+_SLASH = re.compile(r"\s*/\s*")
+# "units / HR 88": a "/" then "hr" and its own number is a separator before a heart rate.
+_HEART_RATE_NUMBER = re.compile(r"[ \t]+\.?\d")
 type NumberValue = tuple[str | Decimal, ...]
 _WINDOW = 64  # typed characters read after a number (a unit, a bare rate) or a unit (a rate)
 
@@ -260,13 +271,11 @@ def written_unit(text: str, number_span: Span) -> WrittenUnit | None:
     )
 
 
-def bare_rate_after(text: str, number_span: Span) -> tuple[str, ...]:
-    """The rate written right after a number with no unit between ("100/hr", "100 per hour")."""
-    return bare_rate_end_after(text, number_span)[0]
-
-
 def bare_rate_end_after(text: str, number_span: Span) -> tuple[tuple[str, ...], int]:
-    """That rate and where it ends in `text` (the number's end when there is none)."""
+    """The rate written right after a number with no unit between ("100/hr", "100 per hour").
+
+    Returns it with where it ends in `text` (the number's end when there is none).
+    """
     return _rate_after(text, number_span.end)
 
 
@@ -290,6 +299,8 @@ def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
         denominator = _DENOMINATORS.get(spelling)
         if denominator is None:
             break
+        if slash and denominator == "hour" and _HEART_RATE_NUMBER.match(folded, letters.end()):
+            break  # "units / HR 88": the "/" separates a heart rate, it is not per hour
         rate.append(denominator)
         position = end_in_folded = letters.end()
         end = origin[end_in_folded - 1] + 1
@@ -367,10 +378,10 @@ def _is_shorthand(folded: str, stop: int) -> bool:
     second = _LETTERS.match(folded, stop + 1)
     if second is None or len(second.group()) != 1 or folded[second.end() :][:1].isdigit():
         return False
-    return (
-        folded[stop - 1].casefold() in _TEMPERATURE_LETTERS
-        or second.group().casefold() not in _RATE_LETTERS
-    )
+    first, letter = folded[stop - 1].casefold(), second.group().casefold()
+    if first in _PER_LITRE_UNITS and letter == "l":
+        return False
+    return first in _TEMPERATURE_LETTERS or letter not in _RATE_LETTERS
 
 
 def _ends_a_one_letter_word(folded: str, stop: int) -> bool:
