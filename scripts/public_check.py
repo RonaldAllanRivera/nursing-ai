@@ -82,6 +82,8 @@ class History:
     messages: list[tuple[str, str, str]]
     # (where, detail) for every sign of Git LFS.
     lfs: list[tuple[str, str]]
+    # The place of every text that is not UTF-8 (a note, not a finding).
+    not_utf8: list[str]
 
 
 def private_markers(exclude_text: str, gitignore_text: str) -> list[str]:
@@ -150,7 +152,8 @@ def check_text(
     return findings
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, latin1: bool = False) -> str:
+    """git's output as UTF-8 text, or (latin1) one character per byte, so nothing is lost."""
     result = subprocess.run(  # noqa: S603
         ["git", "-c", "core.quotePath=false", "-c", "log.showRoot=true", *args],  # noqa: S607
         cwd=repo,
@@ -160,7 +163,20 @@ def _git(repo: Path, *args: str) -> str:
     )
     if result.returncode != 0:
         raise OSError("git could not read the history")
-    return result.stdout.decode("utf-8", errors="replace")
+    return result.stdout.decode("latin-1" if latin1 else "utf-8", errors="replace")
+
+
+def text_views(latin1: str) -> tuple[list[str], bool]:
+    """The ways to read text git printed one character per byte, and whether it was not UTF-8.
+
+    Text that is not UTF-8 is read as UTF-8 with replacement characters (which can hide a
+    word that holds an accented letter) and as Latin-1 (every byte is a character).
+    """
+    raw = latin1.encode("latin-1")
+    try:
+        return [raw.decode("utf-8")], False
+    except UnicodeDecodeError:
+        return [raw.decode("utf-8", errors="replace"), latin1], True
 
 
 def _binary_files(repo: Path) -> list[BinaryBlob]:
@@ -217,14 +233,25 @@ def names_by_commit(repo: Path, nonce: str) -> dict[str, list[str]]:
     return found
 
 
-def _tags(repo: Path, nonce: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+def _tags(
+    repo: Path, nonce: str
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]], list[str]]:
     """Chunks for every tag's name and, for an annotated tag, its message and tagger."""
     sep = f"\x1f{nonce}"
     fields = ("%(objecttype)", "%(objectname)", "%(refname)", "%(taggername) %(taggeremail)")
     fmt = f"%1e{nonce}" + "".join(f"{field}%1f{nonce}" for field in fields) + "%(contents)"
-    listing = _git(repo, "for-each-ref", f"--format={fmt}", "refs/tags")
+    listing = _git(repo, "for-each-ref", f"--format={fmt}", "refs/tags", latin1=True)
     chunks: list[tuple[str, str]] = []
     messages: list[tuple[str, str, str]] = []
+    notes: list[str] = []
+
+    def add(label: str, field: str) -> str:
+        views, odd = text_views(field)
+        chunks.extend((label, view) for view in views)
+        if odd:
+            notes.append(label)
+        return views[0]
+
     for entry in listing.split(f"\x1e{nonce}")[1:]:
         parts = entry.split(sep)
         if len(parts) != len(fields) + 1:
@@ -232,12 +259,12 @@ def _tags(repo: Path, nonce: str) -> tuple[list[tuple[str, str]], list[tuple[str
         kind, sha, ref, tagger, contents = parts
         short = f"tag {sha[:7]}"
         # The label never holds the tag's name, so a word in it is never printed.
-        chunks.append((f"{short} · name", ref.removeprefix("refs/tags/")))
+        add(f"{short} · name", ref.removeprefix("refs/tags/"))
         if kind == "tag":
-            chunks.append((f"{short} · message", contents))
-            chunks.append((f"{short} · tagger", tagger))
-            messages.append((f"tag-{sha}.txt", f"{short} · message", f"{tagger}\n\n{contents}"))
-    return chunks, messages
+            body = add(f"{short} · message", contents)
+            who = add(f"{short} · tagger", tagger)
+            messages.append((f"tag-{sha}.txt", f"{short} · message", f"{who}\n\n{body}"))
+    return chunks, messages, notes
 
 
 def read_history(repo: Path) -> History:
@@ -258,22 +285,31 @@ def read_history(repo: Path) -> History:
         "--dst-prefix=b/",
         *_DIFF_OPTIONS,
         "--format=" + f"%x1e{nonce}" + "".join(f"{field}%x1f{nonce}" for field in fields),
+        latin1=True,
     )
     chunks: list[tuple[str, str]] = []
     unpaired: list[str] = []
     messages: list[tuple[str, str, str]] = []
     lfs: list[tuple[str, str]] = []
+    not_utf8: list[str] = []
+
+    def add(label: str, field: str) -> str:
+        views, odd = text_views(field)
+        chunks.extend((label, view) for view in views)
+        if odd:
+            not_utf8.append(label)
+        return views[0]
+
     for entry in log.split(f"\x1e{nonce}")[1:]:
         parts = entry.split(sep)
         if len(parts) != len(fields) + 1:
             raise OSError("git printed a commit in an unexpected form")
         sha, author, author_email, committer, committer_email, message, diff = parts
         short = f"commit {sha[:7]}"
-        chunks.append((f"{short} · message", message))
-        chunks.append((f"{short} · author", f"{author} {author_email}"))
-        chunks.append((f"{short} · committer", f"{committer} {committer_email}"))
-        people = f"{author} {author_email}\n{committer} {committer_email}"
-        messages.append((f"{sha}.txt", f"{short} · message", f"{people}\n\n{message}"))
+        message = add(f"{short} · message", message)
+        author = add(f"{short} · author", f"{author} {author_email}")
+        committer = add(f"{short} · committer", f"{committer} {committer_email}")
+        messages.append((f"{sha}.txt", f"{short} · message", f"{author}\n{committer}\n\n{message}"))
         # Labels come from the unquoted file list: a diff header C-quotes odd names.
         files = _DIFF_HEADER.split(diff)[1:]
         labels = names.get(sha, [])
@@ -281,12 +317,18 @@ def read_history(repo: Path) -> History:
             unpaired.append(short)
             labels = [HIDDEN] * len(files)
         for label, part in zip(labels, files, strict=True):
-            chunks.append((f"{short} · {label}", part))
+            part = add(f"{short} · {label}", part)
             if (detail := _lfs_use(label, part)) is not None:
                 lfs.append((f"{short} · {label}", detail))
-    tag_chunks, tag_messages = _tags(repo, nonce)
+    tag_chunks, tag_messages, tag_notes = _tags(repo, nonce)
     return History(
-        paths, chunks + tag_chunks, _binary_files(repo), unpaired, messages + tag_messages, lfs
+        paths,
+        chunks + tag_chunks,
+        _binary_files(repo),
+        unpaired,
+        messages + tag_messages,
+        lfs,
+        not_utf8 + tag_notes,
     )
 
 
@@ -504,6 +546,14 @@ def scrub(where: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
     return f"{head}{sep}{hide_if_private(name, hashes, markers)}"
 
 
+def _note_place(where: str) -> str:
+    """A file's path, or the label of a message, person or tag."""
+    _, sep, name = where.partition(" · ")
+    return (
+        where if not sep or name in {"message", "author", "committer", "tagger", "name"} else name
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Scan the git history before the repo goes public."
@@ -589,6 +639,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{name}: {ok if not found else f'{len(found)} finding(s)'}")
         for finding in found:
             print(f"  {finding.where}: {finding.detail}")
+    # A note, never a finding: the path (hidden when private), never the content.
+    for note in sorted({_note_place(scrub(where, hashes, markers)) for where in history.not_utf8}):
+        print(f"not UTF-8: {note}")
     if local:
         accepted = {binary.blob for binary in history.binaries if binary.blob in reviewed}
         print(f"accepted binaries: {len(accepted)}")

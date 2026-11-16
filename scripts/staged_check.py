@@ -21,6 +21,7 @@ from public_check import (
     load_private_hashes,
     read_allowlist,
     read_markers,
+    text_views,
 )
 from reviewed_binaries import BinaryBlob, binary_blobs, load_reviewed, reviewed_file
 
@@ -29,7 +30,7 @@ WARNING = "private words not checked: run make private-words"
 NOT_REVIEWED = "binary not reviewed: run make accept-binary"
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, latin1: bool = False) -> str:
     result = subprocess.run(  # noqa: S603
         ["git", "-c", "core.quotePath=false", *args],  # noqa: S607
         cwd=repo,
@@ -38,7 +39,7 @@ def _git(repo: Path, *args: str) -> str:
     )
     if result.returncode != 0:
         raise OSError("git could not read the staged changes")
-    return result.stdout.decode("utf-8", errors="replace")
+    return result.stdout.decode("latin-1" if latin1 else "utf-8", errors="replace")
 
 
 # The same options for the file list and the diff, so both list the same files in the same
@@ -90,9 +91,22 @@ def _staged_paths(repo: Path) -> list[str]:
     return [path for _, path in _staged_changes(repo)]
 
 
-def _added_text(repo: Path) -> list[tuple[str, str]]:
-    """One (path, added lines) pair per file diff; removed and context lines are left out."""
-    diff = _git(repo, *_STAGED, "-U0", "--no-color", "--text", "--no-ext-diff", "--no-textconv")
+def _added_text(repo: Path) -> list[tuple[str, str, bool]]:
+    """One (path, added lines, not UTF-8) per file diff and way of reading it.
+
+    Removed and context lines are left out. Text that is not UTF-8 comes twice: with
+    replacement characters and as Latin-1, so an accented letter can't hide a word.
+    """
+    diff = _git(
+        repo,
+        *_STAGED,
+        "-U0",
+        "--no-color",
+        "--text",
+        "--no-ext-diff",
+        "--no-textconv",
+        latin1=True,
+    )
     # The names come from the file list: a diff header C-quotes odd names and would print
     # them. A type change prints two diffs (the old file removed, the new one added).
     names = [
@@ -101,7 +115,7 @@ def _added_text(repo: Path) -> list[tuple[str, str]]:
     parts = _DIFF_HEADER.split(diff)[1:]
     if len(parts) != len(names):
         raise OSError("git listed the staged files twice with different results")
-    chunks: list[tuple[str, str]] = []
+    chunks: list[tuple[str, str, bool]] = []
     for name, part in zip(names, parts, strict=True):
         body = part.partition("\n")[2]
         added: list[str] = []
@@ -111,18 +125,29 @@ def _added_text(repo: Path) -> list[tuple[str, str]]:
                 in_hunk = True
             elif in_hunk and line.startswith("+"):
                 added.append(line[1:])
-        chunks.append((name, "\n".join(added)))
+        views, odd = text_views("\n".join(added))
+        chunks += [(name, view, odd) for view in views]
     return chunks
 
 
-def staged_findings(repo: Path, hashes: Sequence[str], markers: Sequence[str]) -> list[Finding]:
-    """Findings in the staged paths, the added lines and the author, none of them printable text."""
+def staged_findings(
+    repo: Path, hashes: Sequence[str], markers: Sequence[str], notes: list[str] | None = None
+) -> list[Finding]:
+    """Findings in the staged paths, the added lines and the author, none of them printable text.
+
+    A staged file that is not UTF-8 adds a "not UTF-8: <path>" line to `notes`.
+    """
+    notes = [] if notes is None else notes
     findings = [
         Finding(f.check, hide_if_private(f.where, hashes, markers), f.detail)
         for f in check_paths(_staged_paths(repo), read_allowlist(), markers)
     ]
-    for path, text in _added_text(repo):
+    for path, text, odd in _added_text(repo):
         where = hide_if_private(path, hashes, markers)
+        if odd:
+            note = f"not UTF-8: {where}"
+            if note not in notes:
+                notes.append(note)
         findings += check_text(where, text, hashes, markers)
         # A word in the file name itself (public-check sees it in the diff header).
         findings += [f for f in check_text(where, path, hashes, markers) if f.check == "words"]
@@ -141,9 +166,10 @@ def main(argv: list[str] | None = None) -> int:
         print(WARNING)
         for problem in word_problem:
             print(f"  {problem.detail}")
+    notes: list[str] = []
     try:
         markers = read_markers(repo)
-        findings = staged_findings(repo, hashes, markers)
+        findings = staged_findings(repo, hashes, markers, notes)
     except UnicodeDecodeError:
         print("staged-check: cannot read the exclude file: not UTF-8 text")
         return 1
@@ -166,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     for warning in warnings:
         print(warning)
 
+    for note in notes:
+        print(note)
     for finding in findings:
         print(f"{finding.where}: {finding.detail}")
     if findings:

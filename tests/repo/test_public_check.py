@@ -979,3 +979,37 @@ def test_lfs_pointer_blob_fails(
     code, out = run(repo, capsys, *flags)
     assert code == 1
     assert f"commit {head(repo)} · web/public/a.png: Git LFS pointer file" in out
+
+
+def test_listed_word_in_a_latin1_file_is_caught_and_noted(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, "zörblat")
+    commit_bytes(repo, "core/old.txt", "owner: Zörblat\n".encode("latin-1"))
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "core/old.txt: private word #1" in out
+    assert "not UTF-8: core/old.txt" in out
+    assert "rblat" not in out
+
+
+def test_utf8_files_get_no_not_utf8_note(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, "zörblat")
+    commit(repo, {"core/new.txt": "owner: Zörblat\n"})
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+    assert "not UTF-8" not in out
+
+
+def test_not_utf8_note_never_prints_a_private_file_name(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, "quixley")
+    commit_bytes(repo, "core/quixley.txt", b"caf\xe9\n")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "quixley" not in out.lower()
+    assert "not UTF-8: (path hidden)" in out

@@ -345,3 +345,17 @@ def test_staged_binary_path_with_a_word_is_hidden(
     code, out = run(repo, capsys)
     assert code == 1
     assert CANARY not in out.casefold()
+
+
+def test_listed_word_in_a_latin1_staged_file_is_refused_and_noted(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, "zörblat")
+    (repo / "core").mkdir()
+    (repo / "core" / "old.txt").write_bytes("owner: Zörblat\n".encode("latin-1"))
+    git(repo, "add", "--force", "core/old.txt")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "core/old.txt: private word #1" in out
+    assert "not UTF-8: core/old.txt" in out
+    assert "rblat" not in out
