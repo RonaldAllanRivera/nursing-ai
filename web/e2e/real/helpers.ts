@@ -102,30 +102,11 @@ export async function seeSourceHighlight(page: Page) {
   expect(lit, "no line lit up its source words in the note").toBeGreaterThan(0);
 }
 
-/** Press the screen's own action for a line that needs her: use the note's numbers, else confirm, else remove. */
-async function actOn(page: Page, via: "pointer" | "keyboard") {
-  const target = needing(page).first();
-  const pickAction = async (): Promise<Locator> => {
-    const options = [
-      card(page).getByRole("button", { name: /^Use .* from your note$/ }),
-      card(page).getByRole("button", { name: "Use the numbers from your note" }),
-      card(page).getByRole("button", { name: "Wording is right" }),
-      card(page).getByRole("button", { name: "Remove line" }),
-    ];
-    // The card fills in a moment after the tap: wait for any one of the actions.
-    await expect
-      .poll(
-        async () => {
-          for (const option of options) if ((await option.count()) > 0) return true;
-          return false;
-        },
-        { message: "the card offers no action that resolves this line" },
-      )
-      .toBe(true);
-    for (const option of options) if ((await option.count()) > 0) return option.first();
-    throw new Error("unreachable");
-  };
-  // A line that is already selected (the source check left one) would toggle off on another tap.
+/**
+ * Select a line, unless it is already selected: a second tap on the selected line closes the card
+ * below 960 px.
+ */
+async function selectLine(page: Page, target: Locator, via: "pointer" | "keyboard") {
   if ((await target.getAttribute("aria-current")) !== "true") {
     if (via === "keyboard") {
       await tabTo(page, target);
@@ -135,13 +116,59 @@ async function actOn(page: Page, via: "pointer" | "keyboard") {
     }
   }
   await expect(card(page)).toBeVisible();
-  const action = await pickAction();
+}
+
+async function press(page: Page, button: Locator, via: "pointer" | "keyboard") {
   if (via === "keyboard") {
-    await tabTo(page, action);
+    await tabTo(page, button);
     await page.keyboard.press("Enter");
   } else {
-    await action.click();
+    await button.click();
   }
+}
+
+/** Open the card's edit box on the selected line, add plain words and save. */
+async function editSelectedLine(page: Page, via: "pointer" | "keyboard") {
+  await press(page, card(page).getByRole("button", { name: "Edit line" }), via);
+  const box = page.getByRole("textbox", { name: "Edit line" });
+  await expect(box).toBeFocused();
+  const before = await box.inputValue();
+  // Plain words, no digits: an edit must not add a number the check could flag.
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" Checked at the bedside.");
+  await expect(box).toHaveValue(`${before} Checked at the bedside.`);
+  await press(page, page.getByRole("button", { name: "Save line" }), via);
+  await expect(box).toHaveCount(0);
+}
+
+/**
+ * Press the screen's own action for a line that needs her: use the note's numbers, else confirm,
+ * else remove. A line that offers only Edit (a Focus line with no source, a number with none to
+ * use) is edited instead.
+ */
+async function actOn(page: Page, via: "pointer" | "keyboard") {
+  await selectLine(page, needing(page).first(), via);
+  const options = [
+    card(page).getByRole("button", { name: /^Use .* from your note$/ }),
+    card(page).getByRole("button", { name: "Use the numbers from your note" }),
+    card(page).getByRole("button", { name: "Wording is right" }),
+    card(page).getByRole("button", { name: "Remove line" }),
+    card(page).getByRole("button", { name: "Edit line" }),
+  ];
+  // The card fills in a moment after the tap: wait for any one of the actions.
+  await expect
+    .poll(
+      async () => {
+        for (const option of options) if ((await option.count()) > 0) return true;
+        return false;
+      },
+      { message: "the card offers no action for this line" },
+    )
+    .toBe(true);
+  for (const option of options.slice(0, -1)) {
+    if ((await option.count()) > 0) return press(page, option.first(), via);
+  }
+  await editSelectedLine(page, via);
 }
 
 /** Resolve every line that blocks signing, whatever it is, until the bar says every line is checked. */
@@ -159,32 +186,24 @@ export async function resolveEveryLine(page: Page, via: "pointer" | "keyboard" =
 
 /** Edit one line's text through the card: the first line she has not removed. */
 export async function editOneLine(page: Page, via: "pointer" | "keyboard" = "pointer") {
-  const target = draftLines(page).filter({ hasNotText: "Removed by you" }).first();
-  if (via === "keyboard") {
-    await tabTo(page, target);
-    await page.keyboard.press("Enter");
-    await tabTo(page, card(page).getByRole("button", { name: "Edit line" }));
-    await page.keyboard.press("Enter");
-  } else {
-    await target.click();
-    await card(page).getByRole("button", { name: "Edit line" }).click();
-  }
-  const box = page.getByRole("textbox", { name: "Edit line" });
-  await expect(box).toBeFocused();
-  const before = await box.inputValue();
-  // Plain words, no digits: an edit must not add a number the check could flag.
-  await page.keyboard.press("ControlOrMeta+End");
-  await page.keyboard.type(" Checked at the bedside.");
-  await expect(box).toHaveValue(`${before} Checked at the bedside.`);
-  const save = page.getByRole("button", { name: "Save line" });
-  if (via === "keyboard") {
-    await tabTo(page, save);
-    await page.keyboard.press("Enter");
-  } else {
-    await save.click();
-  }
-  await expect(box).toHaveCount(0);
+  await selectLine(page, draftLines(page).filter({ hasNotText: "Removed by you" }).first(), via);
+  await editSelectedLine(page, via);
   await expect(draftLines(page).filter({ hasText: "Edited by you" }).first()).toBeVisible();
+}
+
+/** ArrowDown then ArrowUp between draft lines: the selection and the focus follow. */
+export async function walkLinesByArrows(page: Page) {
+  const lines = draftLines(page);
+  expect(await lines.count()).toBeGreaterThan(1);
+  await selectLine(page, lines.first(), "keyboard");
+  await expect(lines.first()).toHaveAttribute("aria-current", "true");
+  await page.keyboard.press("ArrowDown");
+  await expect(lines.nth(1)).toHaveAttribute("aria-current", "true");
+  await expect(lines.nth(1)).toBeFocused();
+  await expect(lines.first()).not.toHaveAttribute("aria-current", "true");
+  await page.keyboard.press("ArrowUp");
+  await expect(lines.first()).toHaveAttribute("aria-current", "true");
+  await expect(lines.first()).toBeFocused();
 }
 
 /** Sign through the dialog; the caller may watch the response. Returns once the note is locked. */

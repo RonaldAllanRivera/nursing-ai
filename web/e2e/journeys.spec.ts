@@ -24,6 +24,7 @@ import {
   signInAs,
   signNote,
   tabTo,
+  walkLinesByArrows,
 } from "./real/helpers.ts";
 import { widths } from "./widths.ts";
 
@@ -64,10 +65,14 @@ test("PH flow by keyboard alone: Tab, Enter, arrows and Escape", async ({ page }
   await tabTo(page, row, 12);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Demo patient A" })).toBeVisible();
-  await tabTo(page, page.getByLabel("Your note"), 40);
+  // "Notes this shift" comes first in the tab order, with a link for every note of the shift.
+  await expect(page.getByRole("region", { name: "Notes this shift" })).toBeVisible();
+  const earlier = await page.locator('[aria-labelledby="shift-notes-heading"] a').count();
+  await tabTo(page, page.getByLabel("Your note"), 40 + earlier);
   await saveNote(page, demoNoteText("demo-1"), { keyboard: true });
   await checkScreen(page);
 
+  await walkLinesByArrows(page);
   await resolveEveryLine(page, "keyboard");
   await editOneLine(page, "keyboard");
 
