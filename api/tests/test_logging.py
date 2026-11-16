@@ -331,3 +331,52 @@ async def test_an_unlisted_uvicorn_message_becomes_the_constant(
     out = capfd.readouterr().out
     assert CANARY not in out
     assert [line["event"] for line in json_lines(out)] == [LIBRARY_EVENT, LIBRARY_EVENT]
+
+
+@pytest.mark.asyncio
+async def test_an_unhashable_uvicorn_message_is_a_library_log_and_never_raises(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+    logging.getLogger("uvicorn.error").info(["Quixley", {"nested": CANARY}])  # pyright: ignore[reportArgumentType]
+    captured = capfd.readouterr()
+    assert CANARY not in captured.out + captured.err
+    assert "Traceback" not in captured.err
+    [line] = json_lines(captured.out)
+    assert line["event"] == LIBRARY_EVENT
+    assert "error_class" not in line
+
+
+@pytest.mark.parametrize("empty", [False, None, (None, None, None)])
+@pytest.mark.asyncio
+async def test_a_record_with_an_empty_exc_info_formats_as_having_none(
+    app: FastAPI, capfd: pytest.CaptureFixture[str], empty: Any
+) -> None:
+    del app
+    logging.getLogger("nursing_core.t").error("it failed", exc_info=empty)
+    captured = capfd.readouterr()
+    assert "Traceback" not in captured.err
+    [line] = json_lines(captured.out)
+    assert line["event"] == "it failed"
+    assert "error_class" not in line
+
+
+@pytest.mark.asyncio
+async def test_a_formatter_error_never_prints_the_records_arguments(
+    app: FastAPI, capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del app
+    monkeypatch.setattr(logging, "raiseExceptions", True)
+    configure_logging()
+    assert logging.raiseExceptions is False
+
+    handler = next(h for h in logging.getLogger().handlers if h.get_name() == "nursing_api.json")
+
+    def broken_format(_record: logging.LogRecord) -> str:
+        raise KeyError("x")
+
+    monkeypatch.setattr(handler, "format", broken_format)
+    logging.getLogger("nursing_core.t").error("value %s", "Zorblat-canary-word")
+    captured = capfd.readouterr()
+    assert "Zorblat-canary-word" not in captured.out + captured.err
+    assert "Traceback" not in captured.err

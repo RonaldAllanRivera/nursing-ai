@@ -80,15 +80,19 @@ def _foreign_event(_logger: object, _method: str, event: EventDict) -> EventDict
     if not isinstance(record, logging.LogRecord):
         return event
     project = record.name.split(".")[0] in _PROJECT_LOGGERS
+    message = record.msg
     known = (
-        record.name in _SERVER_LOGGERS
-        and record.exc_info is None
-        and record.msg in UVICORN_TEMPLATES
+        isinstance(message, str)  # an unhashable message must not reach the set lookup
+        and record.name in _SERVER_LOGGERS
+        and not record.exc_info
+        and message in UVICORN_TEMPLATES
     )
-    shown = (project or known) and isinstance(record.msg, str)
-    event["event"] = record.msg if shown else LIBRARY_EVENT
-    if record.exc_info is not None and record.exc_info[0] is not None:
-        event["error_class"] = record.exc_info[0].__name__
+    shown = (project or known) and isinstance(message, str)
+    event["event"] = message if shown else LIBRARY_EVENT
+    # `exc_info` may be False, None or (None, None, None): all mean "no exception".
+    error_type = record.exc_info[0] if record.exc_info else None
+    if error_type is not None:
+        event["error_class"] = error_type.__name__
     return event
 
 
@@ -108,7 +112,12 @@ class _StdoutHandler(logging.Handler):
 
 
 def configure_logging() -> None:
-    """Send structlog and stdlib logs through the allowlist as JSON on stdout. Safe to repeat."""
+    """Send structlog and stdlib logs through the allowlist as JSON on stdout. Safe to repeat.
+
+    Also turns off `logging.raiseExceptions` (process-wide): when a handler fails,
+    `Handler.handleError` would otherwise print the record's message and arguments to stderr.
+    """
+    logging.raiseExceptions = False
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,

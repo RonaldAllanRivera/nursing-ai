@@ -10,7 +10,7 @@ import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 
 import anthropic
 import httpx2
@@ -27,11 +27,16 @@ from nursing_core.domain.notes import GenerationInfo
 from nursing_core.prompts import load_prompt
 from nursing_core.providers.pricing import cost_usd
 
-_MAX_OUTPUT_TOKENS = 16000
+MAX_OUTPUT_TOKENS = 16000  # the ceiling on one answer; the budget guard reads it too
 _MAX_RETRIES = 2  # three attempts in all
 _MAX_BACKOFF_SECONDS = 8
 _MAX_RETRY_AFTER_SECONDS = 30
 _JITTER_SECONDS = 0.5
+
+
+def output_schema() -> dict[str, Any]:
+    """The JSON schema sent with every request, so its size can be counted before a call."""
+    return anthropic.transform_schema(ModelFdarDraft)
 
 
 def _is_spend_limit(error: anthropic.APIStatusError) -> bool:
@@ -143,7 +148,7 @@ class AnthropicProvider:
         cost_usd(model, 0, 0)  # an unknown model fails here, not on the first note
         self.model = model
         self._sleep = sleep
-        self._schema = anthropic.transform_schema(ModelFdarDraft)
+        self._schema = output_schema()
         if http_client is None:
             self._client = anthropic.AsyncAnthropic(
                 api_key=api_key.get_secret_value(), max_retries=0
@@ -164,7 +169,7 @@ class AnthropicProvider:
             try:
                 response = await self._client.messages.create(
                     model=self.model,
-                    max_tokens=_MAX_OUTPUT_TOKENS,
+                    max_tokens=MAX_OUTPUT_TOKENS,
                     system=system,
                     messages=[{"role": "user", "content": user_text}],
                     output_config={
