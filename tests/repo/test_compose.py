@@ -45,3 +45,11 @@ def test_each_one_shot_job_runs_once_in_the_apis_image_on_its_database(
     assert job["build"] == api["build"]
     assert job["environment"] == {"DATABASE_URL": api["environment"]["DATABASE_URL"]}
     assert "ports" not in job
+
+
+def test_the_api_gets_its_ai_mode_from_the_environment_and_never_the_key_or_the_cap() -> None:
+    # `make e2e AI_MODE=replay` runs the API on recordings; live mode stays unsupported in Compose.
+    env = services()["api"]["environment"]
+    assert env["AI_MODE"] == "${AI_MODE:-mock}"
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "AI_MONTHLY_CAP_USD" not in env

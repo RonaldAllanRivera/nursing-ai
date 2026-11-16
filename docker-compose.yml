@@ -1,12 +1,14 @@
 name: ${COMPOSE_PROJECT_NAME:-nursing-ai-0}
 
 # The API's image and database, shared by the one-shot jobs that run before it starts.
+x-database-env: &database-env
+  DATABASE_URL: postgresql+asyncpg://app:${POSTGRES_PASSWORD:-localdev}@db:5432/app
+
 x-api-image: &api-image
   build:
     context: .
     dockerfile: api/Dockerfile
-  environment:
-    DATABASE_URL: postgresql+asyncpg://app:${POSTGRES_PASSWORD:-localdev}@db:5432/app
+  environment: *database-env
 
 services:
   db:
@@ -44,8 +46,13 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # AI_MODE is mock (canned drafts) or replay (recorded drafts). The key and the monthly cap are
+  # never passed: live mode stays unsupported in Compose, and the app refuses it without them.
   api:
     <<: *api-image
+    environment:
+      <<: *database-env
+      AI_MODE: ${AI_MODE:-mock}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:

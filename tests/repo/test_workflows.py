@@ -96,3 +96,15 @@ def test_dependabot_keeps_pgvector_at_a_version_aurora_offers() -> None:
         "version-update:semver-minor",
         "version-update:semver-patch",
     }
+
+
+def test_e2e_job_runs_the_real_stack_in_replay_mode_on_a_named_web_port() -> None:
+    job = _load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]["e2e"]
+    env = {**job.get("env", {})}
+    step = next(s for s in job["steps"] if s.get("run") == "pnpm e2e")
+    env.update(step.get("env", {}))
+    # The config refuses to run without WEB_PORT: another app could own the default port.
+    assert env["WEB_PORT"]
+    # The compose file reads AI_MODE, so the stack's own step must see replay too.
+    up = next(s for s in job["steps"] if s.get("run", "").startswith("docker compose up"))
+    assert {**job.get("env", {}), **up.get("env", {})}["AI_MODE"] == "replay"

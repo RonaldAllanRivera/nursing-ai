@@ -59,6 +59,10 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    env:
+      # The recordings are committed, so the API answers from them and no live model is called.
+      AI_MODE: replay
+      WEB_PORT: "5173"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose up -d --wait db api
