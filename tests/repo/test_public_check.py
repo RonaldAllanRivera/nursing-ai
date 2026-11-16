@@ -721,8 +721,13 @@ def test_untracked_gitleaks_config_cannot_hide_a_leak(
     assert_leak_found(out, token)
 
 
+@pytest.mark.parametrize("place", [".gitleaksignore", ".git/.gitleaksignore"])
 def test_untracked_gitleaksignore_cannot_hide_a_leak(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    place: str,
 ) -> None:
     word_list(tmp_path, monkeypatch, CANARY)
     token = committed_leak(repo)
@@ -733,7 +738,7 @@ def test_untracked_gitleaksignore_cannot_hide_a_leak(
         capture_output=True,
         text=True,
     ).stdout.strip()
-    (repo / ".gitleaksignore").write_text(f"{sha}:core/leak.py:github-pat:1\n")
+    (repo / place).write_text(f"{sha}:core/leak.py:github-pat:1\n")
     code, out = run(repo, capsys)
     assert code == 1
     assert_leak_found(out, token)
@@ -1013,3 +1018,48 @@ def test_not_utf8_note_never_prints_a_private_file_name(
     assert code == 1
     assert "quixley" not in out.lower()
     assert "not UTF-8: (path hidden)" in out
+
+
+def test_gitleaks_runs_without_replacement_objects(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import public_check
+
+    fake = fake_gitleaks(tmp_path, public_check.pinned_gitleaks_version())
+    seen = tmp_path / "seen.txt"
+    fake.write_text(
+        fake.read_text().replace("cat ", f'echo "[$GIT_NO_REPLACE_OBJECTS]" >> "{seen}"\ncat ', 1)
+    )
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    monkeypatch.delenv("GIT_NO_REPLACE_OBJECTS", raising=False)
+    code, _ = run(repo, capsys, "--ci")
+    assert code == 0
+    assert set(seen.read_text().split()) == {"[1]"}
+
+
+def test_repo_with_only_empty_commits_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    only_empty = tmp_path / "only-empty"
+    only_empty.mkdir()
+    git(only_empty, "init", "-q", "-b", "main")
+    git(only_empty, "commit", "-q", "--allow-empty", "-m", "first")
+    git(only_empty, "commit", "-q", "--allow-empty", "-m", "second")
+    code, out = run(only_empty, capsys, "--ci")
+    assert code == 0
+    assert "read no commits" not in out
+
+
+def test_gitleaks_that_reads_nothing_after_an_empty_commit_still_fails(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import public_check
+
+    git(repo, "commit", "-q", "--allow-empty", "-m", "nothing changed")
+    fake = fake_gitleaks(
+        tmp_path, public_check.pinned_gitleaks_version(), log="INF 0 commits scanned."
+    )
+    monkeypatch.setattr(public_check, "gitleaks_binary", lambda: str(fake))
+    code, out = run(repo, capsys, "--ci")
+    assert code == 1
+    assert "gitleaks read no commits: secrets not checked" in out

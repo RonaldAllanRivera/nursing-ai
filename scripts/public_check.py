@@ -349,8 +349,12 @@ def gitleaks_binary() -> str | None:
 
 
 def _gitleaks_env() -> dict[str, str]:
-    """The environment without GITLEAKS_* settings (GITLEAKS_CONFIG would replace the rules)."""
-    return {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
+    """The environment without GITLEAKS_* settings (GITLEAKS_CONFIG would replace the rules),
+    and with git's replace refs off."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
+    # Like the scan's own git calls: a replace ref must not swap the commits gitleaks reads.
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return env
 
 
 def _gitleaks_scan(
@@ -409,7 +413,8 @@ def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> l
     try:
         pinned = pinned_gitleaks_version()
         git_dir = _git(repo, "rev-parse", "--absolute-git-dir").strip()
-        commits = int(_git(repo, "rev-list", "--all", "--count").strip())
+        # A commit that changes no file has no diff, so gitleaks reads (and counts) nothing of it.
+        has_diffs = any(names_by_commit(repo, secrets.token_hex(16)).values())
     except (OSError, ValueError):
         return [Finding("secrets", "gitleaks", "cannot read the gitleaks pin or the git folder")]
     version = subprocess.run(  # noqa: S603
@@ -444,7 +449,7 @@ def run_gitleaks(repo: Path, messages: Sequence[tuple[str, str, str]] = ()) -> l
             for leak in leaks
         ]
         scanned = _COMMITS_SCANNED.search(log)
-        if problem is None and commits and (scanned is None or int(scanned[1]) == 0):
+        if problem is None and has_diffs and (scanned is None or int(scanned[1]) == 0):
             problem = Finding("secrets", "gitleaks", GITLEAKS_READ_NOTHING)
         if problem is not None:
             return [*findings, problem]
