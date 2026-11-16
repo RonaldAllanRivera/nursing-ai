@@ -1,6 +1,7 @@
 """The private word list stores only SHA-256 hashes and the CLI never shows a word."""
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -289,5 +290,36 @@ def test_cli_fails_closed_when_git_cannot_say_whether_the_file_is_ignored(
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     type_answers(monkeypatch, "Alpha", "")
     assert privacy_words.main(["--repo", str(not_a_repo)]) == 2
-    assert "cannot tell whether git ignores" in capsys.readouterr().err
+    assert "is not a git repository" in capsys.readouterr().err
     assert not (not_a_repo / "words.sha256").exists()
+
+
+def test_cli_refuses_in_a_repo_folder_whose_name_is_not_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    repo = tmp_path / os.fsdecode(b"repo-\xff")
+    try:
+        repo.mkdir()
+    except OSError:
+        pytest.skip("this filesystem refuses a folder name that is not UTF-8")
+    git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("")
+    (repo / ".env").write_text("PRIVATE_WORDS_FILE=words.sha256\n")
+    type_answers(monkeypatch, "Alpha", "")
+    assert privacy_words.main(["--repo", str(repo)]) == 2
+    assert "is not ignored by git" in capsys.readouterr().err
+    assert not (repo / "words.sha256").exists()
+
+
+def test_cli_refuses_when_git_cannot_check_a_path_inside_the_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    repo = make_repo(tmp_path, "PRIVATE_WORDS_FILE=link/words.sha256", ignore="real/\n")
+    (repo / "real").mkdir()
+    (repo / "link").symlink_to(repo / "real")
+    type_answers(monkeypatch, "Alpha", "")
+    assert privacy_words.main(["--repo", str(repo)]) == 2
+    assert "git could not check that path" in capsys.readouterr().err
+    assert not (repo / "real" / "words.sha256").exists()

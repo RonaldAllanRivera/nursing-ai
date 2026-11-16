@@ -1072,3 +1072,22 @@ def test_a_binary_file_is_not_also_noted_as_not_utf8(
     code, out = run(repo, capsys, "--ci")
     assert code == 0
     assert "not UTF-8" not in out
+
+
+LATIN1_NAME = os.fsdecode(b"core/Z\xf6rblat.txt")
+
+
+def test_latin1_file_name_with_a_listed_word_never_prints_a_fragment(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, "zörblat")
+    try:
+        commit_bytes(repo, LATIN1_NAME, b"plain\n")
+    except OSError:
+        pytest.skip("this filesystem refuses a file name that is not UTF-8")
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+    assert "rblat" not in out.lower()
+    assert "�" not in out
+    assert "not UTF-8: (path hidden)" in out

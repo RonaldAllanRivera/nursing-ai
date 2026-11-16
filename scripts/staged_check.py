@@ -55,8 +55,11 @@ _STAGED = (
 
 
 def _staged_changes(repo: Path) -> list[tuple[str, str]]:
-    """(status, path) for every staged change; with -z the paths are not quoted."""
-    fields = _git(repo, *_STAGED, "--name-status", "-z").split("\0")
+    """(status, path) for every staged change; with -z the paths are not quoted.
+
+    The paths are one character per byte (Latin-1); text_views reads them as text.
+    """
+    fields = _git(repo, *_STAGED, "--name-status", "-z", latin1=True).split("\0")
     return list(zip(fields[0::2], fields[1::2], strict=False))
 
 
@@ -88,11 +91,11 @@ def binary_findings(
 
 
 def _staged_paths(repo: Path) -> list[str]:
-    return [path for _, path in _staged_changes(repo)]
+    return [text_views(path)[0][0] for _, path in _staged_changes(repo)]
 
 
 def _added_text(repo: Path) -> list[tuple[str, str, bool]]:
-    """One (path, added lines, not UTF-8) per file diff and way of reading it.
+    """One (path as Latin-1, added lines, not UTF-8) per file diff and way of reading it.
 
     Removed and context lines are left out. Text that is not UTF-8 comes twice: with
     replacement characters and as Latin-1, so an accented letter can't hide a word.
@@ -143,7 +146,9 @@ def staged_findings(
         Finding(f.check, hide_if_private(f.where, hashes, markers), f.detail)
         for f in check_paths(_staged_paths(repo), read_allowlist(), markers)
     ]
-    for path, text, odd in _added_text(repo):
+    for raw_path, text, odd in _added_text(repo):
+        names, _ = text_views(raw_path)
+        path = names[0]
         where = hide_if_private(path, hashes, markers)
         if odd and path not in binaries:
             note = f"not UTF-8: {where}"
@@ -151,7 +156,8 @@ def staged_findings(
                 notes.append(note)
         findings += check_text(where, text, hashes, markers)
         # A word in the file name itself (public-check sees it in the diff header).
-        findings += [f for f in check_text(where, path, hashes, markers) if f.check == "words"]
+        for name in names:
+            findings += [f for f in check_text(where, name, hashes, markers) if f.check == "words"]
     ident = _git(repo, "var", "GIT_AUTHOR_IDENT")
     findings += check_text("author", ident, hashes, markers)
     return findings

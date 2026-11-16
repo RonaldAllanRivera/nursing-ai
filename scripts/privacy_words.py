@@ -130,20 +130,22 @@ def _git_says(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
 def _ignore_problem(repo: Path, path: Path) -> str | None:
     """Why the target can't be used, or None when git ignores it or it lies outside the repo.
 
-    Anything git can't answer (not a repository, an error) refuses: it is never read as "ignored".
+    Git answers first. Anything it can't answer (exit 128) is allowed only when the target
+    really lies outside the repository; it is never read as "ignored".
     """
-    top = _git_says(repo, "rev-parse", "--show-toplevel")
-    if top.returncode != 0:
-        return f"cannot tell whether git ignores {SETTING}: the repo folder is not a git repository"
-    root = Path(top.stdout.decode("utf-8", errors="replace").strip()).resolve()
-    if not path.parent.resolve().is_relative_to(root):
-        return None
     result = _git_says(repo, "check-ignore", "-q", str(path))
     if result.returncode == 0:
         return None
     if result.returncode == 1:
         return f"{SETTING} is not ignored by git: add it to .gitignore first"
-    return f"cannot tell whether git ignores {SETTING}"
+    top = _git_says(repo, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        return f"cannot tell whether git ignores {SETTING}: the repo folder is not a git repository"
+    # fsdecode, never a replacement decode: the folder name may not be UTF-8.
+    root = Path(os.fsdecode(top.stdout.rstrip(b"\n"))).resolve()
+    if not path.parent.resolve().is_relative_to(root):
+        return None
+    return f"cannot tell whether git ignores {SETTING}: git could not check that path"
 
 
 def main(argv: list[str] | None = None) -> int:

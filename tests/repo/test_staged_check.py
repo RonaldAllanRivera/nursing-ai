@@ -359,3 +359,21 @@ def test_listed_word_in_a_latin1_staged_file_is_refused_and_noted(
     assert "core/old.txt: private word #1" in out
     assert "not UTF-8: core/old.txt" in out
     assert "rblat" not in out
+
+
+def test_latin1_staged_file_name_with_a_listed_word_is_refused_and_never_printed(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    word_list(tmp_path, monkeypatch, "zörblat")
+    name = os.fsdecode(b"core/Z\xf6rblat.txt")
+    (repo / "core").mkdir()
+    try:
+        (repo / name).write_bytes(b"plain\n")
+    except OSError:
+        pytest.skip("this filesystem refuses a file name that is not UTF-8")
+    git(repo, "add", "--force", name)
+    code, out = run(repo, capsys)
+    assert code == 1
+    assert "private word #1" in out
+    assert "rblat" not in out.lower()
+    assert "�" not in out

@@ -541,7 +541,10 @@ def load_reviewed_list(repo: Path) -> tuple[dict[str, str], list[Finding]]:
 
 def hide_if_private(name: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
     """Hide a file name that holds a private word or marker."""
-    return HIDDEN if check_text("", name, hashes, markers) else name
+    # A name with a replacement character was not UTF-8: its real bytes may hold a word.
+    if "\ufffd" in name or check_text("", name, hashes, markers):
+        return HIDDEN
+    return name
 
 
 def scrub(where: str, hashes: Sequence[str], markers: Sequence[str]) -> str:
