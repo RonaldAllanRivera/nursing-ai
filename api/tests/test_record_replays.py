@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 import pytest
-from nursing_api.providers import LIVE_MODEL
+from nursing_api import record_replays
+from nursing_api.providers import LIVE_MODEL, ProviderFor
 from nursing_api.record_replays import main
 from nursing_core.clock import SystemClock
 from nursing_core.db import create_engine
@@ -381,3 +384,43 @@ async def test_a_billed_failure_is_counted_once_in_the_output_and_in_ai_usage(
     finally:
         await engine.dispose()
     assert (total, calls) == (Decimal("0.32"), 1)
+
+
+class _UsageRowLost(Exception):
+    """The usage row can't be written after the model answered (the database went away)."""
+
+
+class _UsageThatCantWrite(PgUsageRepository):
+    async def record(self, job_id: UUID | None, generation: GenerationInfo, at: datetime) -> None:
+        raise _UsageRowLost
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_for", "cost"),
+    [(Fakes(), "$0.500000"), (_BilledThenRefused(), "$0.320000")],
+    ids=["answered", "billed-then-refused"],
+)
+async def test_a_billed_answer_whose_usage_row_cant_be_written_still_shows_its_cost(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    database_url: str,
+    provider_for: ProviderFor,
+    cost: str,
+) -> None:
+    monkeypatch.setattr(record_replays, "PgUsageRepository", _UsageThatCantWrite)
+    code = await asyncio.to_thread(main, ["--out", str(tmp_path)], provider_for=provider_for)
+    assert code == 1
+    lines, _ = _out(capsys)
+    assert lines == [
+        f"{CASES[0].key}: failed (_UsageRowLost) {cost} (not recorded)",
+        f"total: {cost} over 1 call",
+    ]
+    assert _files(tmp_path) == []
+    engine = create_engine(database_url)
+    try:
+        total, calls = await PgUsageRepository(engine).month_total(SystemClock().now())
+    finally:
+        await engine.dispose()
+    assert (total, calls) == (Decimal(0), 0)

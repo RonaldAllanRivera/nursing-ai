@@ -1,7 +1,9 @@
 """The live provider: asks Claude for a structured FDAR draft.
 
-The SDK's own retries are off. This provider retries the failures worth retrying, never retries
-a spend limit, and never lets the key, the note or the model's words into an error message.
+The SDK's own retries are off. This provider retries only a call that was never billed (a
+connection that failed, a 429 or a 5xx), never a timeout (the server may have finished and billed
+an answer the client stopped waiting for) or a spend limit, and never lets the key, the note or
+the model's words into an error message.
 """
 
 import asyncio
@@ -183,8 +185,12 @@ class AnthropicProvider:
                 if not _is_transient(error):
                     raise ProviderUnavailable("the AI service rejected the request") from None
                 wait = _retry_after(error.response)
+            except anthropic.APITimeoutError:
+                # The server may have finished, and billed, an answer the client stopped waiting
+                # for: asking again could pay twice for a draft whose usage is recorded once.
+                raise ProviderUnavailable("the AI service did not answer in time") from None
             except anthropic.APIConnectionError:
-                pass
+                pass  # never reached the server, so nothing was billed
             except (json.JSONDecodeError, UnicodeDecodeError):
                 unreadable = True  # a 200 body that isn't JSON text; never retried
             except anthropic.APIError:

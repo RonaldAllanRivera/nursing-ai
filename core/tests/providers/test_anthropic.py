@@ -273,14 +273,37 @@ async def test_server_errors_retried_twice_then_unavailable(status: int) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [httpx2.ConnectError("down"), httpx2.ReadTimeout("slow")])
-async def test_connection_errors_and_timeouts_are_retried(failure: Exception) -> None:
-    server = _Server(failure, _message())
+async def test_connection_errors_are_retried() -> None:
+    server = _Server(httpx2.ConnectError("down"), _message())
     delays: list[float] = []
     result = await _provider(server, delays).draft_fdar(_request())
     assert result.generation.provider == "anthropic"
     assert len(server.bodies) == 2
     assert len(delays) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stopped_waiting",
+    [
+        httpx2.ReadTimeout("slow"),
+        httpx2.WriteTimeout("slow"),
+        httpx2.ConnectTimeout("slow"),
+        httpx2.PoolTimeout("slow"),
+    ],
+)
+async def test_a_timed_out_call_is_never_retried(stopped_waiting: Exception) -> None:
+    # The server may have finished, and billed, an answer the client stopped waiting for: a
+    # second call could pay twice for one draft, and only one would be recorded.
+    server = _Server(stopped_waiting, _message())
+    delays: list[float] = []
+    with pytest.raises(ProviderUnavailable) as raised:
+        await _provider(server, delays).draft_fdar(_request())
+    assert len(server.bodies) == 1
+    assert delays == []
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__
+    assert KEY not in str(raised.value)
 
 
 @pytest.mark.asyncio

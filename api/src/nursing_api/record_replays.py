@@ -1,13 +1,15 @@
 """`python -m nursing_api.record_replays`: records the demo drafts from the live model, once.
 
 This is the only code that spends money on purpose. It asks the model once for each demo note
-(none that already replays, unless `--force`), stops at the first failure and never retries.
+(none that already replays, unless `--force`) and stops at the first failure. The provider retries
+only a call that was never billed (a failed connection, a 429 or a 5xx), never a timeout.
 Each note goes through the real draft pipeline, so the request is the one the worker sends, and
 the answer is saved where replay mode looks for it.
 
-It prints the case key, what happened, the file name's first 12 characters and the cost. Never a
-note, a draft, a name, the API key, or an exception's text (a driver or SDK message can carry the
-URL or a header): an error is shown as its class name only.
+It prints the case key, what happened, the file name's first 12 characters and the cost, with
+"(not recorded)" after a cost whose `ai_usage` row couldn't be written. Never a note, a draft, a
+name, the API key, or an exception's text (a driver or SDK message can carry the URL or a header):
+an error is shown as its class name only.
 """
 
 import argparse
@@ -23,6 +25,7 @@ from nursing_core.db import create_engine
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import BilledError, NotFound, ReplayMissing
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
+from nursing_core.domain.notes import GenerationInfo
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.pipeline.fdar import run_fdar_pipeline
 from nursing_core.ports import LlmProvider
@@ -79,6 +82,28 @@ class _Step:
         return self.answer
 
 
+class _Billed:
+    """Sits inside the usage recorder and keeps what the model billed, before the row is written.
+
+    A billed answer whose `ai_usage` row then can't be written is still money spent: the run
+    shows it, and the total counts it.
+    """
+
+    def __init__(self, inner: LlmProvider) -> None:
+        self._inner = inner
+        self.generation: GenerationInfo | None = None
+        self.failure: BilledError | None = None  # a billed failure raised by the provider
+
+    async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
+        try:
+            result = await self._inner.draft_fdar(request)
+        except BilledError as error:
+            self.generation, self.failure = error.generation, error
+            raise
+        self.generation = result.generation
+        return result
+
+
 def _money(amount: Decimal) -> str:
     return f"${amount:.6f}"
 
@@ -109,9 +134,10 @@ async def _record(
         make_provider = provider_factory(settings, usage, clock, provider_for)
         total, calls, code = Decimal(0), 0, 0
         for case, patient in zip(cases, records, strict=True):
-            step = None
+            step, billed = None, None
             try:
-                live = UsageRecorder(make_provider(patient), usage, clock, None)
+                billed = _Billed(make_provider(patient))
+                live = UsageRecorder(billed, usage, clock, None)
                 step = _Step(live, out_dir, force)
                 await run_fdar_pipeline(case.rough_note, patient, [], step)
                 if step.skipped:
@@ -124,14 +150,18 @@ async def _record(
                 save_recording(request, answer, out_dir, LIVE_MODEL)
                 await ReplayProvider(out_dir, LIVE_MODEL).draft_fdar(request)  # a miss raises
             except Exception as error:
-                # A billed answer the pipeline then refused is still money spent.
-                paid = step.answer.generation if step is not None and step.answer else None
-                if paid is None and isinstance(error, BilledError):
-                    paid = error.generation  # billed, then refused inside the provider
+                # A billed answer the pipeline then refused is still money spent, and so is one
+                # whose usage row couldn't be written.
+                paid = None if billed is None else billed.generation
                 shown = ""
-                if paid is not None:
+                if paid is not None and billed is not None:
                     total, calls = total + paid.cost_usd, calls + 1
-                    shown = f" {_money(paid.cost_usd)}"
+                    # The recorder wrote the row unless its write is what failed: the answer
+                    # reached the step, or the provider's own billed failure came back out.
+                    written = (step is not None and step.answer is not None) or (
+                        error is billed.failure
+                    )
+                    shown = f" {_money(paid.cost_usd)}" + ("" if written else " (not recorded)")
                 print(f"{case.key}: failed ({type(error).__name__}){shown}")
                 code = 1
                 break
