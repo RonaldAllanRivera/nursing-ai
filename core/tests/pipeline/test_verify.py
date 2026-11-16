@@ -852,6 +852,17 @@ def test_a_slash_before_a_heart_rate_makes_the_rate_unsure_so_both_readings_flag
         "insulin 5 units / HR of 88",
         "insulin 5 units / HR 88bpm",
         "insulin 5 units / HR 88 BPM",
+        "insulin 5 units / HR 88BPM",
+        "insulin 5 units / HR OF 88",
+        "insulin 5 units / HR Of 88",
+        "insulin 5 units / HR 88Bpm",
+        "INSULIN 5 UNITS / HR OF 88",
+        "insulin 5 units / HR \u2013 88",
+        "insulin 5 units / HR \u2014 88",
+        "insulin 5 units / HR\u201488",
+        "insulin 5 units / HR 88/min",
+        "insulin 5 units / HR 88/MIN",
+        "insulin 5 units/hr 88/min",
     ]:
         _flagged_unit(note, "Insulin 5 units/hr.")
         _flagged_unit(note, "Insulin 5 units.")
@@ -898,6 +909,26 @@ def test_a_rate_followed_by_a_time_volume_weight_or_other_number_is_still_a_rate
         _flagged_unit(note, text)
     for note in ["insulin 5 units/hr 0800", "insulin 5 units/hr 10:30"]:
         assert _rate_status(note, "Insulin 5 units/hr.").status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_dose_volume_or_weight_after_the_number_means_it_is_not_a_heart_rate() -> None:
+    for note, faithful, dropped in [
+        ("heparin 1000 units/hr = 10 mL/hr", "Heparin 1000 units/hr.", "Heparin 1000 units."),
+        ("heparin 1000 units/hr: 25 mL/hr", "Heparin 1000 units/hr.", "Heparin 1000 units."),
+        ("insulin 5 units/hr - 10 units given", "Insulin 5 units/hr.", "Insulin 5 units."),
+        ("IVF 100 mL/hr of 50 mL", "IVF 100 mL/hr.", "IVF 100 mL."),
+        ("IVF 100 mL/hr - 500 mL bag", "IVF 100 mL/hr.", "IVF 100 mL."),
+        ("IVF 100 mL/hr=50 cc", "IVF 100 mL/hr.", "IVF 100 mL."),
+        ("dopamine 5 mcg/kg/hr - 70 kg", "Dopamine 5 mcg/kg/hr.", "Dopamine 5 mcg/kg."),
+        (
+            "heparin 1000 units/hr 25000 units in 250 mL",
+            "Heparin 1000 units/hr.",
+            "Heparin 1000 units.",
+        ),
+        ("heparin 1000 units/hr = 10 mL/hr", "Heparin 1000 units/hr.", "Heparin 1000 units."),
+    ]:
+        assert _rate_status(note, faithful).status is LineStatus.SOURCE_FOUND, (note, faithful)
+        _flagged_unit(note, dropped)
 
 
 def test_units_per_litre_per_with_a_line_break_and_naming_without_a_rate() -> None:

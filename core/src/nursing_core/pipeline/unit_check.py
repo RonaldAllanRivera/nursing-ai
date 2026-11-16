@@ -25,7 +25,7 @@ A "/" then the spelling "hr" and a number of two or three digits on the same lin
 heart rate: the rate is then unsure. It equals only itself, so a line that repeats the same
 "/ HR 88" form passes, and a line that uses that number with a unit, with or without a rate, is a
 mismatch. Any other hour spelling or number after it ("units/hr 0800", "mL/hr 2L", "units/h 88",
-"units/hr 10:30") is the rate.
+"units/hr 10:30", "units/hr = 10 mL/hr") is the rate.
 Whitespace inside a rate includes a line break between "5 mg/" and "hr".
 A concentration is a unit with its volume as the denominator: "g/dL", "mg/dL", "g/L", "mmol/L" and
 "mEq/L" are each kept whole, so none equals another, a bare unit, or a rate per hour. "g/L" and
@@ -151,11 +151,18 @@ _PER_LITRE_UNITS = frozenset("ug")  # "g/L" and "u/L" are per litre, not shortha
 # Whitespace inside a rate includes a line break, so "5 mg/" then "hr" on the next line is a rate.
 _PER = re.compile(r"\s+per\s+", re.IGNORECASE)
 _SLASH = re.compile(r"\s*/\s*")
-# "units / HR 88": a "/", the spelling "hr", then (spaces, ":", "=", "-" or "of") and a
+# "units / HR 88": a "/", the spelling "hr", then (spaces, ":", "=", a dash or "of") and a
 # heart-rate-like number: two or three digits on the same line, not a time like "0800" or "10am",
-# a volume or a weight. "bpm" may follow it. That may be a heart rate instead of per hour.
+# a volume or a weight. "bpm" or "/min" may follow it. A dose, volume or weight unit after the
+# number ("units/hr = 10 mL/hr") means it is not a heart rate. That may be a heart rate instead of
+# per hour.
+_NOT_A_HEART_RATE_UNIT = (
+    r"(?![ \t]*(?:units?|u|iu|mg|mcg|ug|g|gm|kg|ml|cc|l|meq|mmol|gtts?|drops?)(?!\w))"
+)
 _HEART_RATE_NUMBER = re.compile(
-    r"(?:[ \t]*[:=-][ \t]*|[ \t]+of[ \t]+|[ \t]+)\d{2,3}(?:(?![\w:/]|\.\d)|[ \t]*bpm(?!\w))",
+    r"(?:[ \t]*[:=\-\u2013\u2014][ \t]*|[ \t]+of[ \t]+|[ \t]+)"
+    rf"\d{{2,3}}{_NOT_A_HEART_RATE_UNIT}"
+    r"(?:(?![\w:/]|\.\d)|[ \t]*bpm(?!\w)|/min(?!\w))",
     re.IGNORECASE,
 )
 # A denominator no line can write: it equals only itself, so a line that repeats the same
