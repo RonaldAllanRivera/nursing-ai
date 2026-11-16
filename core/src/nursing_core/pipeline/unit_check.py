@@ -10,14 +10,17 @@ told apart from one she did.
 
 A dose, volume or drop unit followed by "/" (spaces around it are fine) or "per" and a
 denominator is a rate: "units/hr" and "units per hour" are units per hour, "mcg / kg / min" is mcg
-per kg per minute. Only a closed set counts as a denominator: a time word (h, hr, hrs, hour, hours,
-min, mins, minute, minutes, d, day, days), kg, kgs, kilogram or kilograms, or a volume (ml, cc,
-milliliter, millilitre, l, liter, litre, with their plurals). Each is kept by meaning ("h", "hr"
-and "hours" are one) and must be a whole word ("1L/D5LR" has no rate). Any other word ends the unit
-with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8hrs", "1 L / 8 hrs"). A
-unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more
-letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
-and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates. "lpm" is litres per minute.
+per kg per minute, and "15 mg/week" is mg per week. Only a closed set counts as a denominator: a
+time word (h, hr, hrs, hour, hours, min, mins, minute, minutes, d, day, days, wk, wks, week,
+weeks, mo, mos, month, months, shift, shifts), kg, kgs, kilogram or kilograms, or a volume (ml,
+cc, milliliter, millilitre, l, liter, litre, with their plurals). Each is kept by meaning ("h",
+"hr" and "hours" are one) and must be a whole word ("1L/D5LR" has no rate). Any other word ends
+the unit with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8hrs",
+"1 L / 8 hrs"). A rate is read whole however it is spelled ("5 mcg per kilograms per minute"),
+and no word is cut in half where the read stops. A unit that takes no rate is read as written
+("37.8C/HR 110"). A one-letter unit, "/" and one more letter is clinical shorthand, not a unit
+("c/o", "f/u", "u/a"), except when the unit is u, l or g and the letter is h, d or m ("u/h",
+"L/m", "g/d"), which are rates. "lpm" is litres per minute.
 """
 
 import re
@@ -120,6 +123,9 @@ _DENOMINATORS = {
     **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), "hour"),
     **dict.fromkeys(("m", "min", "mins", "minute", "minutes"), "minute"),
     **dict.fromkeys(("d", "day", "days"), "day"),
+    **dict.fromkeys(("wk", "wks", "week", "weeks"), "week"),
+    **dict.fromkeys(("mo", "mos", "month", "months"), "month"),
+    **dict.fromkeys(("shift", "shifts"), "shift"),
     **dict.fromkeys(("kg", "kgs", "kilogram", "kilograms"), "kg"),
     **dict.fromkeys(("ml", "cc", "milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
     **dict.fromkeys(("l", "liter", "liters", "litre", "litres"), "l"),
@@ -130,7 +136,7 @@ _RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are 
 _PER = re.compile(r"[ \t]+per[ \t]+", re.IGNORECASE)
 _SLASH = re.compile(r"[ \t]*/[ \t]*")
 type NumberValue = tuple[str | Decimal, ...]
-_WINDOW = 24  # how many typed characters after a number are read for its unit
+_WINDOW = 64  # typed characters after a number read for its unit; a word or spaces cut off finish
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,7 +305,10 @@ def _fold_after(text: str, start: int) -> tuple[str, list[int]]:
     """The typed characters after a number, folded, and the typed index behind each one."""
     folded: list[str] = []
     origin: list[int] = []
-    for index in range(start, min(len(text), start + _WINDOW)):
+    stop = min(len(text), start + _WINDOW)
+    while stop < len(text) and (text[stop].isalnum() or text[stop] in " \t"):
+        stop += 1  # never cut a word, or the spaces before the next one, in half
+    for index in range(start, stop):
         char = _DEGREE_LOOKALIKES.get(text[index], text[index])
         for part in unicodedata.normalize("NFKC", char):
             folded.append(part)

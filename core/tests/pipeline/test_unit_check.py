@@ -333,3 +333,24 @@ def test_only_dose_and_volume_units_take_a_rate_in_the_reader() -> None:
         written = _written(text, number)
         assert written is not None, text
         assert written.rate == (), text
+
+
+def test_week_month_and_shift_are_denominators_and_long_rates_are_read_whole() -> None:
+    for text, number, rate in [
+        ("15 mg/week", "15", ("week",)),
+        ("15 mg / wk", "15", ("week",)),
+        ("15 mg per weeks", "15", ("week",)),
+        ("15 mg/month", "15", ("month",)),
+        ("15 mg/mo", "15", ("month",)),
+        ("15 mg per months", "15", ("month",)),
+        ("15 mg/shift", "15", ("shift",)),
+        ("5 mcg per kilograms per minute", "5", ("kg", "minute")),
+        ("5 micrograms per kilograms per minutes", "5", ("kg", "minute")),
+        ("5 mcg per    kilograms   per        minute", "5", ("kg", "minute")),
+    ]:
+        written = _written(text, number)
+        assert written is not None, text
+        assert written.rate == rate, text
+    whole = _written("5 mcg per kilograms per minute", "5")
+    assert whole is not None
+    assert whole.end == len("5 mcg per kilograms per minute")

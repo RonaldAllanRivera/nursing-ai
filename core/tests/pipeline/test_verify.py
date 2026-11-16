@@ -839,3 +839,72 @@ def test_a_word_after_a_slash_that_is_not_a_denominator_is_not_a_rate() -> None:
 @pytest.mark.xfail(strict=True, reason="a slash then HR is read as per hour, not as a heart rate")
 def test_a_slash_before_a_heart_rate_is_not_read_as_per_hour() -> None:
     _flagged_unit("insulin 5 units / HR 88", "Insulin 5 units/hr.")
+
+
+def test_litres_are_a_volume_unit_for_the_facility_default() -> None:
+    for text in ["IVF 100 L.", "IVF 100 l.", "IVF 100 litres.", "IVF 100 liters.", "IVF 100L."]:
+        _flagged_unit("IVF 100", text)
+    for note, text in [
+        ("IVF 100", "IVF 100 mL."),
+        ("IVF 1 L", "IVF 1 liter."),
+        ("IVF 1L", "IVF 1 L."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+    _flagged_unit("IVF 1 L", "IVF 1 mL.")
+    _flagged_unit("IVF 100 mL", "IVF 100 L.")
+
+
+def test_a_rate_the_note_writes_after_a_bare_number_is_required_in_the_line() -> None:
+    for note, text in [
+        ("heparin 1000/hr", "Heparin bolus 1000 units."),
+        ("heparin 1000 / hr", "Heparin bolus 1000 units."),
+        ("heparin 1000 per hour", "Heparin bolus 1000 units."),
+        ("IVF 100/hr", "IVF 100 mL."),
+        ("heparin 1000/hr", "Heparin 1000 units/min."),
+    ]:
+        _flagged_unit(note, text)
+    for note, text in [
+        ("heparin 1000/hr", "Heparin 1000 units/hr."),
+        ("IVF 100/hr", "IVF 100 mL/hr."),
+        ("HR 88/min", "HR 88 bpm."),
+        ("RR 18/min", "RR 18."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_per_week_per_month_and_per_shift_are_rates_compared_by_meaning() -> None:
+    for note, text in [
+        ("MTX 15 mg/week", "MTX 15 mg/month."),
+        ("MTX 15 mg/week", "MTX 15 mg/day."),
+        ("MTX 15 mg/wk", "MTX 15 mg/mo."),
+        ("MTX 15 mg per month", "MTX 15 mg per week."),
+        ("MTX 15 mg/week", "MTX 15 mg."),
+        ("MTX 15 mg", "MTX 15 mg/week."),
+        ("15 mg/shift", "15 mg/day."),
+        ("15 mg/day", "15 mg per shift."),
+        ("15 mg/shift", "15 mg/hr."),
+    ]:
+        _flagged_unit(note, text)
+    for note, text in [
+        ("MTX 15 mg/week", "MTX 15 mg per week."),
+        ("MTX 15 mg/wk", "MTX 15 mg/weeks."),
+        ("MTX 15 mg/month", "MTX 15 mg/mo."),
+        ("15 mg/shift", "15 mg per shifts."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_spelled_out_rate_is_read_whole() -> None:
+    for note, text in [
+        ("5 mcg per kilograms per minute", "5 mcg/kg."),
+        ("5 mcg per kilograms per minute", "5 mcg/kg/hr."),
+        ("5 micrograms per kilograms per minutes", "5 mcg/kg."),
+        ("dopamine 5 mcg/kg/min", "Dopamine 5 micrograms per kilograms per hour."),
+        ("5 mcg per kilograms per minute", "5 mcg."),
+    ]:
+        _flagged_unit(note, text)
+    for note, text in [
+        ("5 mcg per kilograms per minute", "5 mcg/kg/min."),
+        ("5 mcg/kg/min", "5 micrograms per kilograms per minute."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
