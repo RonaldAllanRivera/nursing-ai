@@ -41,6 +41,21 @@ from nursing_core.pipeline.unit_check import (
 
 # The word right before a number; spaces and one ":" or "=" may sit between.
 _LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
+# The two words right before a number, for a label such as "heart rate".
+_TWO_WORD_LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*[ \t]+[^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
+# What a label measures, in the spellings a ward or the model uses, so "Temp 88, heart rate 37.8"
+# can't take its values from "T 37.8 HR 88".
+_MEASURES = {
+    **dict.fromkeys(("t", "temp", "temperature", "bt"), "temp"),
+    **dict.fromkeys(("hr", "pr", "pulse", "heart rate"), "pulse"),
+    **dict.fromkeys(("rr", "resp", "resp rate", "respiratory rate"), "resp"),
+    **dict.fromkeys(("bp", "blood pressure"), "bp"),
+    **dict.fromkeys(("spo2", "sat", "sats", "o2 sat", "oxygen saturation"), "spo2"),
+    **dict.fromkeys(("i", "in", "intake"), "intake"),
+    **dict.fromkeys(("o", "out", "output", "uo", "urine output"), "output"),
+    **dict.fromkeys(("wt", "weight"), "weight"),
+    **dict.fromkeys(("cbg", "rbs", "fbs", "glucose", "blood sugar"), "glucose"),
+}
 
 _PRECEDENCE = (
     LineStatus.NO_SOURCE,
@@ -55,7 +70,8 @@ class _NoteNumber:
     value: NumberValue
     text: str
     span: Span  # in the note as typed
-    label: str | None
+    label: str | None  # the word right before it, as spelled
+    measure: str | None  # what its label measures ("temp" for "T" and "Temperature")
     unit: WrittenUnit | None  # the unit written after it, if any
     bare_rate: tuple[str, ...]  # a rate written right after it with no unit ("100/hr")
     with_unit: Span  # the number and the unit written after it, in the note as typed
@@ -135,6 +151,21 @@ def _label_before(text: str) -> str | None:
     return None if match is None else match.group(1).casefold()
 
 
+def _measure_before(text: str) -> str | None:
+    """What the label right before a number measures, given the text up to it.
+
+    Two words are tried first ("heart rate"), then one. A label outside the table is its own
+    measure, as spelled.
+    """
+    two = _TWO_WORD_LABEL.search(text)
+    if two is not None:
+        words = " ".join(two.group(1).casefold().split())
+        if words in _MEASURES:
+            return _MEASURES[words]
+    label = _label_before(text)
+    return None if label is None else _MEASURES.get(label, label)
+
+
 def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
     """The numbers of the typed note that overlap a found quote, each compared whole.
 
@@ -150,15 +181,14 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
             unit = written_unit(raw, span)
             bare_rate, bare_end = bare_rate_end_after(raw, span)
             with_unit = Span(start=span.start, end=bare_end if unit is None else unit.end)
-            label = (
-                _label_before(raw[quote.start : span.start]) if span.start >= quote.start else None
-            )
+            before = raw[quote.start : span.start] if span.start >= quote.start else None
             out.append(
                 _NoteNumber(
                     value=number_value(written),
                     text=written,
                     span=span,
-                    label=label,
+                    label=None if before is None else _label_before(before),
+                    measure=None if before is None else _measure_before(before),
                     unit=unit,
                     bare_rate=() if unit is not None else bare_rate,
                     with_unit=with_unit,
@@ -233,12 +263,20 @@ def _mismatches(
         if not _in_a_quote(word, quote_texts)
     ]
     for written, span in numbers_in(text):
-        # A label the quotes use for some number says which of their numbers this one must be.
-        label = _label_before(text[: span.start])
+        value = number_value(written)
+        before = text[: span.start]
+        # A label the quotes use for some number says which of their numbers this one must be,
+        # whether the line spells it as they do or names the same measure another way ("Temp" for
+        # "T", "heart rate" for "HR"): a value they give that measure under another label is a
+        # swap. The units are compared with the numbers of the label as spelled, as before.
+        label = _label_before(before)
+        measure = _measure_before(before)
         labelled = [n for n in note_numbers if label is not None and n.label == label]
-        same_value = [n for n in labelled or note_numbers if n.value == number_value(written)]
-        if not same_value:
-            paired = labelled[0] if labelled else None
+        measured = [n for n in note_numbers if measure is not None and n.measure == measure]
+        same_value = [n for n in labelled or note_numbers if n.value == value]
+        swapped = bool(measured) and all(n.value != value for n in measured)
+        if not same_value or swapped:
+            paired = labelled[0] if labelled and not same_value else next(iter(measured), None)
             out.append(
                 NumberMismatch(
                     kind=MismatchKind.VALUE,

@@ -634,6 +634,83 @@ def test_a_value_must_match_a_number_that_follows_the_same_label() -> None:
     assert unlabelled.status is LineStatus.SOURCE_FOUND
 
 
+def test_a_swapped_value_is_flagged_when_the_line_spells_the_label_another_way() -> None:
+    for note, text, pairs in [
+        ("T 37.8 HR 88", "Temp 88, heart rate 37.8.", [("88", "37.8"), ("37.8", "88")]),
+        (
+            "IN 1200 OUT 800",
+            "Intake 800 mL, output 1200 mL.",
+            [("800", "1200"), ("1200", "800")],
+        ),
+        (
+            "BT 38 PR 110 RR 22",
+            "Temperature 22, pulse 38, respiratory rate 110.",
+            [("22", "38"), ("38", "110"), ("110", "22")],
+        ),
+        ("HR 120 RR 20", "Heart rate 20, respiratory rate 120.", [("20", "120"), ("120", "20")]),
+        (
+            "heart rate 120, resp rate 20",
+            "Heart rate 20, resp rate 120.",
+            [("20", "120"), ("120", "20")],
+        ),
+    ]:
+        line = _check(note, text, [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+        assert set(_kinds(line)) == {MismatchKind.VALUE}, (note, text)
+        assert [(m.draft_text, m.note_text) for m in line.number_mismatches] == pairs, (note, text)
+
+
+def test_each_spelling_of_a_label_keeps_its_value_and_a_swap_is_flagged() -> None:
+    for note, faithful, swapped in [
+        ("T 37.8 HR 88", "Temperature 37.8, pulse 88.", "Temperature 88, pulse 37.8."),
+        ("BT 38 PR 110", "Temp 38, heart rate 110.", "Temp 110, heart rate 38."),
+        ("RR 22 HR 110", "Respiratory rate 22, pulse 110.", "Resp rate 110, pulse 22."),
+        ("resp 18 pulse 72", "RR 18, HR 72.", "RR 72, HR 18."),
+        ("BP 120/80 HR 88", "Blood pressure 120/80, pulse 88.", "Blood pressure 88, pulse 120/80."),
+        ("O2 sat 95 HR 88", "SpO2 95, heart rate 88.", "SpO2 88, heart rate 95."),
+        ("sats 95 HR 88", "Oxygen saturation 95, HR 88.", "Oxygen saturation 88, HR 95."),
+        ("I 1200 O 800", "Intake 1200 mL, output 800 mL.", "Intake 800 mL, output 1200 mL."),
+        ("UO 300 IN 500", "Urine output 300 mL, intake 500 mL.", "Urine output 500 mL, in 300."),
+        ("wt 60 HR 88", "Weight 60, pulse 88.", "Weight 88, pulse 60."),
+        ("CBG 180 HR 88", "Blood sugar 180, heart rate 88.", "Glucose 88, heart rate 180."),
+        ("FBS 95 RR 18", "Glucose 95, respiratory rate 18.", "Glucose 18, respiratory rate 95."),
+    ]:
+        line = _check(note, faithful, [note])
+        assert line.status is LineStatus.SOURCE_FOUND, (note, faithful)
+        line = _check(note, swapped, [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, swapped)
+        assert set(_kinds(line)) == {MismatchKind.VALUE}, (note, swapped)
+
+
+def test_a_two_word_label_names_its_measure() -> None:
+    for note, faithful, swapped in [
+        ("T 37.8 HR 88", "Heart rate 88.", "Heart rate 37.8."),
+        ("HR 110 RR 22", "Resp rate 22.", "Resp rate 110."),
+        ("HR 110 RR 22", "Respiratory rate 22.", "Respiratory rate 110."),
+        ("BP 120/80 HR 88", "Blood pressure 120/80.", "Blood pressure 88."),
+        ("SpO2 95 HR 88", "O2 sat 95.", "O2 sat 88."),
+        ("SpO2 95 HR 88", "Oxygen saturation 95.", "Oxygen saturation 88."),
+        ("UO 300 IN 500", "Urine output 300 mL.", "Urine output 500 mL."),
+        ("CBG 180 HR 88", "Blood sugar 180.", "Blood sugar 88."),
+        ("heart rate: 88 T 37.8", "HR 88.", "HR 37.8."),
+    ]:
+        assert _check(note, faithful, [note]).status is LineStatus.SOURCE_FOUND, (note, faithful)
+        line = _check(note, swapped, [note])
+        assert _kinds(line) == [MismatchKind.VALUE], (note, swapped)
+
+
+def test_a_label_the_note_spells_the_same_way_still_decides_as_before() -> None:
+    # A value the note gives under another spelling of the label doesn't excuse one the note
+    # gives under the same spelling: "HR 92" stays a mismatch for "HR 88 ... PR 92".
+    line = _check("HR 88 at 0800, PR 92 at 1000", "HR 92 at 0800.", ["HR 88 at 0800, PR 92"])
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    [mismatch] = line.number_mismatches
+    assert (mismatch.draft_text, mismatch.note_text) == ("92", "88")
+    # The value the label names is paired even when the note spells the label another way.
+    [mismatch] = _check("T 37.4 HR 88", "Temp 39.", ["T 37.4 HR 88"]).number_mismatches
+    assert (mismatch.note_text, mismatch.note_span) == ("37.4", Span(start=2, end=6))
+
+
 def test_more_spacings_and_an_ampersand_make_a_mixed_number_in_the_note() -> None:
     for note in (
         "GAVE 1 AND 1/2 TAB",
