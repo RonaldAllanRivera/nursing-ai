@@ -5,6 +5,7 @@ name: Infra
 # (through GitHub OIDC roles) come once the AWS account can create the OIDC provider.
 on:
   push:
+    branches: [main]
     paths:
       - "infra/**"
       - ".github/workflows/infra.yml"

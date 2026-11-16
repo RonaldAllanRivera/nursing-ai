@@ -108,3 +108,23 @@ def test_e2e_job_runs_the_real_stack_in_replay_mode_on_a_named_web_port() -> Non
     # The compose file reads AI_MODE, so the stack's own step must see replay too.
     up = next(s for s in job["steps"] if s.get("run", "").startswith("docker compose up"))
     assert {**job.get("env", {}), **up.get("env", {})}["AI_MODE"] == "replay"
+
+
+def _triggers(path: Path) -> dict[str, Any]:
+    # PyYAML reads the bare key `on` as the boolean True (YAML 1.1).
+    keys: dict[object, Any] = yaml.safe_load(path.read_text())
+    triggers = keys[True]
+    assert isinstance(triggers, dict)
+    return cast("dict[str, Any]", triggers)
+
+
+def test_a_branch_with_an_open_pull_request_runs_once() -> None:
+    # A push to any branch plus the pull request would run every check twice.
+    triggers = _triggers(ROOT / ".github" / "workflows" / "ci.yml")
+    assert set(triggers) == {"push", "pull_request"}
+    assert triggers["push"] == {"branches": ["main"], "tags": ["v*"]}
+
+
+def test_infra_workflow_pushes_only_run_on_main() -> None:
+    triggers = _triggers(ROOT / ".github" / "workflows" / "infra.yml")
+    assert triggers["push"]["branches"] == ["main"]
