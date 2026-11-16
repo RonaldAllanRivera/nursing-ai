@@ -4,7 +4,9 @@ Numbers are read from the note as typed, never from the normalised matching text
 the matcher folds (a typed "½", say) can't make a number appear that the nurse didn't write. A
 number counts for a quote when it overlaps the quote and is compared whole; labels are read only
 inside the quote, and a unit is read right after the number even past the quote's end. A word
-whose number can't be compared by value ("q4h", "D5W", "two") must appear whole in a found quote.
+whose number can't be compared by value ("q4h", "D5W", "two", "BID") must appear whole in a found
+quote. A time word right after a line's number ("every 2 hours") needs the same time, by meaning,
+right after a note number of that value ("q 2 hrs").
 """
 
 import re
@@ -35,6 +37,7 @@ from nursing_core.pipeline.unit_check import (
     bare_rate_end_after,
     number_value,
     numbers_in,
+    time_after,
     words_with_numbers,
     written_unit,
 )
@@ -76,6 +79,9 @@ class _NoteNumber:
     bare_rate: tuple[str, ...]  # a rate written right after it with no unit ("100/hr")
     with_unit: Span  # the number and the unit written after it, in the note as typed
     typed_with_unit: str
+    time: str | None  # the time word written right after it, by meaning ("hour" for "hrs")
+    typed_with_time: str  # the number and that time word, as typed ("8 hrs")
+    with_time: Span
 
 
 def check_line(
@@ -182,6 +188,8 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
             bare_rate, bare_end = bare_rate_end_after(raw, span)
             with_unit = Span(start=span.start, end=bare_end if unit is None else unit.end)
             before = raw[quote.start : span.start] if span.start >= quote.start else None
+            time = time_after(raw, span)
+            with_time = Span(start=span.start, end=span.end if time is None else time[1])
             out.append(
                 _NoteNumber(
                     value=number_value(written),
@@ -193,6 +201,9 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
                     bare_rate=() if unit is not None else bare_rate,
                     with_unit=with_unit,
                     typed_with_unit=raw[with_unit.start : with_unit.end],
+                    time=None if time is None else time[0],
+                    typed_with_time=raw[with_time.start : with_time.end],
+                    with_time=with_time,
                 )
             )
     return out
@@ -289,6 +300,21 @@ def _mismatches(
             )
             continue
         drafted = written_unit(text, span)
+        time = time_after(text, span) if drafted is None else None
+        if time is not None and all(n.time != time[0] for n in same_value):
+            # "every 2 hours" needs a 2 the note writes with hours: the 2 of "2mg" isn't one.
+            timed = [n for n in same_value if n.time is not None]
+            named = timed[0] if timed else same_value[0]
+            out.append(
+                NumberMismatch(
+                    kind=MismatchKind.UNIT,
+                    draft_text=text[span.start : time[1]],
+                    draft_span=Span(start=span.start, end=time[1]),
+                    note_text=named.typed_with_time if timed else named.typed_with_unit,
+                    note_span=named.with_time if timed else named.with_unit,
+                )
+            )
+            continue
         # A note number that writes a unit settles it: a bare same-valued number can't excuse a
         # unit the nurse wrote differently elsewhere.
         candidates = [n for n in same_value if n.unit is not None] or same_value

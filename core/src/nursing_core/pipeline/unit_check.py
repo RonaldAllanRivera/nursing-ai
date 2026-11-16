@@ -37,6 +37,9 @@ A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit
 letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
 and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
 "lpm" is litres per minute.
+A time word written right after a number with no unit between ("2 hours", "x 8 hrs", "20mins") is
+read by meaning: hour, minute, day or week, from the same spellings as the denominators but for the
+one-letter "m" and "d".
 """
 
 import re
@@ -71,6 +74,26 @@ _LETTERS = re.compile(r"[^\W\d_]+")
 _WORD = re.compile(r"[^\W_]+")
 _NUMBER_WORDS = frozenset(
     {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "half", "twice"}
+)
+# How often a dose is given, which no number in the line says: "daily" is not "weekly", "BID" not
+# "TID". "once" is left out: a line writes "vomited once" for a note's "x1".
+_FREQUENCY_WORDS = frozenset(
+    {
+        "daily",
+        "weekly",
+        "monthly",
+        "hourly",
+        "nightly",
+        "od",
+        "qd",
+        "bid",
+        "tid",
+        "qid",
+        "qod",
+        "hs",
+        "prn",
+        "stat",
+    }
 )
 
 # Longest first, so "lbs" is tried before "lb". These short spellings are read in the case shown;
@@ -147,6 +170,13 @@ _DENOMINATORS = {
     **dict.fromkeys(("l", "liter", "liters", "litre", "litres"), "l"),
     **dict.fromkeys(("dl", "deciliter", "deciliters", "decilitre", "decilitres"), "dl"),
 }
+# The time words a number can be followed by ("2 hours", "x 8 hrs", "20 mins"), by meaning. The
+# one-letter "m" and "d" are left out: after a number they are as often metres or a word.
+_TIME_WORDS = {
+    spelling: meaning
+    for spelling, meaning in _DENOMINATORS.items()
+    if meaning in {"hour", "minute", "day", "week"} and spelling not in {"m", "d"}
+}
 _LITRES_PER_MINUTE = "lpm"
 _TEMPERATURE_LETTERS = frozenset("cf")  # "c/o" and "f/u" are shorthand, whatever the letter after
 _RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are rates, "u/a" is not
@@ -199,14 +229,20 @@ def numbers_in(text: str) -> list[tuple[str, Span]]:
 def words_with_numbers(text: str) -> list[tuple[str, Span]]:
     """Words that carry a number that isn't read as one, with their spans in `text`.
 
-    These are words with digits inside ("q4h", "D5W", "HR121bpmRR20") and the number words one to
-    ten, "half" and "twice". They can't be compared by value, only as whole words.
+    These are words with digits inside ("q4h", "D5W", "HR121bpmRR20"), the number words one to
+    ten, "half" and "twice", and the frequency words ("daily", "BID", "PRN", "stat"). They can't
+    be compared by value, only as whole words.
     """
     in_words = _scan(text)[1]
     out: list[tuple[str, Span]] = []
     for word in _WORD.finditer(text):
         start, end = word.span()
-        if word.group().casefold() in _NUMBER_WORDS or any(start <= i < end for i in in_words):
+        folded = word.group().casefold()
+        if (
+            folded in _NUMBER_WORDS
+            or folded in _FREQUENCY_WORDS
+            or any(start <= i < end for i in in_words)
+        ):
             out.append((word.group(), Span(start=start, end=end)))
     return out
 
@@ -303,6 +339,17 @@ def bare_rate_end_after(text: str, number_span: Span) -> tuple[tuple[str, ...], 
     Returns it with where it ends in `text` (the number's end when there is none).
     """
     return _rate_after(text, number_span.end)
+
+
+def time_after(text: str, number_span: Span) -> tuple[str, int] | None:
+    """The time word written right after a number ("2 hours", "8hrs"), by meaning ("hour"), and
+    where it ends in `text`; None when there is none. It must be a whole word."""
+    folded, origin = _fold_after(text, number_span.end)
+    letters = _LETTERS.match(folded, len(folded) - len(folded.lstrip(" \t")))
+    if letters is None or folded[letters.end() : letters.end() + 1].isalnum():
+        return None
+    meaning = _TIME_WORDS.get(letters.group().casefold())
+    return None if meaning is None else (meaning, origin[letters.end() - 1] + 1)
 
 
 def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:

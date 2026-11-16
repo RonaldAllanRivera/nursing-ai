@@ -578,6 +578,63 @@ def test_number_words_must_appear_whole_in_a_quote() -> None:
     )
 
 
+FREQUENCY_WORDS = (
+    "daily",
+    "weekly",
+    "monthly",
+    "hourly",
+    "nightly",
+    "od",
+    "qd",
+    "bid",
+    "tid",
+    "qid",
+    "qod",
+    "hs",
+    "prn",
+    "stat",
+)
+
+
+def test_a_frequency_the_note_does_not_give_is_flagged() -> None:
+    for note, text, word in [
+        ("MTX 15 mg weekly", "MTX 15 mg daily.", "daily"),
+        ("enoxaparin 40mg SC OD", "Enoxaparin 40 mg SC BID.", "BID"),
+        ("metoprolol 25mg BID", "Metoprolol 25 mg TID.", "TID"),
+    ]:
+        line = _check(note, text, [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+        [mismatch] = line.number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE
+        start = text.index(word)
+        assert (mismatch.draft_text, mismatch.draft_span) == (
+            word,
+            Span(start=start, end=start + len(word)),
+        )
+        assert (mismatch.note_text, mismatch.note_span) == (None, None)
+
+
+def test_each_frequency_word_must_appear_whole_in_a_quote_in_any_case() -> None:
+    for word in FREQUENCY_WORDS:
+        text = f"Paracetamol 500 mg {word.upper()}."
+        line = _check("paracetamol 500mg", text, ["paracetamol 500mg"])
+        assert [m.draft_text for m in line.number_mismatches] == [word.upper()], word
+        note = f"paracetamol 500mg {word}"
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, word
+    # Only whole words: these merely start like one.
+    for text in (
+        "Status unchanged.",
+        "Statin held.",
+        "Oddly calm.",
+        "Bidet used.",
+        "Hourglass shape.",
+        "Dailies done.",
+    ):
+        assert _check("pt resting", text, ["pt resting"]).status is LineStatus.SOURCE_FOUND, text
+    # "once" stays out: a recorded line writes "vomited once" for "x1".
+    assert _check("vomited x1", "Vomited once.", ["vomited x1"]).status is LineStatus.SOURCE_FOUND
+
+
 def test_more_unit_spellings_are_checked_against_the_note() -> None:
     for drafted in ("T 37.4 degrees Fahrenheit", "T 37.4 deg F"):
         line = _check("BT 37.4", drafted, ["BT 37.4"])
@@ -1294,3 +1351,53 @@ def test_the_rate_check_stays_clean_for_vitals_and_agreeing_rates() -> None:
     assert only_urine.status is LineStatus.SOURCE_FOUND
     only_urine = _check("IVF 100/hr. Urine 100", "Urine 100 mL.", ["Urine 100"])
     assert only_urine.status is LineStatus.SOURCE_FOUND
+
+
+def test_a_time_after_a_number_needs_the_same_time_after_that_number_in_the_note() -> None:
+    line = _check("morphine 2mg IV", "Morphine 2 mg IV every 2 hours.", ["morphine 2mg IV"])
+    assert line.status is LineStatus.NUMBER_MISMATCH
+    [mismatch] = line.number_mismatches
+    assert mismatch.kind is MismatchKind.UNIT
+    assert (mismatch.draft_text, mismatch.draft_span) == ("2 hours", Span(start=23, end=30))
+    assert (mismatch.note_text, mismatch.note_span) == ("2mg", Span(start=9, end=12))
+    for note, text, on, named in [
+        ("NPO x 8", "NPO for 8 hours.", "8 hours", "8"),
+        ("BT 38, TSB done", "TSB for 38 minutes.", "38 minutes", "38"),
+        ("on antibiotics x 3 days", "On antibiotics for 3 weeks.", "3 weeks", "3 days"),
+        ("pain 2/10 after 30 mins", "Pain 2/10 after 30 hours.", "30 hours", "30 mins"),
+        ("IVF 100 cc/hr x 8 hrs", "IVF 100 mL/hr for 8 min.", "8 min", "8 hrs"),
+        ("NPO x 8 hrs", "NPO for 8days.", "8days", "8 hrs"),
+        ("for 2 wks", "For 2 days.", "2 days", "2 wks"),
+        ("TSB x 20 minutes", "TSB for 20 h.", "20 h", "20 minutes"),
+    ]:
+        line = _check(note, text, [note])
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+        [mismatch] = line.number_mismatches
+        assert (mismatch.kind, mismatch.draft_text, mismatch.note_text) == (
+            MismatchKind.UNIT,
+            on,
+            named,
+        ), (note, text)
+
+
+def test_a_time_after_a_number_passes_when_the_note_gives_it_in_any_spelling() -> None:
+    for note, text in [
+        ("D5LR 1L x 8 hrs", "D5LR 1 L over 8 hours."),
+        ("D5LR 1L/8hrs", "D5LR 1 L over 8 h."),
+        ("NPO x 8 hr", "NPO for 8hrs."),
+        ("TSB for 20 mins", "Tepid sponge bath for 20 minutes."),
+        ("TSB x 20 min", "TSB for 20 mins."),
+        ("on antibiotics x 3 days", "On antibiotics for 3 days."),
+        ("antibiotics day 1 of 7 days", "Day 1 of 7 days of antibiotics."),
+        ("for 2 wks", "For 2 weeks."),
+        ("for 2 week", "For 2 wk."),
+        ("turned q2 hrs", "Turned every 2 hours."),
+        # A time the note writes and the line leaves out is not checked.
+        ("NPO x 8 hrs", "NPO, 8 in all."),
+        # Only a time right after the number: these words are something else.
+        ("BP 90/60, recheck at 2 AM", "BP 90/60, rechecked at 2 AM."),
+        ("pain 5/10", "Pain 5/10 for hours."),
+        ("2 tabs given", "2 tabs given, minutes apart."),
+        ("ambulated 10 m", "Ambulated 10 m."),
+    ]:
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, (note, text)

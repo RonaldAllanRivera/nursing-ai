@@ -9,8 +9,10 @@ from nursing_core.pipeline.unit_check import (
     bare_rate_end_after,
     number_value,
     numbers_in,
+    time_after,
     unit_after,
     unit_end_after,
+    words_with_numbers,
     written_unit,
 )
 
@@ -396,3 +398,55 @@ def test_the_read_after_a_number_stays_short_on_a_long_unpunctuated_note() -> No
     far = _written("5 micrograms" + " " * 70 + "/kg/min", "5")
     assert far is not None
     assert far.rate == ()
+
+
+def _time(text: str, number: str) -> tuple[str, int] | None:
+    start = text.index(number)
+    return time_after(text, Span(start=start, end=start + len(number)))
+
+
+def test_a_time_word_after_a_number_is_read_by_meaning_with_where_it_ends() -> None:
+    for text, meaning in [
+        ("x 8 h.", "hour"),
+        ("x 8 hr", "hour"),
+        ("x 8 HRS,", "hour"),
+        ("x 8hour", "hour"),
+        ("x 8 hours", "hour"),
+        ("x 8\tmin", "minute"),
+        ("x 8 mins", "minute"),
+        ("x 8 minute", "minute"),
+        ("x 8 Minutes", "minute"),
+        ("x 8 day", "day"),
+        ("x 8 days", "day"),
+        ("x 8 wk", "week"),
+        ("x 8 wks", "week"),
+        ("x 8 week", "week"),
+        ("x 8 weeks", "week"),
+    ]:
+        found = _time(text, "8")
+        assert found is not None, text
+        assert found[0] == meaning, text
+        assert text[: found[1]].rstrip(".,") == text.rstrip(".,"), text
+
+
+def test_only_a_whole_time_word_right_after_the_number_is_read() -> None:
+    for text in (
+        "x 8 h2",
+        "x 8 hrly",
+        "x 8 hourly",
+        "x 8 m",
+        "x 8 d",
+        "Hgb 8 d/t bleeding",
+        "x 8 mo",
+        "x 8 shifts",
+        "x 8 then hours",
+        "x 8/hr",
+        "x 8\nhours",
+    ):
+        assert _time(text, "8") is None, text
+
+
+def test_frequency_words_are_words_with_a_number_in_them() -> None:
+    found = words_with_numbers("MTX 15 mg weekly, then PRN; Status BID.")
+    assert [word for word, _ in found] == ["weekly", "PRN", "BID"]
+    assert found[2][1] == Span(start=35, end=38)
