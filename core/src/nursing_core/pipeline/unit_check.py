@@ -16,11 +16,12 @@ weeks, mo, mos, month, months, shift, shifts), kg, kgs, kilogram or kilograms, o
 cc, milliliter, millilitre, l, liter, litre, with their plurals). Each is kept by meaning ("h",
 "hr" and "hours" are one) and must be a whole word ("1L/D5LR" has no rate). Any other word ends
 the unit with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8hrs",
-"1 L / 8 hrs"). A rate is read whole however it is spelled ("5 mcg per kilograms per minute"),
-and no word is cut in half where the read stops. A unit that takes no rate is read as written
-("37.8C/HR 110"). A one-letter unit, "/" and one more letter is clinical shorthand, not a unit
-("c/o", "f/u", "u/a"), except when the unit is u, l or g and the letter is h, d or m ("u/h",
-"L/m", "g/d"), which are rates. "lpm" is litres per minute.
+"1 L / 8 hrs"). A rate is read whole when it fits in the 64 characters after the number
+("5 mcg per kilograms per minute"), and the word the read ends in is finished; a rate that
+starts after more than that (70 spaces before "/kg/min") is not read. A unit that takes no
+rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more letter is
+clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g and the
+letter is h, d or m ("u/h", "L/m", "g/d"), which are rates. "lpm" is litres per minute.
 """
 
 import re
@@ -136,7 +137,7 @@ _RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are 
 _PER = re.compile(r"[ \t]+per[ \t]+", re.IGNORECASE)
 _SLASH = re.compile(r"[ \t]*/[ \t]*")
 type NumberValue = tuple[str | Decimal, ...]
-_WINDOW = 64  # typed characters after a number read for its unit; a word or spaces cut off finish
+_WINDOW = 64  # typed characters after a number read for its unit, then the word cut off
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,7 +261,12 @@ def written_unit(text: str, number_span: Span) -> WrittenUnit | None:
 
 def bare_rate_after(text: str, number_span: Span) -> tuple[str, ...]:
     """The rate written right after a number with no unit between ("100/hr", "100 per hour")."""
-    return _rate_after(text, number_span.end)[0]
+    return bare_rate_end_after(text, number_span)[0]
+
+
+def bare_rate_end_after(text: str, number_span: Span) -> tuple[tuple[str, ...], int]:
+    """That rate and where it ends in `text` (the number's end when there is none)."""
+    return _rate_after(text, number_span.end)
 
 
 def _rate_after(text: str, unit_end: int) -> tuple[tuple[str, ...], int]:
@@ -306,8 +312,8 @@ def _fold_after(text: str, start: int) -> tuple[str, list[int]]:
     folded: list[str] = []
     origin: list[int] = []
     stop = min(len(text), start + _WINDOW)
-    while stop < len(text) and (text[stop].isalnum() or text[stop] in " \t"):
-        stop += 1  # never cut a word, or the spaces before the next one, in half
+    while stop < len(text) and text[stop].isalnum():
+        stop += 1  # finish the word the end of the read cut in half
     for index in range(start, stop):
         char = _DEGREE_LOOKALIKES.get(text[index], text[index])
         for part in unicodedata.normalize("NFKC", char):

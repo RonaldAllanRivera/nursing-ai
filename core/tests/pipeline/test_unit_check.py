@@ -354,3 +354,23 @@ def test_week_month_and_shift_are_denominators_and_long_rates_are_read_whole() -
     whole = _written("5 mcg per kilograms per minute", "5")
     assert whole is not None
     assert whole.end == len("5 mcg per kilograms per minute")
+
+
+def test_a_denominator_cut_by_the_end_of_the_read_is_finished_not_lost() -> None:
+    head = "5 mcg/kg/"
+    text = head + " " * (62 - len(head)) + "minute"
+    written = _written(text, "5")
+    assert written is not None
+    assert written.rate == ("kg", "minute")
+
+
+def test_the_read_after_a_number_stays_short_on_a_long_unpunctuated_note() -> None:
+    from nursing_core.pipeline.unit_check import _fold_after  # pyright: ignore[reportPrivateUsage]
+
+    text = "HR 88 " + "word " * 800
+    folded, origin = _fold_after(text, 5)
+    assert len(folded) == len(origin) <= 64 + len("word")
+    assert written_unit("5 micrograms" + " " * 70 + "/kg/min", Span(start=0, end=1)) is not None
+    far = _written("5 micrograms" + " " * 70 + "/kg/min", "5")
+    assert far is not None
+    assert far.rate == ()

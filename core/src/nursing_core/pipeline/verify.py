@@ -33,6 +33,7 @@ from nursing_core.pipeline.unit_check import (
     NumberValue,
     WrittenUnit,
     bare_rate_after,
+    bare_rate_end_after,
     number_value,
     numbers_in,
     words_with_numbers,
@@ -206,6 +207,11 @@ def _same_unit(drafted: WrittenUnit, note: _NoteNumber, units: UnitDefaults) -> 
     )
 
 
+def _note_rate(note: _NoteNumber) -> tuple[str, ...]:
+    """The rate a note number is written with, after its unit or straight after the number."""
+    return note.bare_rate if note.unit is None else note.unit.rate
+
+
 def _in_a_quote(word: str, quote_texts: list[str]) -> bool:
     """Whether the word appears whole, in any case, in one of the quotes as typed."""
     pattern = re.compile(rf"(?<![^\W_]){re.escape(word.casefold())}(?![^\W_])")
@@ -247,14 +253,23 @@ def _mismatches(
         # A note number that writes a unit settles it: a bare same-valued number can't excuse a
         # unit the nurse wrote differently elsewhere.
         candidates = [n for n in same_value if n.unit is not None] or same_value
-        if drafted is None or any(_same_unit(drafted, n, units) for n in candidates):
+        if drafted is None:
+            # A rate straight after the line's number must not differ from the note's own rate;
+            # the note having none is fine ("HR 88 bpm" and "HR 88/min").
+            rate, rate_end = bare_rate_end_after(text, span)
+            if not rate or not all(_note_rate(n) not in ((), rate) for n in candidates):
+                continue
+            end = rate_end
+        elif any(_same_unit(drafted, n, units) for n in candidates):
             continue
+        else:
+            end = drafted.end
         first = candidates[0]
         out.append(
             NumberMismatch(
                 kind=MismatchKind.UNIT,
-                draft_text=text[span.start : drafted.end],
-                draft_span=Span(start=span.start, end=drafted.end),
+                draft_text=text[span.start : end],
+                draft_span=Span(start=span.start, end=end),
                 note_text=first.typed_with_unit,
                 note_span=first.with_unit,
             )

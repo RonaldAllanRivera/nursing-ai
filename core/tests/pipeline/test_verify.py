@@ -908,3 +908,26 @@ def test_a_spelled_out_rate_is_read_whole() -> None:
         ("5 mcg/kg/min", "5 micrograms per kilograms per minute."),
     ]:
         assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_different_rate_written_straight_after_the_lines_number_is_flagged() -> None:
+    for note, text in [
+        ("heparin 1000/hr", "Heparin 1000/min."),
+        ("heparin 1000/hr", "Heparin 1000 per minute."),
+        ("IVF 100/hr", "IVF 100/min."),
+        ("heparin 1000 units/hr", "Heparin 1000/min."),
+    ]:
+        _flagged_unit(note, text)
+
+
+def test_a_rate_after_the_lines_number_is_clean_where_the_note_has_none_or_agrees() -> None:
+    for note, text in [
+        ("HR 88 bpm", "HR 88/min."),
+        ("HR 88/min", "HR 88 bpm."),
+        ("RR 18/min", "RR 18."),
+        ("heparin 1000/hr", "Heparin 1000/hr."),
+        ("heparin 1000/hr", "Heparin 1000 per hour."),
+        ("heparin 1000 units/hr", "Heparin 1000/hr."),
+        ("heparin 1000", "Heparin 1000/hr."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
