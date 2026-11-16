@@ -645,7 +645,10 @@ def main(argv: list[str] | None = None) -> int:
         for finding in found:
             print(f"  {finding.where}: {finding.detail}")
     # A note, never a finding: the path (hidden when private), never the content.
-    for note in sorted({_note_place(scrub(where, hashes, markers)) for where in history.not_utf8}):
+    # Binary files are listed on their own, so they are not noted again.
+    binary_places = {f" · {binary.path}" for binary in history.binaries}
+    odd = [w for w in history.not_utf8 if not any(w.endswith(p) for p in binary_places)]
+    for note in sorted({_note_place(scrub(where, hashes, markers)) for where in odd}):
         print(f"not UTF-8: {note}")
     if local:
         accepted = {binary.blob for binary in history.binaries if binary.blob in reviewed}

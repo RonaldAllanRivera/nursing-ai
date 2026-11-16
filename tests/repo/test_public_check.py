@@ -1063,3 +1063,12 @@ def test_gitleaks_that_reads_nothing_after_an_empty_commit_still_fails(
     code, out = run(repo, capsys, "--ci")
     assert code == 1
     assert "gitleaks read no commits: secrets not checked" in out
+
+
+def test_a_binary_file_is_not_also_noted_as_not_utf8(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit_bytes(repo, "web/public/a.bin", b"\x00\xff\xfe\x80binary")
+    code, out = run(repo, capsys, "--ci")
+    assert code == 0
+    assert "not UTF-8" not in out

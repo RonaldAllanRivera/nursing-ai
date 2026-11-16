@@ -138,13 +138,14 @@ def staged_findings(
     A staged file that is not UTF-8 adds a "not UTF-8: <path>" line to `notes`.
     """
     notes = [] if notes is None else notes
+    binaries = {binary.path for binary in _staged_binaries(repo)}
     findings = [
         Finding(f.check, hide_if_private(f.where, hashes, markers), f.detail)
         for f in check_paths(_staged_paths(repo), read_allowlist(), markers)
     ]
     for path, text, odd in _added_text(repo):
         where = hide_if_private(path, hashes, markers)
-        if odd:
+        if odd and path not in binaries:
             note = f"not UTF-8: {where}"
             if note not in notes:
                 notes.append(note)
