@@ -216,6 +216,7 @@ def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path)
     result = run_make("e2e-mock", "PORT_OFFSET=1", cwd=fake_repo)
     assert result.returncode == 0, result.stderr
     # One command and no `up`: the mock API runs in the browser, so no stack starts.
+    assert result.stdout.splitlines() == ["WEB_PORT=5183 pnpm -C web e2e:mock"]
 
 
 def test_record_replays_passes_the_key_only_through_the_environment(fake_repo: Path) -> None:
