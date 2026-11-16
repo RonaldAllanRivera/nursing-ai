@@ -237,6 +237,7 @@ describe("rough-note writes", () => {
 describe("writes to a note: line actions, sign and discard", () => {
   const NOTE = "00000000-0000-4000-8000-000000000015";
   const NOTE_2 = "00000000-0000-4000-8000-000000000025";
+  const NO_SUCH_NOTE = "00000000-0000-4000-8000-0000000000ff";
   type Body =
     | components["schemas"]["ConfirmLine"]
     | components["schemas"]["EditLine"]
@@ -286,6 +287,49 @@ describe("writes to a note: line actions, sign and discard", () => {
     expect((await act("e1-F", { action: "confirm" }, '"v7"')).response.status).toBe(412);
     expect((await sign(null)).response.status).toBe(428);
     expect((await discard('"v2"')).response.status).toBe(412);
+  });
+
+  it("checks a write in the API's order: If-Match before the note, locked before stale", async () => {
+    await start();
+    expect((await act("e1-F", { action: "confirm" }, null, NO_SUCH_NOTE)).response.status).toBe(
+      428,
+    );
+    expect((await sign(null, NO_SUCH_NOTE)).response.status).toBe(428);
+    expect((await act("e1-F", { action: "confirm" }, '"v1"', NO_SUCH_NOTE)).response.status).toBe(
+      404,
+    );
+    await act("e1-F", { action: "confirm" });
+    await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 112 bpm." }, '"v2"');
+    await act("e1-A2", { action: "remove" }, '"v3"');
+    expect((await sign('"v4"')).response.status).toBe(200);
+    // Signed somewhere else, then written to with the version this screen still holds: locked.
+    const stale = await act("e1-F", { action: "restore" }, '"v1"');
+    expect([stale.response.status, stale.error?.code]).toEqual([409, "note_locked"]);
+    expect((await sign('"v4"')).error?.code).toBe("note_locked");
+    expect((await discard('"v1"')).error?.code).toBe("note_locked");
+  });
+
+  it("leaves an edited line edited when it is confirmed, with no new version", async () => {
+    await start();
+    await act("e1-D2", { action: "edit", text: "BP 90/60 mmHg, HR 112 bpm." });
+    const confirmed = await act("e1-D2", { action: "confirm" }, '"v2"');
+    expect(confirmed.response.status).toBe(200);
+    expect(lineOf(confirmed.data, "e1-D2").review).toBe("edited");
+    // Nothing changed, so the version and its ETag stay as they were, as the API answers.
+    expect(confirmed.response.headers.get("ETag")).toBe('"v2"');
+    expect(confirmed.data?.version).toBe(2);
+    const again = await act("e1-F", { action: "confirm" }, '"v2"');
+    const twice = await act("e1-F", { action: "confirm" }, '"v3"');
+    expect([lineOf(twice.data, "e1-F").review, twice.data?.version]).toEqual(["confirmed", 3]);
+    expect(again.data?.version).toBe(3);
+  });
+
+  it("refuses to confirm a removed line until it is put back (422)", async () => {
+    await start();
+    await act("e1-A2", { action: "remove" });
+    const refused = await act("e1-A2", { action: "confirm" }, '"v2"');
+    expect(refused.response.status).toBe(422);
+    expect(refused.error?.errors?.[0]?.field).toBe("body.action");
   });
 
   it("answers an unknown line with 404", async () => {

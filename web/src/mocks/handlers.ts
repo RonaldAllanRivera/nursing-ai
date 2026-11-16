@@ -180,7 +180,11 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
     return shift ? { ...found, shift: relabelled(found.facility_key, shift) } : found;
   };
 
-  /** The checks every write to a note makes, in the brief's order. */
+  /**
+   * The checks every write to a note makes, in the API's order: signed in (401), a nurse (403),
+   * If-Match sent (428), the note (404), then locked (409) before stale (412), so a note signed
+   * somewhere else answers "locked" whatever version the screen holds.
+   */
   function writeGate(
     noteId: string,
     request: Request,
@@ -190,12 +194,12 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
     const current = session();
     if (!current) return { refusal: problem(401, "not_signed_in") };
     if (current.facility_key === null) return { refusal: problem(403, "forbidden") };
-    const note = data.notes[noteId];
-    if (!note) return { refusal: problem(404, "not_found") };
     const ifMatch = request.headers.get("If-Match");
     if (!ifMatch) return { refusal: problem(428, "precondition_required") };
-    if (ifMatch !== `"v${String(note.version)}"`) return { refusal: problem(412, "stale_version") };
+    const note = data.notes[noteId];
+    if (!note) return { refusal: problem(404, "not_found") };
     if (note.status !== "draft") return { refusal: problem(409, "note_locked") };
+    if (ifMatch !== `"v${String(note.version)}"`) return { refusal: problem(412, "stale_version") };
     return { note, user: current.user_id };
   }
 
@@ -416,6 +420,18 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
           | Schemas["RestoreLine"];
         switch (body.action) {
           case "confirm":
+            if (line.review === "removed") {
+              return problem(422, "invalid_request", [
+                { field: "body.action", message: "Put the line back before you confirm it." },
+              ]);
+            }
+            // An edited or confirmed line stays as it is: "edited" is the only record of a
+            // rewrite. Nothing changed, so there is no new version (the API answers the same).
+            if (line.review !== "pending") {
+              return HttpResponse.json(note, {
+                headers: { ETag: `"v${String(note.version)}"` },
+              });
+            }
             line.review = "confirmed";
             break;
           case "remove":
