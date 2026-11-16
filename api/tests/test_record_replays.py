@@ -12,7 +12,7 @@ from nursing_core.clock import SystemClock
 from nursing_core.db import create_engine
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import ProviderUnavailable
-from nursing_core.domain.model_output import DraftRequest, ProviderResult
+from nursing_core.domain.model_output import DraftRequest, ModelFdarDraft, ProviderResult
 from nursing_core.domain.notes import GenerationInfo
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.ports import LlmProvider
@@ -44,9 +44,10 @@ class Fakes:
     `fail_on_call` makes that call (1-based) fail.
     """
 
-    def __init__(self, fail_on_call: int | None = None) -> None:
+    def __init__(self, fail_on_call: int | None = None, empty_draft: bool = False) -> None:
         self.requests: list[DraftRequest] = []
         self.fail_on_call = fail_on_call
+        self.empty_draft = empty_draft  # a billed answer the pipeline refuses
 
     def __call__(self, patient: PatientRecord) -> LlmProvider:
         case = next(c for c in CASES if c.patient_id == patient.summary.id)
@@ -66,7 +67,8 @@ class _Counting:
         generation = result.generation.model_copy(
             update={"model": ANSWERED_AS, "cost_usd": Decimal("0.5")}
         )
-        return ProviderResult(output=result.output, generation=generation)
+        output = ModelFdarDraft(entries=[]) if self._fakes.empty_draft else result.output
+        return ProviderResult(output=output, generation=generation)
 
 
 def _files(folder: Path) -> list[str]:
@@ -290,3 +292,52 @@ async def test_recordings_replay_through_the_api_worker(tmp_path: Path, database
             await app.state.queue.drain()
             job = (await client.get(f"/api/v1/draft-jobs/{posted.json()['id']}")).json()
         assert job["status"] == "succeeded", job
+
+
+@pytest.mark.asyncio
+async def test_a_billed_answer_the_pipeline_refuses_is_counted_and_not_saved(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], database_url: str
+) -> None:
+    assert await run(tmp_path, Fakes(empty_draft=True)) == 1
+    lines, _ = _out(capsys)
+    assert lines == [
+        f"{CASES[0].key}: failed (InvalidModelOutput) $0.500000",
+        "total: $0.500000 over 1 call",
+    ]
+    assert _files(tmp_path) == []
+    engine = create_engine(database_url)
+    try:
+        total, calls = await PgUsageRepository(engine).month_total(SystemClock().now())
+    finally:
+        await engine.dispose()
+    assert (total, calls) == (Decimal("0.5"), 1)
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_database_prints_one_fixed_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:secret-pw@127.0.0.1:1/x")
+    fakes = Fakes()
+    assert await run(tmp_path, fakes) == 1
+    out, err = capsys.readouterr()
+    assert out.splitlines() == [
+        "Not recording: the database is not reachable. Run `make up`, then try again."
+    ]
+    assert "Traceback" not in out + err
+    assert "secret-pw" not in out + err
+    assert fakes.requests == []
+
+
+@pytest.mark.asyncio
+async def test_an_unmigrated_database_says_to_run_make_migrate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], database_url: str
+) -> None:
+    engine = create_engine(database_url)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("drop table encounter cascade"))
+    finally:
+        await engine.dispose()
+    assert await run(tmp_path, Fakes()) == 1
+    assert _out(capsys)[0] == ["Not recording: the database has no tables yet. Run `make migrate`."]

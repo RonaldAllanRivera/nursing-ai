@@ -34,6 +34,7 @@ from nursing_core.providers.replay import (
 )
 from nursing_core.storage.repositories import PgPatientRepository, PgUsageRepository
 from pydantic import ValidationError
+from sqlalchemy.exc import ProgrammingError
 
 from .providers import LIVE_MODEL, ProviderFor, provider_factory
 from .settings import Settings
@@ -43,6 +44,8 @@ NOT_LIVE = "Not recording: AI_MODE must be live (run `make record-replays AI_MOD
 NO_KEY = "Not recording: ANTHROPIC_API_KEY is not set (put it in .env)."
 NO_CAP = "Not recording: AI_MONTHLY_CAP_USD is not set."
 NO_URL = "Not recording: DATABASE_URL is not set. Run `make up`, then try again."
+NO_DATABASE = "Not recording: the database is not reachable. Run `make up`, then try again."
+NOT_MIGRATED = "Not recording: the database has no tables yet. Run `make migrate`."
 UNSEEDED = "Not recording: the demo patients are not in the database. Run `make seed`."
 INVALID = "Settings are invalid: check AI_MODE, AI_MONTHLY_CAP_USD and DB_PING_TIMEOUT_S."
 
@@ -90,17 +93,26 @@ async def _record(
         usage = PgUsageRepository(engine)
         cases = load_demo_cases()
         try:
-            records: list[PatientRecord] = [
-                await patients.get_patient(case.patient_id) for case in cases
-            ]
+            async with asyncio.timeout(settings.db_ping_timeout_s):
+                records: list[PatientRecord] = [
+                    await patients.get_patient(case.patient_id) for case in cases
+                ]
         except NotFound:
             print(UNSEEDED)
+            return 1
+        except ProgrammingError:
+            print(NOT_MIGRATED)
+            return 1
+        except Exception:  # never shown: a driver's message can carry the host or the URL
+            print(NO_DATABASE)
             return 1
         make_provider = provider_factory(settings, usage, clock, provider_for)
         total, calls, code = Decimal(0), 0, 0
         for case, patient in zip(cases, records, strict=True):
-            step = _Step(UsageRecorder(make_provider(patient), usage, clock, None), out_dir, force)
+            step = None
             try:
+                live = UsageRecorder(make_provider(patient), usage, clock, None)
+                step = _Step(live, out_dir, force)
                 await run_fdar_pipeline(case.rough_note, patient, [], step)
                 if step.skipped:
                     name = _name(step.request)
@@ -112,7 +124,13 @@ async def _record(
                 save_recording(request, answer, out_dir, LIVE_MODEL)
                 await ReplayProvider(out_dir, LIVE_MODEL).draft_fdar(request)  # a miss raises
             except Exception as error:
-                print(f"{case.key}: failed ({type(error).__name__})")
+                # A billed answer the pipeline then refused is still money spent.
+                paid = step.answer if step is not None else None
+                shown = ""
+                if paid is not None:
+                    total, calls = total + paid.generation.cost_usd, calls + 1
+                    shown = f" {_money(paid.generation.cost_usd)}"
+                print(f"{case.key}: failed ({type(error).__name__}){shown}")
                 code = 1
                 break
             cost = answer.generation.cost_usd
