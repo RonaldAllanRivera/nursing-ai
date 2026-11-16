@@ -20,6 +20,16 @@ from nursing_core.storage.rows import optional_shift_from_row, shift_columns
 
 SESSION_LIFETIME = timedelta(hours=12)
 _SESSION = tables.session
+# The live provider: its answers are the billed ones. A mock or replay answer is recorded at $0.
+_BILLED_PROVIDER = "anthropic"
+
+
+class MonthUsage(DomainModel):
+    """One UTC calendar month of AI usage."""
+
+    cost_usd: Decimal
+    calls: int  # every answer recorded, mock and replay ones included
+    billed_calls: int  # the live model's answers, the ones that cost money
 
 
 class StoredUser(DomainModel):
@@ -146,15 +156,22 @@ class PgUsageRepository:
 
     async def month_total(self, now: datetime) -> tuple[Decimal, int]:
         """The cost and number of calls in the UTC calendar month that contains `now`."""
+        usage = await self.month_usage(now)
+        return usage.cost_usd, usage.calls
+
+    async def month_usage(self, now: datetime) -> MonthUsage:
+        """The UTC calendar month that contains `now`: its cost, its calls and the billed ones."""
         start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         following = (start + timedelta(days=32)).replace(day=1)
         usage = tables.ai_usage
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
-                    select(func.coalesce(func.sum(usage.c.cost_usd), 0), func.count()).where(
-                        usage.c.created_at >= start, usage.c.created_at < following
-                    )
+                    select(
+                        func.coalesce(func.sum(usage.c.cost_usd), 0),
+                        func.count(),
+                        func.count().filter(usage.c.provider == _BILLED_PROVIDER),
+                    ).where(usage.c.created_at >= start, usage.c.created_at < following)
                 )
             ).one()
-        return Decimal(row[0]), row[1]
+        return MonthUsage(cost_usd=Decimal(row[0]), calls=row[1], billed_calls=row[2])

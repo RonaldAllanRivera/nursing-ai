@@ -5,12 +5,13 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 from nursing_api.spend import main, render
 from nursing_core.db import create_engine
 from nursing_core.domain.notes import GenerationInfo
-from nursing_core.storage.repositories import PgUsageRepository
+from nursing_core.storage.repositories import MonthUsage, PgUsageRepository
 from sqlalchemy.engine import make_url
 
 CANARY_KEY = "sk-ant-canary-not-a-real-key"
@@ -37,9 +38,11 @@ def _lines(capsys: pytest.CaptureFixture[str]) -> list[str]:
     return out.out.splitlines()
 
 
-def _generation(cost: str) -> GenerationInfo:
+def _generation(
+    cost: str, provider: Literal["fake", "replay", "anthropic"] = "anthropic"
+) -> GenerationInfo:
     return GenerationInfo(
-        provider="fake",
+        provider=provider,
         model="claude-opus-5-5",
         prompt_version="p1",
         input_tokens=10,
@@ -54,21 +57,31 @@ def _month_label(now: datetime) -> str:
 
 
 def test_render_with_no_cap_and_no_usage() -> None:
-    assert render("mock", None, Decimal(0), 0, "2026-11") == [
+    assert render(
+        "mock", None, MonthUsage(cost_usd=Decimal(0), calls=0, billed_calls=0), "2026-11"
+    ) == [
         "AI_MODE=mock",
         "AI_MONTHLY_CAP_USD=not set",
-        "AI usage 2026-11 (UTC): $0.000000 over 0 calls",
+        "AI usage 2026-11 (UTC): $0.000000 over 0 billed calls (0 drafts in all)",
     ]
 
 
 def test_render_with_cap_and_usage_and_one_call() -> None:
-    lines = render("live", Decimal("25.50"), Decimal("0.1234567"), 1, "2026-11")
+    usage = MonthUsage(cost_usd=Decimal("0.1234567"), calls=1, billed_calls=1)
+    lines = render("live", Decimal("25.50"), usage, "2026-11")
     assert lines[1] == "AI_MONTHLY_CAP_USD=25.50"
-    assert lines[2] == "AI usage 2026-11 (UTC): $0.123457 over 1 call"
+    assert lines[2] == "AI usage 2026-11 (UTC): $0.123457 over 1 billed call (1 draft in all)"
+
+
+def test_render_counts_the_billed_calls_apart_from_the_free_ones() -> None:
+    usage = MonthUsage(cost_usd=Decimal("0.06934"), calls=72, billed_calls=3)
+    assert render("replay", Decimal(20), usage, "2026-11")[2] == (
+        "AI usage 2026-11 (UTC): $0.069340 over 3 billed calls (72 drafts in all)"
+    )
 
 
 def test_render_without_usage_adds_one_plain_line() -> None:
-    lines = render("mock", None, None, None, "2026-11", unread="Run `make up`.")
+    lines = render("mock", None, None, "2026-11", unread="Run `make up`.")
     assert lines == ["AI_MODE=mock", "AI_MONTHLY_CAP_USD=not set", "Run `make up`."]
 
 
@@ -81,7 +94,8 @@ async def test_mock_with_no_usage(
     assert _lines(capsys) == [
         "AI_MODE=mock",
         "AI_MONTHLY_CAP_USD=not set",
-        f"AI usage {_month_label(datetime.now(UTC))} (UTC): $0.000000 over 0 calls",
+        f"AI usage {_month_label(datetime.now(UTC))} (UTC): "
+        "$0.000000 over 0 billed calls (0 drafts in all)",
     ]
 
 
@@ -96,6 +110,8 @@ async def test_only_this_months_rows_count(
         usage = PgUsageRepository(engine)
         await usage.record(None, _generation("0.100000"), now)
         await usage.record(None, _generation("0.250000"), now)
+        await usage.record(None, _generation("0", provider="replay"), now)
+        await usage.record(None, _generation("0", provider="fake"), now)
         await usage.record(None, _generation("9.000000"), last_month)
     finally:
         await engine.dispose()
@@ -106,7 +122,7 @@ async def test_only_this_months_rows_count(
     assert _lines(capsys) == [
         "AI_MODE=replay",
         "AI_MONTHLY_CAP_USD=20",
-        f"AI usage {_month_label(now)} (UTC): $0.350000 over 2 calls",
+        f"AI usage {_month_label(now)} (UTC): $0.350000 over 2 billed calls (4 drafts in all)",
     ]
 
 

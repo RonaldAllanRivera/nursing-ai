@@ -13,6 +13,7 @@ from nursing_core.ports import FacilityRepository, NoteRepository, PatientReposi
 from nursing_core.storage import tables
 from nursing_core.storage.repositories import (
     SESSION_LIFETIME,
+    MonthUsage,
     PgFacilityRepository,
     PgNoteRepository,
     PgPatientRepository,
@@ -136,6 +137,15 @@ async def test_usage_month_total_covers_the_utc_calendar_month(engine: AsyncEngi
 
     assert (total, calls) == (info.cost_usd * 2, 2)
     assert await repo.month_total(datetime(2026, 12, 20, tzinfo=UTC)) == (info.cost_usd, 1)
+    # Only the live model's answers are billed: a mock or replay answer is recorded at $0.
+    billed = info.model_copy(update={"provider": "anthropic"})
+    await repo.record(None, billed, at)
+    assert await repo.month_usage(datetime(2026, 11, 15, 12, tzinfo=UTC)) == MonthUsage(
+        cost_usd=info.cost_usd * 3, calls=3, billed_calls=1
+    )
+    assert await repo.month_usage(datetime(2026, 9, 1, tzinfo=UTC)) == MonthUsage(
+        cost_usd=Decimal(0), calls=0, billed_calls=0
+    )
     async with engine.connect() as conn:
         row = (
             await conn.execute(select(tables.ai_usage).where(tables.ai_usage.c.job_id == job.id))

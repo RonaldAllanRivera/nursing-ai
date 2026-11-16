@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from nursing_core.db import create_engine
-from nursing_core.storage.repositories import PgUsageRepository
+from nursing_core.storage.repositories import MonthUsage, PgUsageRepository
 from pydantic import ValidationError
 from sqlalchemy.exc import ProgrammingError
 
@@ -24,31 +24,41 @@ NO_DATABASE = "AI usage not read: the database is not reachable. Run `make up`, 
 NOT_MIGRATED = "AI usage not read: the database has no usage table yet. Run `make migrate`."
 
 
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
+
+
 def render(
     mode: str,
     cap: Decimal | None,
-    total: Decimal | None,
-    calls: int | None,
+    usage: MonthUsage | None,
     month: str,
     *,
     unread: str | None = None,
 ) -> list[str]:
-    """The report's lines. `unread` (when the usage couldn't be read) replaces the usage line."""
+    """The report's lines. `unread` (when the usage couldn't be read) replaces the usage line.
+
+    The cost is spread over the billed calls only: a mock or replay draft is counted in all but
+    costs nothing.
+    """
     lines = [f"AI_MODE={mode}", f"AI_MONTHLY_CAP_USD={'not set' if cap is None else cap}"]
-    if unread is not None or total is None or calls is None:
+    if unread is not None or usage is None:
         lines.append(unread or NO_DATABASE)
     else:
-        noun = "call" if calls == 1 else "calls"
-        lines.append(f"AI usage {month} (UTC): ${total:.6f} over {calls} {noun}")
+        billed = _count(usage.billed_calls, "billed call")
+        drafts = _count(usage.calls, "draft")
+        lines.append(
+            f"AI usage {month} (UTC): ${usage.cost_usd:.6f} over {billed} ({drafts} in all)"
+        )
     return lines
 
 
-async def read_usage(url: str, timeout_s: float, now: datetime) -> tuple[Decimal, int]:
-    """This UTC month's cost and call count; the connect and the query share one time limit."""
+async def read_usage(url: str, timeout_s: float, now: datetime) -> MonthUsage:
+    """This UTC month's usage; the connect and the query share one time limit."""
     engine = create_engine(url)
     try:
         async with asyncio.timeout(timeout_s):
-            return await PgUsageRepository(engine).month_total(now)
+            return await PgUsageRepository(engine).month_usage(now)
     finally:
         await engine.dispose()
 
@@ -67,20 +77,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     month = f"{now.year}-{now.month:02d}"
     mode, cap = settings.ai_mode, settings.ai_monthly_cap_usd
     if not settings.database_url:
-        print("\n".join(render(mode, cap, None, None, month, unread=NO_URL)))
+        print("\n".join(render(mode, cap, None, month, unread=NO_URL)))
         return 0
     try:
-        total, calls = asyncio.run(
-            read_usage(settings.database_url, settings.db_ping_timeout_s, now)
-        )
+        usage = asyncio.run(read_usage(settings.database_url, settings.db_ping_timeout_s, now))
     except ProgrammingError:
         # The server answered but has no `ai_usage` table.
-        print("\n".join(render(mode, cap, None, None, month, unread=NOT_MIGRATED)))
+        print("\n".join(render(mode, cap, None, month, unread=NOT_MIGRATED)))
         return 0
     except Exception:  # a report never fails on the database; the error text is not shown
-        print("\n".join(render(mode, cap, None, None, month, unread=NO_DATABASE)))
+        print("\n".join(render(mode, cap, None, month, unread=NO_DATABASE)))
         return 0
-    print("\n".join(render(mode, cap, total, calls, month)))
+    print("\n".join(render(mode, cap, usage, month)))
     return 0
 
 
