@@ -56,7 +56,6 @@ def provider_factory(
     `override` replaces the inner provider (tests use it so nothing reaches the network). In live
     mode the budget guard goes around the inner provider, whatever it is.
     """
-    key, cap = settings.anthropic_api_key, settings.ai_monthly_cap_usd
     check_live_settings(settings)
     if override is not None:
         inner = override
@@ -64,10 +63,15 @@ def provider_factory(
         inner = _mock_provider_for()
     elif settings.ai_mode == "replay":
         inner = _the_same(ReplayProvider(RECORDINGS_DIR))
-    elif key is not None:
-        inner = _the_same(AnthropicProvider(key, model=LIVE_MODEL))
     else:
-        raise ValueError(LIVE_NEEDS)
-    if settings.ai_mode != "live" or cap is None:
+        key = settings.anthropic_api_key
+        if key is None:
+            raise ValueError(LIVE_NEEDS)
+        inner = _the_same(AnthropicProvider(key, model=LIVE_MODEL))
+    if settings.ai_mode != "live":
         return inner
+    # Live always gets the guard: a missing cap stops here, it never means "no limit".
+    cap = settings.ai_monthly_cap_usd
+    if cap is None:
+        raise ValueError(LIVE_NEEDS)
     return lambda patient: BudgetGuard(inner(patient), usage, clock, cap, LIVE_MODEL)

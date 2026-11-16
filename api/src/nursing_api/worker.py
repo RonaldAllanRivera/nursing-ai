@@ -16,9 +16,10 @@ from nursing_core.domain.errors import (
     ReplayMissing,
 )
 from nursing_core.domain.jobs import JobFailure
+from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.notes import Note, NoteStatus, RoughNote
 from nursing_core.pipeline.fdar import run_fdar_pipeline
-from nursing_core.ports import Clock
+from nursing_core.ports import Clock, LlmProvider
 from nursing_core.storage.repositories import (
     PgNoteRepository,
     PgPatientRepository,
@@ -46,8 +47,29 @@ def failure_for(error: Exception) -> JobFailure:
     return JobFailure.PROVIDER_ERROR
 
 
+class _UsageRecorder:
+    """Wraps a job's provider: one `ai_usage` row for every answer the provider gives.
+
+    The row is written as soon as the provider returns, so a billed answer that the pipeline then
+    refuses (an empty draft) is still counted against the cap.
+    """
+
+    def __init__(
+        self, inner: LlmProvider, usage: PgUsageRepository, clock: Clock, job_id: UUID
+    ) -> None:
+        self._inner = inner
+        self._usage = usage
+        self._clock = clock
+        self._job_id = job_id
+
+    async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
+        result = await self._inner.draft_fdar(request)
+        await self._usage.record(self._job_id, result.generation, self._clock.now())
+        return result
+
+
 class DraftWorker:
-    """Runs one draft job: claim it, run the pipeline, save the note and its usage row."""
+    """Runs one draft job: claim it, run the pipeline, save the note."""
 
     def __init__(
         self,
@@ -77,13 +99,15 @@ class DraftWorker:
             await self._notes.complete_job(job_id, note)
         except NotFound:
             return  # the job was failed or finished by someone else: nothing to do
+        except Exception as error:
+            log.error("draft not saved", job_id=str(job_id), error_class=type(error).__name__)
+            await self._fail(job_id, JobFailure.PROVIDER_ERROR)
 
     async def _draft(self, job_id: UUID, rough: RoughNote) -> Note:
         patient = await self._patients.get_patient_by_encounter(rough.encounter_id)
         shift_notes = await self._notes.shift_rough_notes(rough.encounter_id, rough.shift)
-        provider = self._provider_for(patient)
+        provider = _UsageRecorder(self._provider_for(patient), self._usage, self._clock, job_id)
         result = await run_fdar_pipeline(rough, patient, shift_notes, provider)
-        await self._usage.record(job_id, result.generation, self._clock.now())
         return Note(
             id=uuid4(),
             rough_note_id=rough.id,
@@ -102,6 +126,13 @@ class DraftWorker:
             await self._notes.fail_job(job_id, failure)
         except NotFound:
             return  # the job is no longer open
+        except Exception as error:
+            # Nothing more can be done here; startup recovery fails a job left running.
+            log.error(
+                "job could not be marked failed",
+                job_id=str(job_id),
+                error_class=type(error).__name__,
+            )
 
 
 class InProcessQueue:

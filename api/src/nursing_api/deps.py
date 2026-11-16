@@ -1,6 +1,6 @@
 """FastAPI dependencies: they read what `create_app`'s lifespan put on `app.state`."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Depends, Request, Security
@@ -74,7 +74,7 @@ class SignedIn:
 
     user: StoredUser
     session: StoredSession
-    token: str
+    token: str = field(repr=False)  # the raw cookie value: never in a repr or a log
 
 
 async def current_session(
@@ -102,7 +102,7 @@ class Nurse:
     user: StoredUser
     facility_key: str
     shift: ShiftRef
-    token: str
+    token: str = field(repr=False)
 
 
 async def require_nurse(signed_in: SignedInDep) -> Nurse:

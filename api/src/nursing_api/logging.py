@@ -48,20 +48,27 @@ def _only_allowed(_logger: object, _method: str, event: EventDict) -> EventDict:
 
 LIBRARY_EVENT = "library log"
 _PROJECT_LOGGERS = ("nursing_api", "nursing_core")
+_SERVER_LOGGERS = ("uvicorn", "uvicorn.error")
+API_PREFIX = "/api/v1/"
+HEALTH_PATH = "/api/v1/health"
 
 
 def _foreign_event(_logger: object, _method: str, event: EventDict) -> EventDict:
     """Makes a stdlib record safe: no data in the event text, no traceback, only the class.
 
-    A project logger's event is its message template (never filled with arguments). Any other
-    library's message may quote data (asyncio prints the exception it never retrieved), so it
-    becomes a constant.
+    A project logger's event is its message template (never filled with arguments), and so is
+    uvicorn's own start-up and shutdown line, unless it carries a traceback. Any other library's
+    message may quote data (asyncio prints the exception it never retrieved), so it becomes a
+    constant. A message that is not text (an exception object) is a constant too.
     """
     record = event.get("_record")
     if not isinstance(record, logging.LogRecord):
         return event
     project = record.name.split(".")[0] in _PROJECT_LOGGERS
-    event["event"] = str(record.msg) if project else LIBRARY_EVENT
+    server = record.name in _SERVER_LOGGERS and record.exc_info is None
+    event["event"] = (
+        record.msg if (project or server) and isinstance(record.msg, str) else LIBRARY_EVENT
+    )
     if record.exc_info is not None and record.exc_info[0] is not None:
         event["error_class"] = record.exc_info[0].__name__
     return event
@@ -141,6 +148,7 @@ class RequestLogMiddleware:
             await self.app(scope, receive, send)
             return
         request_id = uuid.uuid4().hex
+        path = str(scope.get("path", ""))
         status = 500
         failure: str | None = None
 
@@ -152,6 +160,9 @@ class RequestLogMiddleware:
                     *message.get("headers", []),
                     (b"x-request-id", request_id.encode()),
                 ]
+                if path.startswith(API_PREFIX) and path != HEALTH_PATH:
+                    # A shared ward PC's browser must not keep notes or drafts after sign-out.
+                    message["headers"].append((b"cache-control", b"no-store"))
             await send(message)
 
         started = time.perf_counter()

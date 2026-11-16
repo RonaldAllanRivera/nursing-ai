@@ -22,7 +22,7 @@ from nursing_core.domain.errors import (
     ProviderUnavailable,
 )
 from nursing_core.domain.jobs import JobFailure, JobStatus
-from nursing_core.domain.model_output import DraftRequest, ProviderResult
+from nursing_core.domain.model_output import DraftRequest, ModelFdarDraft, ProviderResult
 from nursing_core.domain.notes import GenerationInfo, RoughNote
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.pipeline.fdar import run_fdar_pipeline
@@ -252,6 +252,68 @@ async def test_a_failure_logs_the_job_and_the_error_class_only(
     ):
         await sign_in(client, PH_STAFF)
         await post_and_finish(app, client)
+    assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_billed_answer_the_pipeline_rejects_still_counts_as_a_call(
+    database_url: str, clock: MutableClock
+) -> None:
+    empty = FakeProvider(ModelFdarDraft(entries=[]))
+    async with (
+        running_app(database_url, clock, provider_for=lambda _patient: empty) as app,
+        client_for(app) as client,
+    ):
+        await sign_in(client, PH_STAFF)
+        job = await post_and_finish(app, client)
+        assert (job["status"], job["failure"]) == ("failed", "invalid_output")
+        assert (await app.state.usage.month_total(clock.now()))[1] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_database_error_while_saving_the_draft_fails_the_job(
+    database_url: str,
+    clock: MutableClock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    canary = "zebracanary-db-text"
+    caplog.set_level(logging.DEBUG)
+    async with running_app(database_url, clock) as app, client_for(app) as client:
+
+        async def broken(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(canary)
+
+        monkeypatch.setattr(app.state.notes, "complete_job", broken)
+        await sign_in(client, PH_STAFF)
+        job = await post_and_finish(app, client)
+    assert (job["status"], job["failure"]) == ("failed", "provider_error")
+    assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_database_error_while_failing_a_job_is_logged_not_raised(
+    database_url: str,
+    clock: MutableClock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    canary = "zebracanary-db-text"
+    caplog.set_level(logging.DEBUG)
+    provider = FailingProvider(RuntimeError("x"))
+    async with (
+        running_app(database_url, clock, provider_for=lambda _patient: provider) as app,
+        client_for(app) as client,
+    ):
+
+        async def broken(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(canary)
+
+        monkeypatch.setattr(app.state.notes, "fail_job", broken)
+        await sign_in(client, PH_STAFF)
+        await post_and_finish(app, client)
+    assert "draft job crashed" not in caplog.text
+    assert "could not be marked failed" in caplog.text
     assert canary not in caplog.text
 
 

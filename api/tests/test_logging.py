@@ -280,3 +280,38 @@ async def test_uvicorn_error_logs_come_through_the_allowlist(
     [line] = json_lines(captured.out)
     assert line["event"] == LIBRARY_EVENT
     assert line["error_class"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_a_message_that_is_not_text_never_becomes_the_event(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+    logging.getLogger("nursing_core.t").warning(ValueError(CANARY))  # pyright: ignore[reportArgumentType]
+    out = capfd.readouterr().out
+    assert CANARY not in out
+    assert [line["event"] for line in json_lines(out)] == [LIBRARY_EVENT]
+
+
+@pytest.mark.asyncio
+async def test_a_uvicorn_template_is_the_event_and_its_arguments_are_not(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+    logging.getLogger("uvicorn.error").info("Uvicorn running on %s://%s:%d", "http", CANARY, 8000)
+    out = capfd.readouterr().out
+    assert CANARY not in out
+    assert [line["event"] for line in json_lines(out)] == ["Uvicorn running on %s://%s:%d"]
+
+
+@pytest.mark.asyncio
+async def test_an_api_response_is_not_stored_by_the_browser(
+    client: httpx.AsyncClient,
+) -> None:
+    await sign_in(client, PH_STAFF)
+    for path in ("/api/v1/session", "/api/v1/patients", "/api/v1/personas"):
+        response = await client.get(path)
+        assert response.headers["cache-control"] == "no-store", path
+    unauthorised = await client.get("/api/v1/notes/" + str(uuid4()))
+    assert unauthorised.headers["cache-control"] == "no-store"  # a problem answer too
+    assert "cache-control" not in (await client.get("/api/v1/health")).headers
