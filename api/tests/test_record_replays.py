@@ -11,7 +11,7 @@ from nursing_api.record_replays import main
 from nursing_core.clock import SystemClock
 from nursing_core.db import create_engine
 from nursing_core.demo import load_demo_cases
-from nursing_core.domain.errors import ProviderUnavailable
+from nursing_core.domain.errors import ModelRefused, ProviderUnavailable
 from nursing_core.domain.model_output import DraftRequest, ModelFdarDraft, ProviderResult
 from nursing_core.domain.notes import GenerationInfo
 from nursing_core.domain.patient import PatientRecord
@@ -341,3 +341,43 @@ async def test_an_unmigrated_database_says_to_run_make_migrate(
         await engine.dispose()
     assert await run(tmp_path, Fakes()) == 1
     assert _out(capsys)[0] == ["Not recording: the database has no tables yet. Run `make migrate`."]
+
+
+class _BilledThenRefused:
+    """A provider whose answer is billed and then raised as a failure, as the live one does."""
+
+    def __call__(self, patient: PatientRecord) -> LlmProvider:
+        return self
+
+    async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
+        generation = GenerationInfo(
+            provider="anthropic",
+            model=ANSWERED_AS,
+            prompt_version=request.prompt_version,
+            input_tokens=1500,
+            output_tokens=500,
+            cost_usd=Decimal("0.32"),
+            latency_ms=10,
+        )
+        raise ModelRefused("the model declined this request", generation=generation)
+
+
+@pytest.mark.asyncio
+async def test_a_billed_failure_is_counted_once_in_the_output_and_in_ai_usage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], database_url: str
+) -> None:
+    code = await asyncio.to_thread(
+        main, ["--out", str(tmp_path)], provider_for=_BilledThenRefused()
+    )
+    assert code == 1
+    lines, _ = _out(capsys)
+    assert lines == [
+        f"{CASES[0].key}: failed (ModelRefused) $0.320000",
+        "total: $0.320000 over 1 call",
+    ]
+    engine = create_engine(database_url)
+    try:
+        total, calls = await PgUsageRepository(engine).month_total(SystemClock().now())
+    finally:
+        await engine.dispose()
+    assert (total, calls) == (Decimal("0.32"), 1)

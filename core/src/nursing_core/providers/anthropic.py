@@ -202,29 +202,30 @@ class AnthropicProvider:
         if message is None:
             # Raised outside the except, so the unreadable answer isn't kept as the context.
             raise ProviderUnavailable("the AI service call failed") from None
+        generation = GenerationInfo(
+            provider="anthropic",
+            model=message.model,
+            prompt_version=request.prompt_version,
+            input_tokens=message.input_tokens + message.cache_creation + message.cache_read,
+            output_tokens=message.output_tokens,
+            cost_usd=cost_usd(
+                self.model,
+                message.input_tokens,
+                message.output_tokens,
+                message.cache_creation,
+                message.cache_read,
+            ),
+            latency_ms=latency_ms,
+        )
+        # From here the answer was billed, so each failure carries its cost.
         if message.stop_reason == "refusal":
-            raise ModelRefused("the model declined this request")
+            raise ModelRefused("the model declined this request", generation=generation)
         if message.stop_reason == "max_tokens":
-            raise InvalidModelOutput("the model's answer was cut off")
+            raise InvalidModelOutput("the model's answer was cut off", generation=generation)
         try:
             output = ModelFdarDraft.model_validate_json(message.text)
         except ValidationError:
-            raise InvalidModelOutput("the model's answer did not match the draft schema") from None
-        return ProviderResult(
-            output=output,
-            generation=GenerationInfo(
-                provider="anthropic",
-                model=message.model,
-                prompt_version=request.prompt_version,
-                input_tokens=message.input_tokens + message.cache_creation + message.cache_read,
-                output_tokens=message.output_tokens,
-                cost_usd=cost_usd(
-                    self.model,
-                    message.input_tokens,
-                    message.output_tokens,
-                    message.cache_creation,
-                    message.cache_read,
-                ),
-                latency_ms=latency_ms,
-            ),
-        )
+            raise InvalidModelOutput(
+                "the model's answer did not match the draft schema", generation=generation
+            ) from None
+        return ProviderResult(output=output, generation=generation)

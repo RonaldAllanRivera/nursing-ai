@@ -2,13 +2,14 @@
 
 from uuid import UUID
 
+from nursing_core.domain.errors import BilledError
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.ports import Clock, LlmProvider
 from nursing_core.storage.repositories import PgUsageRepository
 
 
 class UsageRecorder:
-    """Wraps a provider: one `ai_usage` row for every answer the provider gives.
+    """Wraps a provider: one `ai_usage` row for every answer the provider gives, or fails after.
 
     The row is written as soon as the provider returns, so a billed answer that the pipeline then
     refuses (an empty draft) is still counted against the cap. `job_id` is None for a call that
@@ -24,6 +25,12 @@ class UsageRecorder:
         self._job_id = job_id
 
     async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
-        result = await self._inner.draft_fdar(request)
+        try:
+            result = await self._inner.draft_fdar(request)
+        except BilledError as error:
+            # A billed answer that failed inside the provider still counts; the error goes on.
+            if error.generation is not None:
+                await self._usage.record(self._job_id, error.generation, self._clock.now())
+            raise
         await self._usage.record(self._job_id, result.generation, self._clock.now())
         return result

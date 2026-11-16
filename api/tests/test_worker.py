@@ -30,6 +30,7 @@ from nursing_core.ports import LlmProvider
 from nursing_core.providers.fake import FakeProvider
 from nursing_core.storage.repositories import PgNoteRepository, PgPatientRepository
 from pydantic import SecretStr
+from sqlalchemy import text
 
 from .helpers import (
     PH_STAFF,
@@ -464,3 +465,48 @@ async def test_shutdown_cancels_a_job_that_will_not_finish(
     await asyncio.wait_for(started.wait(), 5)
     await app.state.queue.close(wait_seconds=0.05)
     assert app.state.queue.pending == 0
+
+
+def _billed(error_type: type[ModelRefused | InvalidModelOutput]) -> Exception:
+    generation = GenerationInfo(
+        provider="anthropic",
+        model="claude-opus-5-5",
+        prompt_version="fdar-v1",
+        input_tokens=1500,
+        output_tokens=500,
+        cost_usd=Decimal("0.32"),
+        latency_ms=10,
+    )
+    return error_type("fixed message", generation=generation)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_type", "failure"),
+    [
+        (ModelRefused, JobFailure.MODEL_REFUSED),
+        (InvalidModelOutput, JobFailure.INVALID_OUTPUT),
+    ],
+)
+async def test_a_billed_failure_is_recorded_once_and_keeps_its_problem_code(
+    database_url: str,
+    clock: MutableClock,
+    error_type: type[ModelRefused | InvalidModelOutput],
+    failure: JobFailure,
+) -> None:
+    provider = FailingProvider(_billed(error_type))
+    async with (
+        running_app(database_url, clock, provider_for=lambda _patient: provider) as app,
+        client_for(app) as client,
+    ):
+        await sign_in(client, PH_STAFF)
+        job = await post_and_finish(app, client)
+        assert (job["status"], job["failure"]) == ("failed", failure.value)
+        assert await app.state.usage.month_total(clock.now()) == (Decimal("0.32"), 1)
+        async with app.state.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("select input_tokens, output_tokens, cost_usd from ai_usage")
+                )
+            ).one()
+    assert (row[0], row[1], row[2]) == (1500, 500, Decimal("0.32"))

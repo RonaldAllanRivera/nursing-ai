@@ -1,5 +1,7 @@
 """Domain errors. No message ever quotes note text, names or keys."""
 
+from nursing_core.domain.notes import GenerationInfo
+
 
 class DomainError(Exception):
     """Base class for every error the API maps to a problem response."""
@@ -37,11 +39,23 @@ class AiBudgetReached(DomainError):
     """The monthly AI cap (ours or the Console's) is reached. Never retried."""
 
 
-class ModelRefused(DomainError):
+class BilledError(DomainError):
+    """A failure that can follow an answer the AI service already billed.
+
+    `generation` is what that answer cost (None when no answer with usage arrived), so the spend
+    still counts against the monthly cap. It is never part of the message.
+    """
+
+    def __init__(self, message: str = "", *, generation: GenerationInfo | None = None) -> None:
+        super().__init__(message)
+        self.generation = generation
+
+
+class ModelRefused(BilledError):
     pass
 
 
-class InvalidModelOutput(DomainError):
+class InvalidModelOutput(BilledError):
     pass
 
 

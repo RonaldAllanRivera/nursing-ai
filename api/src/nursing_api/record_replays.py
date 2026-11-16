@@ -21,7 +21,7 @@ from pathlib import Path
 from nursing_core.clock import SystemClock
 from nursing_core.db import create_engine
 from nursing_core.demo import load_demo_cases
-from nursing_core.domain.errors import NotFound, ReplayMissing
+from nursing_core.domain.errors import BilledError, NotFound, ReplayMissing
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.pipeline.fdar import run_fdar_pipeline
@@ -125,11 +125,13 @@ async def _record(
                 await ReplayProvider(out_dir, LIVE_MODEL).draft_fdar(request)  # a miss raises
             except Exception as error:
                 # A billed answer the pipeline then refused is still money spent.
-                paid = step.answer if step is not None else None
+                paid = step.answer.generation if step is not None and step.answer else None
+                if paid is None and isinstance(error, BilledError):
+                    paid = error.generation  # billed, then refused inside the provider
                 shown = ""
                 if paid is not None:
-                    total, calls = total + paid.generation.cost_usd, calls + 1
-                    shown = f" {_money(paid.generation.cost_usd)}"
+                    total, calls = total + paid.cost_usd, calls + 1
+                    shown = f" {_money(paid.cost_usd)}"
                 print(f"{case.key}: failed ({type(error).__name__}){shown}")
                 code = 1
                 break

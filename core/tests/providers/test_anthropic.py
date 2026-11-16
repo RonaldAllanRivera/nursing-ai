@@ -475,3 +475,51 @@ async def test_an_unknown_prompt_version_is_not_reported_as_an_outage() -> None:
         await _provider(server).draft_fdar(request)
     assert not isinstance(caught.value, ProviderUnavailable)
     assert len(server.bodies) == 0
+
+
+_BILLED_USAGE = {
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "cache_creation_input_tokens": 200,
+    "cache_read_input_tokens": 300,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_type", "text", "stop_reason"),
+    [
+        (ModelRefused, "I can't help with that.", "refusal"),
+        (InvalidModelOutput, GOOD_JSON, "max_tokens"),
+        (InvalidModelOutput, "this is not json", "end_turn"),
+        (InvalidModelOutput, '{"entries": 3}', "end_turn"),
+    ],
+)
+async def test_a_billed_failure_carries_what_the_answer_cost(
+    error_type: type[ModelRefused | InvalidModelOutput], text: str, stop_reason: str
+) -> None:
+    server = _Server(_message(text=text, stop_reason=stop_reason, usage=_BILLED_USAGE))
+    with pytest.raises(error_type) as caught:
+        await _provider(server).draft_fdar(_request())
+    generation = caught.value.generation
+    assert generation is not None
+    assert generation.provider == "anthropic"
+    assert generation.model == MODEL
+    assert generation.prompt_version == "fdar-v1"
+    assert generation.input_tokens == 1500
+    assert generation.output_tokens == 500
+    assert generation.cost_usd == cost_usd(MODEL, 1000, 500, 200, 300)
+    assert text not in str(caught.value)
+
+
+def test_an_error_without_a_billed_answer_has_no_generation() -> None:
+    assert ModelRefused("x").generation is None
+    assert InvalidModelOutput("x").generation is None
+
+
+@pytest.mark.asyncio
+async def test_a_failure_without_an_answer_carries_no_generation() -> None:
+    server = _Server(_error(500, "api_error", "boom"))
+    with pytest.raises(ProviderUnavailable) as caught:
+        await _provider(server).draft_fdar(_request())
+    assert not hasattr(caught.value, "generation")
