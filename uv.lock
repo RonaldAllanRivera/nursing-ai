@@ -985,7 +985,7 @@ wheels = [
 
 [[package]]
 name = "nursing-api"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "api" }
 dependencies = [
     { name = "fastapi" },
@@ -1006,7 +1006,7 @@ requires-dist = [
 
 [[package]]
 name = "nursing-core"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "core" }
 dependencies = [
     { name = "alembic" },
@@ -1031,7 +1031,7 @@ requires-dist = [
 
 [[package]]
 name = "nursing-evals"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "evals" }
 dependencies = [
     { name = "nursing-core" },
@@ -1042,7 +1042,7 @@ requires-dist = [{ name = "nursing-core", editable = "core" }]
 
 [[package]]
 name = "nursing-mcp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "mcp" }
 dependencies = [
     { name = "nursing-core" },

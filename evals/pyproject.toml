@@ -1,6 +1,6 @@
 [project]
 name = "nursing-evals"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evaluation harness for Nursing Documentation AI."
 requires-python = ">=3.13"
 dependencies = ["nursing-core"]
