@@ -212,3 +212,82 @@ def test_cli_refuses_an_entry_the_matcher_cannot_produce(
         privacy_words.hash_word("zebracanary"),
         privacy_words.hash_word("person@family.example"),
     ]
+
+
+def test_cli_refuses_a_symlink_at_the_target_and_never_follows_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    repo = make_repo(tmp_path, "PRIVATE_WORDS_FILE=words.sha256", ignore="words.sha256\n")
+    real = tmp_path / "elsewhere.sha256"
+    real.write_text("")
+    (repo / "words.sha256").symlink_to(real)
+    type_answers(monkeypatch, "Alpha", "")
+    assert privacy_words.main(["--repo", str(repo)]) == 2
+    out = capsys.readouterr()
+    assert "symbolic link" in out.err
+    assert "elsewhere" not in (out.out + out.err)
+    assert real.read_text() == ""
+    assert (repo / "words.sha256").is_symlink()
+
+
+def test_add_words_refuses_a_symlink_even_one_that_dangles(tmp_path: Path) -> None:
+    link = tmp_path / "words.sha256"
+    link.symlink_to(tmp_path / "missing")
+    with pytest.raises(ValueError, match="symbolic link"):
+        privacy_words.add_words(link, ["Alpha"])
+    assert not (tmp_path / "missing").exists()
+
+
+def test_add_words_replaces_the_file_atomically_and_keeps_its_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "words.sha256"
+    privacy_words.add_words(path, ["Alpha"])
+    seen: list[tuple[str, str]] = []
+    real_replace = privacy_words.os.replace
+
+    def spy(src: str | Path, dst: str | Path) -> None:
+        seen.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(privacy_words.os, "replace", spy)
+    assert privacy_words.add_words(path, ["Beta"]) == 2
+    assert len(seen) == 1
+    src, dst = seen[0]
+    assert dst == str(path)
+    assert Path(src).parent == path.parent
+    assert Path(src) != path
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["words.sha256"]
+
+
+def test_a_failed_write_leaves_the_old_list_and_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "words.sha256"
+    privacy_words.add_words(path, ["Alpha"])
+    before = path.read_text()
+
+    def broken(src: str | Path, dst: str | Path) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(privacy_words.os, "replace", broken)
+    with pytest.raises(OSError, match="No space"):
+        privacy_words.add_words(path, ["Beta"])
+    assert path.read_text() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["words.sha256"]
+
+
+def test_cli_fails_closed_when_git_cannot_say_whether_the_file_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PRIVATE_WORDS_FILE", raising=False)
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+    (not_a_repo / ".env").write_text("PRIVATE_WORDS_FILE=words.sha256\n")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    type_answers(monkeypatch, "Alpha", "")
+    assert privacy_words.main(["--repo", str(not_a_repo)]) == 2
+    assert "cannot tell whether git ignores" in capsys.readouterr().err
+    assert not (not_a_repo / "words.sha256").exists()

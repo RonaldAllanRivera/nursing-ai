@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unicodedata
 from collections.abc import Iterable
 from getpass import getpass
@@ -66,6 +67,8 @@ def load_hashes(path: Path) -> list[str]:
 
 def add_words(path: Path, words: Iterable[str]) -> int:
     """Merge the words' hashes into the file (no duplicates, first order kept); return the total."""
+    if path.is_symlink():
+        raise ValueError("the target is a symbolic link; it is never followed")
     merged = list(dict.fromkeys(load_hashes(path))) if path.exists() else []
     seen = set(merged)
     for word in words:
@@ -76,10 +79,16 @@ def add_words(path: Path, words: Iterable[str]) -> int:
             seen.add(digest)
             merged.append(digest)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write("".join(f"{digest}\n" for digest in merged))
-    path.chmod(0o600)
+    # Write beside the list, then swap it in: a failed write never leaves half a list.
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("".join(f"{digest}\n" for digest in merged))
+        Path(temp).chmod(0o600)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
     return len(merged)
 
 
@@ -109,15 +118,32 @@ def words_file(repo: Path) -> Path | None:
     return path if path.is_absolute() else repo / path
 
 
-def _not_ignored(repo: Path, path: Path) -> bool:
-    """True when the file sits in the repo and git would commit it (exit 128: outside the repo)."""
-    result = subprocess.run(  # noqa: S603
-        ["git", "check-ignore", "-q", str(path)],  # noqa: S607
+def _git_says(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
         cwd=repo,
         capture_output=True,
         check=False,
     )
-    return result.returncode == 1
+
+
+def _ignore_problem(repo: Path, path: Path) -> str | None:
+    """Why the target can't be used, or None when git ignores it or it lies outside the repo.
+
+    Anything git can't answer (not a repository, an error) refuses: it is never read as "ignored".
+    """
+    top = _git_says(repo, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        return f"cannot tell whether git ignores {SETTING}: the repo folder is not a git repository"
+    root = Path(top.stdout.decode("utf-8", errors="replace").strip()).resolve()
+    if not path.parent.resolve().is_relative_to(root):
+        return None
+    result = _git_says(repo, "check-ignore", "-q", str(path))
+    if result.returncode == 0:
+        return None
+    if result.returncode == 1:
+        return f"{SETTING} is not ignored by git: add it to .gitignore first"
+    return f"cannot tell whether git ignores {SETTING}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -130,8 +156,11 @@ def main(argv: list[str] | None = None) -> int:
     if path is None:
         print(f"set {SETTING} in .env", file=sys.stderr)
         return 2
-    if _not_ignored(repo, path):
-        print(f"{SETTING} is not ignored by git: add it to .gitignore first", file=sys.stderr)
+    if path.is_symlink():
+        print(f"{SETTING} is a symbolic link: it is never followed", file=sys.stderr)
+        return 2
+    if (problem := _ignore_problem(repo, path)) is not None:
+        print(problem, file=sys.stderr)
         return 2
 
     words: list[str] = []
