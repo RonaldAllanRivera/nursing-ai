@@ -190,6 +190,36 @@ describe("shell and guards", () => {
     expect(second).toHaveTextContent("The shifts did not load.");
   });
 
+  it("keeps focus on the new Try again when the shifts fail to load again", async () => {
+    await renderApp("/sign-in");
+    let gate: Promise<void> | null = null;
+    server.use(
+      http.get("*/api/v1/facilities/:key", async () => {
+        if (gate) await gate;
+        return HttpResponse.json({}, { status: 500 });
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    const failed = await group.findByRole("button", { name: "Try again" });
+    let release = () => {};
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await userEvent.click(failed);
+    // While the load runs the panel says so, and the old button is gone with the focus it had.
+    expect(await group.findByText("Loading the shifts…")).toBeVisible();
+    release();
+    const again = await group.findByRole("button", { name: "Try again" });
+    expect(again).not.toBe(failed);
+    await waitFor(() => {
+      expect(again).toHaveFocus();
+    });
+  });
+
   it("opening the shifts the first time leaves focus on the change button", async () => {
     await signInAs("Staff nurse · Sarah Navarro, RN");
     const toggle = await screen.findByRole("button", { name: "Change shift" });

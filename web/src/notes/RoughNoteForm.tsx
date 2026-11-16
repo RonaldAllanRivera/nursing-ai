@@ -97,8 +97,10 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
   const showAgainHint = (failed || lost) && sameAsSent;
 
   // What a screen reader hears, in one region that is always on the page (a node that appears is
-  // often not read; a change in a node that was there is). Where a visible line has no role of
-  // its own, this says the same sentences, word for word. Failures are alerts instead.
+  // often not read; a change in a node that was there is). For the progress lines (waiting,
+  // drafting, couldn't check) it says the same sentences as the visible line, word for word. The
+  // saving line, the change-the-text hint and the count are worded for the ear. Failures are
+  // alerts instead.
   const spoken = showAgainHint
     ? "To save a new note, change the text in the box."
     : save.isPending && !save.isPaused

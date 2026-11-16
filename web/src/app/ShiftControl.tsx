@@ -25,30 +25,37 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
     data: facility,
     isError,
     refetch,
-    isFetching,
+    fetchStatus,
     errorUpdateCount,
   } = useFacility(facilityKey);
   const change = useChangeShift();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  // Set when Try again is pressed, so the list that replaces the error gets the focus Try again lost.
+  const tryAgain = useRef<HTMLButtonElement>(null);
+  // Set when Try again is pressed, so whatever replaces the error view (the list, or a fresh Try
+  // again after another failure) gets the focus the old button lost.
   const retried = useRef(false);
 
   useEffect(() => {
-    if (!retried.current || isFetching) return;
+    // "idle" is the load being over, whether it finished or was given up; "paused" (offline) and
+    // "fetching" are not.
+    if (!retried.current || fetchStatus !== "idle") return;
     // The Try again has settled, either way: it must not stay armed for a later load.
     retried.current = false;
-    if (!facility) return;
     // Only when focus was lost with the Try again button. If she has moved on, leave it alone.
     const active = document.activeElement;
     if (active && active !== document.body && !panel.current?.contains(active)) return;
+    if (!facility) {
+      if (isError) tryAgain.current?.focus();
+      return;
+    }
     const buttons = panel.current?.querySelectorAll<HTMLButtonElement>("ul button");
     const target = panel.current?.querySelector<HTMLButtonElement>(
       'ul button[aria-pressed="true"]',
     );
     (target ?? buttons?.[0])?.focus();
-  }, [facility, isFetching]);
+  }, [facility, isError, fetchStatus]);
 
   useEffect(() => {
     if (!open) return;
@@ -152,10 +159,9 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
                 The shifts did not load.
               </p>
               <button
+                ref={tryAgain}
                 type="button"
-                aria-disabled={isFetching}
                 onClick={() => {
-                  if (isFetching) return;
                   retried.current = true;
                   void refetch();
                 }}

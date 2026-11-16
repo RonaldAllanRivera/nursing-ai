@@ -25,7 +25,9 @@ const AID_LINE = "Documentation aid — the nurse reviews and signs every note."
 // Silences console.warn and console.error for the rest of one test. When the test is over (after
 // the cleanup and handler reset, so their calls count too) it checks there was at least one call
 // of each kind and that every call carries the expected argument (the received arguments are
-// printed when one does not), then always restores both.
+// printed when one does not), then always restores both. Call it first in a test: hooks run in the
+// opposite order to how they were registered, so one registered before it would run after the
+// restore and its console calls would reach the real console.
 function spyOnConsole(expected: { warn: unknown; error: unknown }) {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -37,7 +39,10 @@ function spyOnConsole(expected: { warn: unknown; error: unknown }) {
       ] as const) {
         expect(spy.mock.calls.length).toBeGreaterThan(0);
         for (const call of spy.mock.calls) {
-          expect(call).toContainEqual(arg);
+          // The router's warning is one message; React's report carries the error somewhere in its
+          // arguments.
+          if (spy === warn) expect(call[0]).toEqual(arg);
+          else expect(call).toContainEqual(arg);
         }
       }
     } finally {
@@ -171,7 +176,7 @@ describe("app router", () => {
 
   it("shows one aid line and no nested main when a page inside the shell fails", async () => {
     spyOnConsole({
-      warn: expect.stringContaining("Error in route match"),
+      warn: "Warning: Error in route match: /app/patients/$patientId/patients/abc",
       error: expect.objectContaining({ message: "synthetic page failure" }),
     });
     const { router } = await signInAsNurse();
@@ -184,6 +189,7 @@ describe("app router", () => {
       "Something went wrong loading this page.",
     );
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
     expect(screen.getAllByText(AID_LINE)).toHaveLength(1);
     expect(document.querySelectorAll("main main")).toHaveLength(0);
   });
@@ -192,6 +198,7 @@ describe("app router", () => {
     const { router } = await signInAsNurse();
     router.history.push("/patients/abc/xyz");
     expect(await screen.findByText("There's no page at this address.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
     expect(screen.getAllByText(AID_LINE)).toHaveLength(1);
     expect(document.querySelectorAll("main main")).toHaveLength(0);
   });
