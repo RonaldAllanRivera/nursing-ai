@@ -11,7 +11,6 @@ from pathlib import Path
 
 from nursing_core.domain.errors import ReplayMissing
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
-from nursing_core.ports import LlmProvider
 
 RECORDINGS_DIR = Path(__file__).parent / "recordings"
 
@@ -39,12 +38,6 @@ class ReplayProvider:
             update={"provider": "replay", "cost_usd": Decimal(0), "latency_ms": 0}
         )
         return ProviderResult(output=recorded.output, generation=generation)
-
-
-async def record(request: DraftRequest, provider: LlmProvider, out_dir: Path) -> Path:
-    """Asks the provider once and saves its answer, keyed by the model that gave it."""
-    result = await provider.draft_fdar(request)
-    return save_recording(request, result, out_dir, result.generation.model)
 
 
 def save_recording(

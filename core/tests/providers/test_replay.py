@@ -16,11 +16,11 @@ from nursing_core.domain.model_output import (
 )
 from nursing_core.domain.notes import GenerationInfo
 from nursing_core.ports import LlmProvider
+from nursing_core.providers import replay
 from nursing_core.providers.fake import FakeProvider
 from nursing_core.providers.replay import (
     RECORDINGS_DIR,
     ReplayProvider,
-    record,
     replay_key,
     save_recording,
 )
@@ -64,6 +64,17 @@ class _Recorded:
         )
 
 
+async def _save(request: DraftRequest, provider: LlmProvider, out_dir: Path) -> Path:
+    """Asks the provider once and saves its answer under the model replay looks up."""
+    return save_recording(request, await provider.draft_fdar(request), out_dir, "claude-opus-5-5")
+
+
+def test_there_is_no_helper_that_keys_a_recording_by_the_answering_model() -> None:
+    # The model that answers can be a longer snapshot name than the one asked for, and replay
+    # looks a recording up by the one asked for: a file keyed by the answer is never found.
+    assert not hasattr(replay, "record")
+
+
 def test_replay_key_is_stable_and_depends_on_request_and_model() -> None:
     key = replay_key(_request(), "claude-opus-5-5")
     assert key == replay_key(_request(), "claude-opus-5-5")
@@ -79,9 +90,9 @@ def test_recordings_dir_is_the_packages_folder() -> None:
 
 
 @pytest.mark.asyncio
-async def test_record_writes_a_file_named_by_its_key(tmp_path: Path) -> None:
+async def test_save_recording_writes_a_file_named_by_its_key(tmp_path: Path) -> None:
     out_dir = tmp_path / "new" / "folder"
-    path = await record(_request(), _Recorded(), out_dir)
+    path = await _save(_request(), _Recorded(), out_dir)
     assert path == out_dir / f"{replay_key(_request(), 'claude-opus-5-5')}.json"
     text = path.read_text(encoding="utf-8")
     assert text.endswith("}\n")
@@ -91,7 +102,7 @@ async def test_record_writes_a_file_named_by_its_key(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_replay_returns_recording(tmp_path: Path) -> None:
-    await record(_request(), _Recorded(), tmp_path)
+    await _save(_request(), _Recorded(), tmp_path)
     provider: LlmProvider = ReplayProvider(tmp_path)
     result = await provider.draft_fdar(_request())
     assert result.output == OUTPUT
@@ -113,19 +124,12 @@ async def test_replay_missing_raises(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_replay_of_a_recording_for_another_request_raises(tmp_path: Path) -> None:
-    path = await record(_request(), _Recorded(), tmp_path)
+    path = await _save(_request(), _Recorded(), tmp_path)
     stored = json.loads(path.read_text(encoding="utf-8"))
     stored["request"]["redacted_text"] = "something else"
     path.write_text(json.dumps(stored), encoding="utf-8")
     with pytest.raises(ReplayMissing):
         await ReplayProvider(tmp_path).draft_fdar(_request())
-
-
-@pytest.mark.asyncio
-async def test_record_keys_by_the_models_name(tmp_path: Path) -> None:
-    path = await record(_request(), FakeProvider(OUTPUT), tmp_path)
-    assert path.name == f"{replay_key(_request(), 'fake')}.json"
-    assert await ReplayProvider(tmp_path, model="fake").draft_fdar(_request())
 
 
 @pytest.mark.asyncio
