@@ -105,6 +105,15 @@ class ActionRefused(Exception):
     """A line action that breaks a rule (answered 422). The message states the rule, never text."""
 
 
+class HeaderRefused(Exception):
+    """A header that breaks a rule (answered 422). `field` names it; the message is fixed."""
+
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(message)
+        self.field = field
+        self.message = message
+
+
 def problem_response(
     status: int,
     code: ProblemCode,
@@ -163,6 +172,13 @@ async def _action_refused(_request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _header_refused(_request: Request, exc: Exception) -> JSONResponse:
+    if not isinstance(exc, HeaderRefused):
+        return problem_response(422, "invalid_request")
+    errors = [FieldError(field=exc.field, message=exc.message)]
+    return problem_response(422, "invalid_request", "see errors", errors=errors)
+
+
 # Each domain error and the problem it becomes. A problem never carries the error's message.
 _SIMPLE: dict[type[Exception], tuple[int, ProblemCode]] = {
     NotSignedIn: (401, "not_signed_in"),
@@ -196,6 +212,7 @@ def install_problems(app: FastAPI) -> None:
     app.add_exception_handler(ReviewIncomplete, _review_incomplete)
     app.add_exception_handler(RequestValidationError, _invalid)
     app.add_exception_handler(ActionRefused, _action_refused)
+    app.add_exception_handler(HeaderRefused, _header_refused)
     plain_openapi = app.openapi
 
     def problem_openapi() -> dict[str, Any]:

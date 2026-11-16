@@ -14,10 +14,13 @@ from nursing_api.deps import (
     QueueDep,
     ensure_own_facility,
 )
-from nursing_api.problems import PreconditionRequired, problems
+from nursing_api.problems import HeaderRefused, PreconditionRequired, problems
 from nursing_api.routes import SIGNED_IN
 from nursing_api.routes.jobs import job_out
 from nursing_api.schemas import DraftJobOut, RoughNoteIn
+
+# A longer key would pass Postgres's index-row limit and end as a plain 500.
+MAX_IDEMPOTENCY_KEY = 200
 
 router = APIRouter(prefix="/api/v1/patients", tags=["notes"], dependencies=SIGNED_IN)
 
@@ -66,6 +69,8 @@ async def add_rough_note(
     """Saves the rough note in the session's shift and starts a draft job."""
     if not idempotency_key:
         raise PreconditionRequired
+    if len(idempotency_key) > MAX_IDEMPOTENCY_KEY:
+        raise HeaderRefused("header.Idempotency-Key", "too long")
     patient = await patients.get_patient(patient_id)
     ensure_own_facility(nurse, patient)
     rough = RoughNote(

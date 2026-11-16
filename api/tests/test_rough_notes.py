@@ -208,3 +208,24 @@ async def test_a_nul_character_or_a_blank_note_is_invalid(
 ) -> None:
     await sign_in(client, PH_STAFF)
     assert (await post_note(client, PH_CASE.patient_id, text)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_an_idempotency_key_over_200_characters_is_422_without_echoing_it(
+    client: httpx.AsyncClient,
+) -> None:
+    await sign_in(client, PH_STAFF)
+    path = f"/api/v1/patients/{PH_CASE.patient_id}/rough-notes"
+    too_long = "k" * 201
+    response = await client.post(
+        path, json={"text": "pt resting"}, headers={"Idempotency-Key": too_long}
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "invalid_request"
+    assert body["errors"] == [{"field": "header.Idempotency-Key", "message": "too long"}]
+    assert too_long not in response.text
+    fine = await client.post(
+        path, json={"text": "pt resting"}, headers={"Idempotency-Key": "k" * 200}
+    )
+    assert fine.status_code == 202

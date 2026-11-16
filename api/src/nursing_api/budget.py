@@ -1,4 +1,4 @@
-"""The monthly AI spend cap: checked before every live call, so the cap can't be passed."""
+"""The monthly AI spend cap: checked before every live call. Concurrent calls can still pass it."""
 
 from decimal import Decimal
 

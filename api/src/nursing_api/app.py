@@ -60,7 +60,6 @@ def create_app(
             provider_factory(resolved, app.state.usage, the_clock, provider_for),
         )
         queue = InProcessQueue(worker.run, app.state.notes)
-        app.state.worker = worker
         app.state.queue = queue
         try:
             await queue.start(resolved.db_ping_timeout_s)
