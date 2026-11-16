@@ -35,7 +35,7 @@ LOCAL_DB_ENV = env -u ANTHROPIC_API_KEY $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHL
 RECORD_ENV = env $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHLY_CAP_USD) $(LOCAL_DB_VARS)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e e2e-mock check-py check-web check actionlint infra-check gen-api openapi spend migrate seed record-replays private-words accept-binary tools public-check public-check-ci hooks setup
+.PHONY: help ports up down dev e2e e2e-mock readme-media check-py check-web check actionlint infra-check gen-api openapi spend migrate seed record-replays private-words accept-binary tools public-check public-check-ci hooks setup
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -101,6 +101,10 @@ seed: migrate ## Add the synthetic demo facilities, people and patients (never u
 record-replays: export ANTHROPIC_API_KEY := $(ANTHROPIC_API_KEY)
 record-replays: ## Record the demo drafts from the live model (calls the live model and costs money; needs AI_MODE=live)
 	@$(RECORD_ENV) uv run python -m nursing_api.record_replays
+
+# Not part of `e2e` or `check`: it rewrites the pictures in docs/media. The stack stays up afterwards.
+readme-media: ## Rewrite docs/media (the stack must be up in replay mode: make up AI_MODE=replay)
+	pnpm -C web exec playwright test -c playwright.readme.config.ts
 
 # Interactive: the words are typed at a hidden prompt, so don't pipe it.
 private-words: ## Add private words to the hashed word list (hidden prompt)

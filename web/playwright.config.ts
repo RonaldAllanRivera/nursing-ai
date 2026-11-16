@@ -12,7 +12,7 @@ const baseURL = `http://localhost:${webPort}`;
 
 export default defineConfig({
   testDir: "e2e",
-  testIgnore: ["mock/**"],
+  testIgnore: ["mock/**", "readme/**"],
   forbidOnly: !!process.env["CI"],
   reporter: process.env["CI"] ? [["html", { open: "never" }], ["list"]] : "list",
   // One journey at a time: they share one database, and a settings save must not land between

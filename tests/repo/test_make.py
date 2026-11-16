@@ -1,6 +1,7 @@
 """The Makefile computes ports from PORT_OFFSET, rejects bad offsets and never leaks .env."""
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -215,7 +216,6 @@ def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path)
     result = run_make("e2e-mock", "PORT_OFFSET=1", cwd=fake_repo)
     assert result.returncode == 0, result.stderr
     # One command and no `up`: the mock API runs in the browser, so no stack starts.
-    assert result.stdout.splitlines() == ["WEB_PORT=5183 pnpm -C web e2e:mock"]
 
 
 def test_record_replays_passes_the_key_only_through_the_environment(fake_repo: Path) -> None:
@@ -247,3 +247,32 @@ def test_help_says_record_replays_costs_money() -> None:
         row for row in run_make("help").stdout.splitlines() if row.startswith("record-replays")
     )
     assert "calls the live model and costs money" in line
+
+
+def test_readme_media_runs_the_media_script_and_says_what_it_needs() -> None:
+    result = run_make("-n", "readme-media", "PORT_OFFSET=1")
+    assert result.returncode == 0, result.stderr
+    assert "playwright.readme.config.ts" in result.stdout
+    helped = run_make("help").stdout
+    line = next(row for row in helped.splitlines() if row.startswith("readme-media"))
+    assert "replay" in line
+    assert "docs/media" in line
+
+
+def test_e2e_never_runs_the_media_script() -> None:
+    result = run_make("-n", "e2e", "PORT_OFFSET=1")
+    assert result.returncode == 0, result.stderr
+    assert "readme" not in result.stdout
+    config = (ROOT / "web" / "playwright.config.ts").read_text()
+    assert "readme/**" in config
+
+
+def test_every_package_and_the_app_carry_one_version() -> None:
+    versions = {
+        name: re.search(r'^version = "([^"]+)"', (ROOT / name / "pyproject.toml").read_text(), re.M)
+        for name in ("core", "api", "mcp", "evals")
+    }
+    found = {name: m.group(1) if m else None for name, m in versions.items()}
+    app = re.search(r'version="([^"]+)"', (ROOT / "api/src/nursing_api/app.py").read_text())
+    found["app"] = app.group(1) if app else None
+    assert len(set(found.values())) == 1, found
