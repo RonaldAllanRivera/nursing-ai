@@ -81,7 +81,6 @@ def test_importer_rejects_bad_context() -> None:
         (["facility_key"], 12345, "facility_key"),
         (["patients", 0, "record_number"], 12345, "patients[0].record_number"),
         (["patients", 0, "context", "code_status"], 12345, "patients[0].context.code_status"),
-        (["patients", 1, "context", "extra"], "x", "patients[1].context.extra"),
     ],
 )
 def test_parse_names_the_field_of_the_problem(
@@ -91,6 +90,15 @@ def test_parse_names_the_field_of_the_problem(
         parse_his(with_entry_change(path, value))
     assert where in str(raised.value)
     assert "12345" not in str(raised.value)
+
+
+def test_an_unknown_key_is_reported_as_unknown_field_without_the_key() -> None:
+    odd_key = "qorvex-dramblin-key"
+    with pytest.raises(HisFileError) as raised:
+        parse_his(with_entry_change(["patients", 1, "context", odd_key], "x"))
+    message = str(raised.value)
+    assert "patients[1].context (unknown field)" in message
+    assert odd_key not in message
 
 
 def test_a_real_looking_file_that_is_not_marked_synthetic_is_refused() -> None:

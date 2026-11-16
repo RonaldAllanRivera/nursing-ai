@@ -180,8 +180,8 @@ def test_session_cookie_is_declared_where_a_session_is_needed() -> None:
 async def test_unknown_field_is_never_echoed(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/api/v1/session",
-        json={"persona_id": PATIENT, "Juan dela Cruz fever 39": 1},
+        json={"persona_id": PATIENT, "Qorvex Dramblin fever 39": 1},
     )
     assert response.status_code == 422
-    assert "Juan" not in response.text
+    assert "Qorvex" not in response.text
     assert response.json()["errors"] == [{"field": "body", "message": "unknown field"}]

@@ -78,3 +78,14 @@ def test_negative_ai_cap_is_refused(clean_env: pytest.MonkeyPatch) -> None:
     clean_env.setenv("AI_MONTHLY_CAP_USD", "-1")
     with pytest.raises(ValidationError):
         Settings()  # pyright: ignore[reportCallIssue]
+
+
+def test_missing_database_url_error_never_shows_the_api_key(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    short_key = "sk-zz9"  # short, because pydantic shortens long values in its messages
+    clean_env.delenv("DATABASE_URL")
+    clean_env.setenv("ANTHROPIC_API_KEY", short_key)
+    with pytest.raises(ValidationError) as caught:
+        Settings()  # pyright: ignore[reportCallIssue]
+    assert short_key not in str(caught.value)

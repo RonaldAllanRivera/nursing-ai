@@ -49,7 +49,10 @@ class HisFile(DomainModel):
 def _place(error: ErrorDetails) -> str:
     """`patients[2].context.latest_vitals`: the path of one error, with no value in it."""
     place = ""
-    for step in error["loc"]:
+    path = error["loc"]
+    if error["type"] == "extra_forbidden":
+        path = path[:-1]  # the last step is the file's own unknown key, which could be anything
+    for step in path:
         place += f"[{step}]" if isinstance(step, int) else f".{step}" if place else str(step)
     return place or "file"
 
@@ -59,7 +62,10 @@ def parse_his(data: object) -> HisFile:
     try:
         return HisFile.model_validate(data)
     except ValidationError as error:
-        problems = "; ".join(f"{_place(e)} ({e['type']})" for e in error.errors())
+        problems = "; ".join(
+            f"{_place(e)} ({'unknown field' if e['type'] == 'extra_forbidden' else e['type']})"
+            for e in error.errors()
+        )
         raise HisFileError(f"not a valid mock-HIS file: {problems}") from None
 
 
