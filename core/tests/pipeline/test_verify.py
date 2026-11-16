@@ -884,7 +884,12 @@ def test_a_slash_before_a_heart_rate_makes_the_rate_unsure_so_both_readings_flag
         "insulin 5 units / HR 88 g",
         "insulin 5 units / HR 88 G",
         "insulin 5 units / HR 88 g.",
+        # "CC:" is a chief complaint, not cubic centimetres.
+        "insulin 5 units / HR 88 CC: chest pain",
+        "insulin 5 units / HR 88 CC : chest pain",
         # Words that start like a unit or a vital sign.
+        "insulin 5 units / HR 88 CCU",
+        "insulin 5 units / HR 88 mgmt per MD",
         "insulin 5 units / HR 88 good volume",
         "insulin 5 units / HR 88 un-labored",
         "insulin 5 units / HR 88 unlabored",

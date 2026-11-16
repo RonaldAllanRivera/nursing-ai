@@ -27,7 +27,8 @@ heart rate: the rate is then unsure. It equals only itself, so a line that repea
 mismatch. Any other hour spelling or number after it ("units/hr 0800", "mL/hr 2L", "units/h 88",
 "units/hr 10:30") is the rate, and so is a number followed by a dose, volume or weight unit of two
 letters or more ("units/hr = 10 mL/hr"). A single letter or "drop" after the number is read as a
-word ("HR 88 L radial", "HR 88 u/a", "HR 88 drops to 60"): the rate stays unsure.
+word ("HR 88 L radial", "HR 88 u/a", "HR 88 drops to 60"), and so is "CC:" (a chief complaint):
+the rate stays unsure.
 Whitespace inside a rate includes a line break between "5 mg/" and "hr".
 A concentration is a unit with its volume as the denominator: "g/dL", "mg/dL", "g/L", "mmol/L" and
 "mEq/L" are each kept whole, so none equals another, a bare unit, or a rate per hour. "g/L" and
@@ -158,8 +159,12 @@ _SLASH = re.compile(r"\s*/\s*")
 # not a time like "0800" or "10am", a volume or a weight. "bpm", "/min", "/mins" or "/minute" may
 # follow it. A dose, volume or weight unit of two letters or more after the number
 # ("units/hr = 10 mL/hr") means it is not a heart rate. A single letter or "drop" there is a word
-# as often as a unit ("HR 88 L radial", "HR 88 u/a", "HR 88 drops to 60"), so it says nothing.
-_NOT_A_HEART_RATE_UNIT = r"(?![ \t]*(?:units?|iu|mg|mcg|ug|gm|kg|ml|cc|meq|mmol|gtts?)(?!\w))"
+# as often as a unit ("HR 88 L radial", "HR 88 u/a", "HR 88 drops to 60") and "CC:" is a chief
+# complaint, so neither says anything. The unit must end there: "HR 88 CCU" and "HR 88 mgmt" are
+# words.
+_NOT_A_HEART_RATE_UNIT = (
+    r"(?![ \t]*(?:units?|iu|mg|mcg|ug|gm|kg|ml|cc(?![ \t]*:)|meq|mmol|gtts?)(?!\w))"
+)
 _HEART_RATE_NUMBER = re.compile(
     r"(?:[ \t]*[:=\-\u2013\u2014][ \t]*|[ \t]+of[ \t]+|[ \t]+)"
     rf"\d{{2,3}}{_NOT_A_HEART_RATE_UNIT}"
