@@ -298,10 +298,14 @@ async def test_a_uvicorn_template_is_the_event_and_its_arguments_are_not(
     app: FastAPI, capfd: pytest.CaptureFixture[str]
 ) -> None:
     del app
-    logging.getLogger("uvicorn.error").info("Uvicorn running on %s://%s:%d", "http", CANARY, 8000)
+    logging.getLogger("uvicorn.error").info(
+        "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)", "http", CANARY, 8000
+    )
     out = capfd.readouterr().out
     assert CANARY not in out
-    assert [line["event"] for line in json_lines(out)] == ["Uvicorn running on %s://%s:%d"]
+    assert [line["event"] for line in json_lines(out)] == [
+        "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)"
+    ]
 
 
 @pytest.mark.asyncio
@@ -315,3 +319,15 @@ async def test_an_api_response_is_not_stored_by_the_browser(
     unauthorised = await client.get("/api/v1/notes/" + str(uuid4()))
     assert unauthorised.headers["cache-control"] == "no-store"  # a problem answer too
     assert "cache-control" not in (await client.get("/api/v1/health")).headers
+
+
+@pytest.mark.asyncio
+async def test_an_unlisted_uvicorn_message_becomes_the_constant(
+    app: FastAPI, capfd: pytest.CaptureFixture[str]
+) -> None:
+    del app
+    logging.getLogger("uvicorn.error").error(f"Error loading ASGI app. {CANARY}")
+    logging.getLogger("uvicorn.error").info("Started server process [%d]\nextra %s", 1, CANARY)
+    out = capfd.readouterr().out
+    assert CANARY not in out
+    assert [line["event"] for line in json_lines(out)] == [LIBRARY_EVENT, LIBRARY_EVENT]

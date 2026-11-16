@@ -49,6 +49,21 @@ def _only_allowed(_logger: object, _method: str, event: EventDict) -> EventDict:
 LIBRARY_EVENT = "library log"
 _PROJECT_LOGGERS = ("nursing_api", "nursing_core")
 _SERVER_LOGGERS = ("uvicorn", "uvicorn.error")
+# The only uvicorn lines shown as they are (copied from uvicorn's source). Any other uvicorn
+# message could be pre-formatted with data, so it becomes the constant.
+UVICORN_TEMPLATES = frozenset(
+    {
+        "Started server process [%d]",
+        "Waiting for application startup.",
+        "Application startup complete.",
+        "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)",
+        "Uvicorn running on %s://[%s]:%d (Press CTRL+C to quit)",
+        "Shutting down",
+        "Waiting for application shutdown.",
+        "Application shutdown complete.",
+        "Finished server process [%d]",
+    }
+)
 API_PREFIX = "/api/v1/"
 HEALTH_PATH = "/api/v1/health"
 
@@ -57,7 +72,7 @@ def _foreign_event(_logger: object, _method: str, event: EventDict) -> EventDict
     """Makes a stdlib record safe: no data in the event text, no traceback, only the class.
 
     A project logger's event is its message template (never filled with arguments), and so is
-    uvicorn's own start-up and shutdown line, unless it carries a traceback. Any other library's
+    uvicorn's own start-up and shutdown lines (only the known templates). Any other library's
     message may quote data (asyncio prints the exception it never retrieved), so it becomes a
     constant. A message that is not text (an exception object) is a constant too.
     """
@@ -65,10 +80,13 @@ def _foreign_event(_logger: object, _method: str, event: EventDict) -> EventDict
     if not isinstance(record, logging.LogRecord):
         return event
     project = record.name.split(".")[0] in _PROJECT_LOGGERS
-    server = record.name in _SERVER_LOGGERS and record.exc_info is None
-    event["event"] = (
-        record.msg if (project or server) and isinstance(record.msg, str) else LIBRARY_EVENT
+    known = (
+        record.name in _SERVER_LOGGERS
+        and record.exc_info is None
+        and record.msg in UVICORN_TEMPLATES
     )
+    shown = (project or known) and isinstance(record.msg, str)
+    event["event"] = record.msg if shown else LIBRARY_EVENT
     if record.exc_info is not None and record.exc_info[0] is not None:
         event["error_class"] = record.exc_info[0].__name__
     return event
