@@ -270,7 +270,7 @@ export function reasonFor(line: DraftLine): string {
   }
   switch (line.status) {
     case "source_found":
-      return "The words this line came from are in your note, and its numbers match.";
+      return "The words the AI quoted for this line are in your note, and its numbers match. Read it before you sign: code doesn't check the meaning.";
     case "summary":
       return "The AI wrote this in its own words, from the words below. Code found those words in your note, but it can't check the meaning. Read it before you sign.";
     case "number_mismatch": {
@@ -279,7 +279,7 @@ export function reasonFor(line: DraftLine): string {
       return line.number_mismatches
         .map((m) =>
           m.note_text === null
-            ? `The draft says ${m.draft_text}. Your note has no number to match it.`
+            ? `The draft says ${m.draft_text}. Your note doesn't have this.`
             : `The draft says ${m.draft_text}. Your note says ${m.note_text}.`,
         )
         .join(" ");

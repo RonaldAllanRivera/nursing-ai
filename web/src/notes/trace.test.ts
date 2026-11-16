@@ -285,9 +285,9 @@ describe("nextLineNeedingReview", () => {
 describe("reasonFor", () => {
   const byId = demoLine;
 
-  it("says a found source matches", () => {
+  it("says what code checked for a found source, and that it can't check the meaning", () => {
     expect(reasonFor(byId("e1-D1"))).toBe(
-      "The words this line came from are in your note, and its numbers match.",
+      "The words the AI quoted for this line are in your note, and its numbers match. Read it before you sign: code doesn't check the meaning.",
     );
   });
   it("says what the AI did for a summary line", () => {
@@ -296,7 +296,7 @@ describe("reasonFor", () => {
   it("gives both numbers for a mismatch", () => {
     expect(reasonFor(byId("e1-D2"))).toBe("The draft says 121. Your note says 112.");
   });
-  it("says so when the note has no number to match", () => {
+  it("says the note doesn't have it when the draft's number or word has no match", () => {
     const l = line({
       status: "number_mismatch",
       number_mismatches: [
@@ -309,7 +309,20 @@ describe("reasonFor", () => {
         },
       ],
     });
-    expect(reasonFor(l)).toBe("The draft says 121. Your note has no number to match it.");
+    expect(reasonFor(l)).toBe("The draft says 121. Your note doesn't have this.");
+    const frequency = line({
+      status: "number_mismatch",
+      number_mismatches: [
+        {
+          kind: "value",
+          draft_text: "BID",
+          draft_span: { start: 0, end: 3 },
+          note_text: null,
+          note_span: null,
+        },
+      ],
+    });
+    expect(reasonFor(frequency)).toBe("The draft says BID. Your note doesn't have this.");
   });
   it("gives every mismatch of a line", () => {
     const l = line({
