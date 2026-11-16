@@ -32,7 +32,6 @@ from nursing_core.pipeline.text import MatchText, find_span
 from nursing_core.pipeline.unit_check import (
     NumberValue,
     WrittenUnit,
-    bare_rate_after,
     bare_rate_end_after,
     number_value,
     numbers_in,
@@ -149,7 +148,8 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
             if span.start >= quote.end or span.end <= quote.start:
                 continue
             unit = written_unit(raw, span)
-            with_unit = Span(start=span.start, end=span.end if unit is None else unit.end)
+            bare_rate, bare_end = bare_rate_end_after(raw, span)
+            with_unit = Span(start=span.start, end=bare_end if unit is None else unit.end)
             label = (
                 _label_before(raw[quote.start : span.start]) if span.start >= quote.start else None
             )
@@ -160,7 +160,7 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
                     span=span,
                     label=label,
                     unit=unit,
-                    bare_rate=() if unit is not None else bare_rate_after(raw, span),
+                    bare_rate=() if unit is not None else bare_rate,
                     with_unit=with_unit,
                     typed_with_unit=raw[with_unit.start : with_unit.end],
                 )
@@ -253,18 +253,21 @@ def _mismatches(
         # A note number that writes a unit settles it: a bare same-valued number can't excuse a
         # unit the nurse wrote differently elsewhere.
         candidates = [n for n in same_value if n.unit is not None] or same_value
+        # A rate the note writes for this value must come back in the line, whatever rate-less
+        # same-valued number the note also has: those can't excuse a rate the line drops or changes.
+        rated = [n for n in same_value if _note_rate(n)]
+        rates = {_note_rate(n) for n in rated}
         if drafted is None:
-            # A rate straight after the line's number must not differ from the note's own rate;
-            # the note having none is fine ("HR 88 bpm" and "HR 88/min").
-            rate, rate_end = bare_rate_end_after(text, span)
-            if not rate or not all(_note_rate(n) not in ((), rate) for n in candidates):
-                continue
-            end = rate_end
-        elif any(_same_unit(drafted, n, units) for n in candidates):
-            continue
+            rate, end = bare_rate_end_after(text, span)
+            dropped = bool(rate) and bool(rates) and rate not in rates
         else:
             end = drafted.end
-        first = candidates[0]
+            dropped = bool(rated) and drafted.compared is not None and not drafted.rate
+        if not dropped and (
+            drafted is None or any(_same_unit(drafted, n, units) for n in candidates)
+        ):
+            continue
+        first = rated[0] if dropped else candidates[0]
         out.append(
             NumberMismatch(
                 kind=MismatchKind.UNIT,

@@ -6,6 +6,7 @@ from nursing_core.domain.notes import Span
 from nursing_core.domain.units import Ucum
 from nursing_core.pipeline.unit_check import (
     WrittenUnit,
+    bare_rate_end_after,
     number_value,
     numbers_in,
     unit_after,
@@ -357,11 +358,16 @@ def test_week_month_and_shift_are_denominators_and_long_rates_are_read_whole() -
 
 
 def test_a_denominator_cut_by_the_end_of_the_read_is_finished_not_lost() -> None:
-    head = "5 mcg/kg/"
-    text = head + " " * (62 - len(head)) + "minute"
-    written = _written(text, "5")
-    assert written is not None
-    assert written.rate == ("kg", "minute")
+    cut = _written("5 mcg/" + " " * 59 + "kilograms", "5")
+    assert cut is not None
+    assert cut.rate == ("kg",)
+    assert bare_rate_end_after("1000" + " " * 58 + "/minute", Span(start=0, end=4)) == (
+        ("minute",),
+        69,
+    )
+    whole = _written("5 mcg" + " " * 60 + "/kg/min", "5")
+    assert whole is not None
+    assert whole.rate == ("kg", "minute")
 
 
 def test_the_read_after_a_number_stays_short_on_a_long_unpunctuated_note() -> None:

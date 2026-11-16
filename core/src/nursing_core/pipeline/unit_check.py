@@ -16,12 +16,13 @@ weeks, mo, mos, month, months, shift, shifts), kg, kgs, kilogram or kilograms, o
 cc, milliliter, millilitre, l, liter, litre, with their plurals). Each is kept by meaning ("h",
 "hr" and "hours" are one) and must be a whole word ("1L/D5LR" has no rate). Any other word ends
 the unit with no rate ("500 mg/tab", "5 mg per NGT"), and so does a digit ("1L/8hrs",
-"1 L / 8 hrs"). A rate is read whole when it fits in the 64 characters after the number
-("5 mcg per kilograms per minute"), and the word the read ends in is finished; a rate that
-starts after more than that (70 spaces before "/kg/min") is not read. A unit that takes no
-rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more letter is
-clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g and the
-letter is h, d or m ("u/h", "L/m", "g/d"), which are rates. "lpm" is litres per minute.
+"1 L / 8 hrs"). A rate is read whole when it fits in the 64 characters after the unit (after the
+number, for a rate written right after a number: "100/hr"), as "5 mcg per kilograms per minute"
+does, and the word the read ends in is finished; a rate starting after more than that is not read.
+A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit, "/" and one more
+letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
+and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
+"lpm" is litres per minute.
 """
 
 import re
@@ -137,7 +138,7 @@ _RATE_LETTERS = frozenset("hdm")  # after u, l or g: "u/h", "g/d" and "L/m" are 
 _PER = re.compile(r"[ \t]+per[ \t]+", re.IGNORECASE)
 _SLASH = re.compile(r"[ \t]*/[ \t]*")
 type NumberValue = tuple[str | Decimal, ...]
-_WINDOW = 64  # typed characters after a number read for its unit, then the word cut off
+_WINDOW = 64  # typed characters read after a number (a unit, a bare rate) or a unit (a rate)
 
 
 @dataclass(frozen=True, slots=True)

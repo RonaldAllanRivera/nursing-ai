@@ -931,3 +931,41 @@ def test_a_rate_after_the_lines_number_is_clean_where_the_note_has_none_or_agree
         ("heparin 1000", "Heparin 1000/hr."),
     ]:
         assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_rate_the_note_writes_elsewhere_for_the_same_value_does_not_excuse_a_dropped_rate() -> (
+    None
+):
+    for note, text in [
+        ("IVF 100/hr. Urine 100", "Infusing at 100/min."),
+        ("IVF 100/hr. Urine 100", "Running 100/min."),
+        ("IVF 100/hr. Urine 100", "100/min."),
+        ("heparin 1000/hr, bolus 1000", "Drip 1000/min."),
+        ("heparin 1000 units/hr, 1000 units bolus given", "Drip at 1000/min."),
+        ("IVF 100 mL/hr, NS 100 mL bolus", "Infusing at 100/min."),
+        ("IVF 100/hr, NS 100 mL bolus", "Infusing at 100/min."),
+        ("IVF 100/hr. Urine 100", "Infusing at 100 mL."),
+        ("heparin 1000/hr, bolus 1000", "Drip at 1000 units."),
+    ]:
+        _flagged_unit(note, text)
+    line = _rate_status("IVF 100/hr, NS 100 mL bolus", "Infusing at 100/min.")
+    assert [m.note_text for m in line.number_mismatches] == ["100/hr"]
+    line = _rate_status("heparin 1000/hr, bolus 1000", "Drip at 1000 units.")
+    assert [m.note_text for m in line.number_mismatches] == ["1000/hr"]
+
+
+def test_the_rate_check_stays_clean_for_vitals_and_agreeing_rates() -> None:
+    for note, text in [
+        ("HR 88 bpm", "HR 88/min."),
+        ("HR 88/min", "HR 88 bpm."),
+        ("RR 18/min", "RR 18."),
+        ("heparin 1000", "Heparin 1000/hr."),
+        ("IVF 100/hr then 100/min", "Running 100/min."),
+        ("O2 2 lpm", "O2 2/min."),
+        ("dopamine 5 mcg/kg/min", "Dopamine 5/kg/min."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
+    only_urine = _check("IVF 100/hr. Urine 100", "Urine 100.", ["Urine 100"])
+    assert only_urine.status is LineStatus.SOURCE_FOUND
+    only_urine = _check("IVF 100/hr. Urine 100", "Urine 100 mL.", ["Urine 100"])
+    assert only_urine.status is LineStatus.SOURCE_FOUND
