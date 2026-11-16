@@ -103,7 +103,7 @@ record-replays: ## Record the demo drafts from the live model (calls the live mo
 	@$(RECORD_ENV) uv run python -m nursing_api.record_replays
 
 # Not part of `e2e` or `check`: it rewrites the pictures in docs/media. The stack stays up afterwards.
-readme-media: ## Rewrite docs/media (the stack must be up in replay mode: make up AI_MODE=replay)
+readme-media: ## Rewrite docs/media (needs the stack up in replay mode: make up AI_MODE=replay)
 	pnpm -C web exec playwright test -c playwright.readme.config.ts
 
 # Interactive: the words are typed at a hidden prompt, so don't pipe it.

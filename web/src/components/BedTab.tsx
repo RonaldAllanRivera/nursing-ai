@@ -18,14 +18,19 @@ export function BedTab({
   return (
     <span
       className={cn(
-        "grid min-w-14 flex-none place-items-center rounded-control rounded-bl-[2px] bg-primary px-2 py-1 leading-none text-primary-ink",
-        large && "size-13 min-w-0 p-0 min-[960px]:size-16",
+        "grid min-w-14 flex-none whitespace-nowrap place-items-center rounded-control rounded-bl-[2px] bg-primary px-2 py-1 leading-none text-primary-ink",
+        large && "h-13 min-w-13 px-2 py-0 min-[960px]:h-16 min-[960px]:min-w-16",
         className,
       )}
     >
       <span className="text-12 font-medium opacity-85">{word}</span>
       <span
-        className={cn("text-21 font-bold", large && "text-24 tracking-tight min-[960px]:text-36")}
+        className={cn(
+          "text-21 font-bold",
+          large && "text-24 tracking-tight min-[960px]:text-36",
+          // A longer label (a room such as "412-A") steps down so the tab stays near its size.
+          label.length > 3 && (large ? "text-18 min-[960px]:text-24" : "text-18"),
+        )}
       >
         {label}
       </span>
