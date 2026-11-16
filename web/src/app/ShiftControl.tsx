@@ -21,11 +21,29 @@ const INK_EDGE: Record<Ink, string> = {
  * under the header (not floating, so it can never run off a narrow screen).
  */
 export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facilityKey: string }) {
-  const { data: facility, isError, refetch, isFetching } = useFacility(facilityKey);
+  const {
+    data: facility,
+    isError,
+    refetch,
+    isFetching,
+    errorUpdateCount,
+  } = useFacility(facilityKey);
   const change = useChangeShift();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
+  // Set when Try again is pressed, so the list that replaces the error gets the focus Try again lost.
+  const retried = useRef(false);
+
+  useEffect(() => {
+    if (!facility || !retried.current) return;
+    retried.current = false;
+    const buttons = panel.current?.querySelectorAll<HTMLButtonElement>("ul button");
+    const target = panel.current?.querySelector<HTMLButtonElement>(
+      'ul button[aria-pressed="true"]',
+    );
+    (target ?? buttons?.[0])?.focus();
+  }, [facility]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,6 +95,7 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
           aria-controls="shift-choices"
           onClick={() => {
             change.reset();
+            retried.current = false;
             setOpen((was) => !was);
           }}
           className="min-h-11 cursor-pointer px-2 font-semibold text-pen underline underline-offset-4"
@@ -124,14 +143,16 @@ export function ShiftControl({ shift, facilityKey }: { shift: ShiftRef; facility
             </ul>
           ) : isError ? (
             <div className="flex flex-wrap items-center gap-3 px-2 py-1">
-              <p role="alert" className="text-14 text-stop">
+              <p key={errorUpdateCount} role="alert" className="text-14 text-stop">
                 The shifts did not load.
               </p>
               <button
                 type="button"
                 aria-disabled={isFetching}
                 onClick={() => {
-                  if (!isFetching) void refetch();
+                  if (isFetching) return;
+                  retried.current = true;
+                  void refetch();
                 }}
                 className="min-h-11 cursor-pointer px-2 font-semibold text-pen underline underline-offset-4"
               >

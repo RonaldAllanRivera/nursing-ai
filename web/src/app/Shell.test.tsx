@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -114,6 +114,59 @@ describe("shell and guards", () => {
     await userEvent.click(group.getByRole("button", { name: "Try again" }));
     expect(await group.findByRole("button", { name: /^2-10/ })).toBeVisible();
     expect(group.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("after Try again works, focus lands on the current shift's button", async () => {
+    await renderApp("/sign-in");
+    let down = true;
+    server.use(
+      http.get("*/api/v1/facilities/:key", () =>
+        down ? HttpResponse.json({}, { status: 500 }) : undefined,
+      ),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    await group.findByText("The shifts did not load.");
+    down = false;
+    await userEvent.click(group.getByRole("button", { name: "Try again" }));
+    const current = await waitFor(() => {
+      const found = group.getByRole("button", { pressed: true });
+      return found;
+    });
+    await waitFor(() => {
+      expect(current).toHaveFocus();
+    });
+  });
+
+  it("announces again when Try again fails again", async () => {
+    await renderApp("/sign-in");
+    server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    const first = await group.findByRole("alert");
+    expect(first).toHaveTextContent("The shifts did not load.");
+    await userEvent.click(group.getByRole("button", { name: "Try again" }));
+    await waitFor(() => {
+      expect(first).not.toBeInTheDocument();
+    });
+    const second = await group.findByRole("alert");
+    expect(second).not.toBe(first);
+    expect(second).toHaveTextContent("The shifts did not load.");
+  });
+
+  it("opening the shifts the first time leaves focus on the change button", async () => {
+    await signInAs("Staff nurse · Sarah Navarro, RN");
+    const toggle = await screen.findByRole("button", { name: "Change shift" });
+    await userEvent.click(toggle);
+    const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
+    expect(await group.findByRole("button", { name: /^2-10/ })).toBeVisible();
+    expect(toggle).toHaveFocus();
   });
 
   it("keeps the shifts on screen when a refresh of the facility fails", async () => {
