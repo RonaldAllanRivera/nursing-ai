@@ -212,18 +212,21 @@ def _same_unit(drafted: WrittenUnit, note: _NoteNumber, units: UnitDefaults) -> 
     """Whether the unit a note writes after a value agrees with the one the line writes after it.
 
     A unit the alias table reads must be the note's unit, or the facility's default when the note
-    writes no unit at all. A dose or volume unit written on both sides must be the same unit, and
-    so must its rate: a bolus of 1000 units is not 1000 units per hour. A line's rate needs a rate
-    in the note, whether after a unit or straight after the number ("100/hr"), and a rate the note
-    writes straight after its number needs the same rate in a line that gives a dose or volume
-    unit: "heparin 1000/hr" is not "1000 units". Litres are never the facility's default volume
-    unit, so a note that writes no unit can't source "100 L".
+    writes no unit at all. A dose or volume unit in the line must be the dose or volume unit the
+    note writes after the value ("88 bpm" or "60 kg" can't source "88 units" or "60 mg"), and so
+    must its rate: a bolus of 1000 units is not 1000 units per hour. A note number with no unit
+    can only be the facility's default volume, mL ("IVF 100" is "100 mL", never "100 L", "100 mg"
+    or "100 units"). A line's rate needs a rate in the note, whether after a unit or straight
+    after the number ("100/hr"), and a rate the note writes straight after its number needs the
+    same rate in a line that gives a dose or volume unit: "heparin 1000/hr" is not "1000 units".
     """
     written = note.unit
-    if written is None and drafted.compared is not None and drafted.rate != note.bare_rate:
-        return False
-    if written is None and drafted.compared == "l":
-        return False  # a facility default volume is mL, never litres
+    if drafted.compared is not None:
+        if written is None:
+            if drafted.compared != "ml" or drafted.rate != note.bare_rate:
+                return False
+        elif written.compared != drafted.compared:
+            return False
     if written is not None and written.rate != drafted.rate:
         return False
     if drafted.unit is not None:
@@ -232,9 +235,7 @@ def _same_unit(drafted: WrittenUnit, note: _NoteNumber, units: UnitDefaults) -> 
                 return False
         elif written.unit != drafted.unit:
             return False
-    return (
-        drafted.compared is None or written is None or written.compared in (None, drafted.compared)
-    )
+    return True
 
 
 def _note_rate(note: _NoteNumber) -> tuple[str, ...]:

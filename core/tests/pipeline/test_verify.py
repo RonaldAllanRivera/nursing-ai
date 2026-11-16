@@ -590,7 +590,7 @@ def test_more_unit_spellings_are_checked_against_the_note() -> None:
     )
 
 
-def test_dose_units_written_on_both_sides_must_agree() -> None:
+def test_a_dose_unit_must_agree_with_the_note_and_a_bare_note_number_has_none() -> None:
     line = _check("cefuroxime 1 g", "Cefuroxime 1 mg given.", ["cefuroxime 1 g"])
     assert _kinds(line) == [MismatchKind.UNIT]
     [mismatch] = line.number_mismatches
@@ -606,7 +606,6 @@ def test_dose_units_written_on_both_sides_must_agree() -> None:
         ("2 mEq", "2 meq"),
         ("2 mmol", "2 mmol"),
         ("1 L", "1 l"),
-        ("cefuroxime 1", "1 g"),
     ):
         assert _check(note, drafted, [note]).status is LineStatus.SOURCE_FOUND, (note, drafted)
     for note, drafted in (
@@ -615,6 +614,7 @@ def test_dose_units_written_on_both_sides_must_agree() -> None:
         ("2 mmol", "2 mEq"),
         ("5 mcg", "5 mg"),
         ("IVF 1 mL", "IVF 1 L"),
+        ("cefuroxime 1", "1 g"),
     ):
         line = _check(note, drafted, [note])
         assert _kinds(line) == [MismatchKind.UNIT], (note, drafted)
@@ -829,11 +829,37 @@ def test_drops_are_compared_and_gtt_equals_gtts() -> None:
     assert _rate_status("30gtts/min", "30 gtt/min.").status is LineStatus.SOURCE_FOUND
 
 
-def test_a_rate_on_the_line_needs_a_rate_in_the_note() -> None:
+def test_a_rate_or_a_dose_unit_on_the_line_needs_it_in_the_note() -> None:
     line = _check("heparin 1000 at noon", "Heparin 1000 mL/hr.", ["heparin 1000"])
     assert line.status is LineStatus.NUMBER_MISMATCH
     _flagged_unit("heparin 1000", "Heparin 1000 units/hr.")
-    assert _rate_status("heparin 1000", "Heparin 1000 units.").status is LineStatus.SOURCE_FOUND
+    _flagged_unit("heparin 1000", "Heparin 1000 units.")
+    assert _rate_status("heparin 1000", "Heparin 1000.").status is LineStatus.SOURCE_FOUND
+
+
+def test_a_note_number_without_a_dose_unit_does_not_source_one() -> None:
+    for note, text, on in [
+        ("T 38, given paracetamol 500mg, HR 100", "Given 100 mg paracetamol.", "100 mg"),
+        ("insulin 5 units, HR 88", "88 units given.", "88 units"),
+        ("insulin drip 5/hr", "Insulin drip at 5 units/hr.", "5 units/hr"),
+        ("HR 88 bpm", "88 units.", "88 units"),
+        ("wt 60 kg", "60 mg.", "60 mg"),
+        ("wt 100 kg", "100 L.", "100 L"),
+        ("T 37.8C", "37.8 mg.", "37.8 mg"),
+        ("BP 120/80 mmHg", "120/80 mL.", "120/80 mL"),
+    ]:
+        line = _rate_status(note, text)
+        assert line.status is LineStatus.NUMBER_MISMATCH, (note, text)
+        [mismatch] = line.number_mismatches
+        assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.UNIT, on), (note, text)
+    # The facility's default volume is the one dose or volume unit a bare note number may take.
+    for note, text in [
+        ("IVF 100", "IVF 100 mL"),
+        ("drank 600", "Drank 600 cc."),
+        ("IVF 100/hr", "IVF 100 mL/hr."),
+        ("Urine 100", "Urine 100 milliliters."),
+    ]:
+        assert _rate_status(note, text).status is LineStatus.SOURCE_FOUND, (note, text)
 
 
 def test_a_bare_rate_after_the_note_number_is_the_rate_the_line_may_write() -> None:
@@ -1152,17 +1178,18 @@ def test_litres_are_a_volume_unit_for_the_facility_default() -> None:
     _flagged_unit("IVF 100 mL", "IVF 100 L.")
 
 
-def test_a_rate_the_note_writes_after_a_bare_number_is_required_in_the_line() -> None:
+def test_a_bare_rate_in_the_note_is_required_in_the_line_and_sources_no_dose_unit() -> None:
     for note, text in [
         ("heparin 1000/hr", "Heparin bolus 1000 units."),
         ("heparin 1000 / hr", "Heparin bolus 1000 units."),
         ("heparin 1000 per hour", "Heparin bolus 1000 units."),
         ("IVF 100/hr", "IVF 100 mL."),
         ("heparin 1000/hr", "Heparin 1000 units/min."),
+        ("heparin 1000/hr", "Heparin 1000 units/hr."),
     ]:
         _flagged_unit(note, text)
     for note, text in [
-        ("heparin 1000/hr", "Heparin 1000 units/hr."),
+        ("heparin 1000/hr", "Heparin 1000/hr."),
         ("IVF 100/hr", "IVF 100 mL/hr."),
         ("HR 88/min", "HR 88 bpm."),
         ("RR 18/min", "RR 18."),
