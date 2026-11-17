@@ -1,6 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { readSessionFrom } from "../api/client";
 import { ApiError } from "../api/errors";
+import { resetRequestClock } from "../api/requestClock";
 import { queryRetryDelay, retryQuery } from "../api/retry";
 import { isWaking, wakeRetryDelay } from "../api/waking";
 import { HELD_NOTE_ROOT } from "../notes/heldNote";
@@ -8,7 +9,7 @@ import { gateFromProblem, patchGate } from "../session/gate";
 import { isPastExpiry, sessionHours } from "../session/expiry";
 import {
   clearPersonData,
-  demoEndedKey,
+  signInNoticeKey,
   sessionKey,
   type Session,
   type SignInNotice,
@@ -85,12 +86,14 @@ export function createQueryClient() {
         ? { hours: sessionHours(queryClient, before) }
         : null;
     clearPersonData(queryClient);
-    if (ranOut) queryClient.setQueryData<SignInNotice>(demoEndedKey, ranOut);
-    // Someone signing in answers why the last demo session ended.
-    if (user !== null && queryClient.getQueryData(demoEndedKey)) {
-      queryClient.setQueryData(demoEndedKey, false);
+    if (ranOut) queryClient.setQueryData<SignInNotice>(signInNoticeKey, ranOut);
+    // Someone signing in answers why the last session ended.
+    if (user !== null && queryClient.getQueryData(signInNoticeKey)) {
+      queryClient.setQueryData(signInNoticeKey, false);
     }
   });
   readSessionFrom(() => queryClient.getQueryData<Session | null>(sessionKey));
+  // A new app has sent nothing yet.
+  resetRequestClock();
   return queryClient;
 }

@@ -438,6 +438,21 @@ describe("the idle clock", () => {
     expect((await patients()).status).toBe(200);
   });
 
+  it("answers a wrong PIN at its own idle lock as a wrong PIN, with nothing thrown in a handler", async () => {
+    const thrown = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      start();
+      await signInAs("staff_nurse", "ph-demo");
+      at(IDLE_MS);
+      const wrong = await unlock("000000");
+      expect([wrong.status, wrong.body.code]).toEqual([403, "pin_wrong"]);
+      expect(await gateNow()).toBe("idle_locked");
+      expect(thrown).not.toHaveBeenCalled();
+    } finally {
+      thrown.mockRestore();
+    }
+  });
+
   it("opens again on unlock from idle_locked, for a persona and a Google user", async () => {
     start();
     await signInAs("staff_nurse", "ph-demo");

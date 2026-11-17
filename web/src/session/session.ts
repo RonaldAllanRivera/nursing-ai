@@ -69,8 +69,8 @@ export function clearPersonData(queryClient: QueryClient) {
     sessionKey[0],
     personasQuery.queryKey[0],
     signInOptionsQuery.queryKey[0],
-    // Why a demo session ended; it is shown on the sign-in screen and goes when a person signs in.
-    demoEndedKey[0],
+    // Why a session ended on its own; shown on the sign-in screen, gone when a person signs in.
+    signInNoticeKey[0],
   ]);
   queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
   queryClient.getMutationCache().clear();
@@ -94,7 +94,7 @@ export function useSignIn() {
  * It goes when a person signs in.
  */
 export type SignInNotice = "fifth" | "expired" | { hours: number } | false;
-export const demoEndedKey = ["sign-in-notice"] as const;
+export const signInNoticeKey = ["sign-in-notice"] as const;
 
 /** A 409 at a PIN screen means the session moved on elsewhere (another window opened it or set the PIN): look again, and the right screen shows. */
 function lookAgainOnConflict(queryClient: QueryClient, error: unknown) {
@@ -132,8 +132,8 @@ export function useUnlock(persona: boolean) {
         lookAgainOnConflict(queryClient, error);
         const reason = persona ? demoEndedReason(error, previous) : null;
         // The hours the session lasted, if the 401 already said so, is the better answer.
-        if (reason && !queryClient.getQueryData(demoEndedKey)) {
-          queryClient.setQueryData(demoEndedKey, reason);
+        if (reason && !queryClient.getQueryData(signInNoticeKey)) {
+          queryClient.setQueryData(signInNoticeKey, reason);
         }
       },
     },

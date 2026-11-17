@@ -1,6 +1,7 @@
 import createClient, { type Client } from "openapi-fetch";
 import type { Session } from "../session/session";
 import { csrfHeaders } from "./csrf";
+import { noteRequest } from "./requestClock";
 import type { components, paths } from "./schema";
 
 /** A facility's settings: a settings save's body without the PIN that proves who saved. */
@@ -32,6 +33,7 @@ const base = createClient<paths>({
 
 function method<M extends Method>(name: M): Client<paths>[M] {
   const send = async (url: string, init: Init) => {
+    noteRequest(name, url);
     // One controller per request. The timeout always applies; the caller's abort (TanStack
     // Query passes one to every queryFn) is forwarded into it. No AbortSignal.any: Safari 17.4+.
     const controller = new AbortController();

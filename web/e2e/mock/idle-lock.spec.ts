@@ -26,9 +26,11 @@ test("lock and unlock at 375 px keeps the typed note and hides the patient", asy
   await expect(note).toHaveValue(ROUGH_NOTE);
 
   // Five minutes with nobody at the screen.
-  await page.clock.fastForward(5 * MINUTE + 1000);
+  await page.clock.fastForward(5 * MINUTE + 10_000);
   await expect(page.getByRole("heading", { name: /^Enter your PIN, / })).toBeVisible();
   await expect(page.getByText("Locked after 5 minutes without use.")).toBeVisible();
+  // The lock screen takes the cursor from the note, by itself.
+  await expect(page.getByLabel("PIN", { exact: true })).toBeFocused();
   // Not one patient detail is left in the page, or in the typed note's box.
   await expect(page.getByText(/Demo patient/)).toHaveCount(0);
   await expect(page.getByText(/\bBed\b/)).toHaveCount(0);
@@ -38,6 +40,7 @@ test("lock and unlock at 375 px keeps the typed note and hides the patient", asy
   await shot(page, "idle-locked");
 
   // Unlock by keyboard: the note and the cursor are where she left them.
+  // The axe check used the theme toggle, so the cursor goes back to the field first.
   await page.getByLabel("PIN", { exact: true }).focus();
   await enterDemoPin(page);
   await expect(page.getByLabel("Your note")).toHaveValue(ROUGH_NOTE);
@@ -51,7 +54,7 @@ test("the header says Not you? Switch nurse during the lock and Switch nurse sig
   await page.clock.install();
   await openPatient(page);
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
-  await page.clock.fastForward(5 * MINUTE + 1000);
+  await page.clock.fastForward(5 * MINUTE + 10_000);
   await expect(page.getByRole("heading", { name: /^Enter your PIN, / })).toBeVisible();
 
   const header = page.getByRole("banner");
@@ -83,7 +86,7 @@ test("a session past its hours ends with the hours said on the sign-in screen", 
     "Your session ended after 12 hours. Sign in again.",
   );
   await expect(page.getByText(/Demo patient/)).toHaveCount(0);
-  await checkScreen(page, { night: false });
+  await checkScreen(page);
   await shot(page, "session-ended");
 
   // A way to sign in is right there, and works.
@@ -91,6 +94,22 @@ test("a session past its hours ends with the hours said on the sign-in screen", 
   await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   await expect(page.getByText(/session ended/)).toHaveCount(0);
+});
+
+test("the session-ended notice passes axe in the night theme too", async ({ page }) => {
+  // The sign-in screen has no theme toggle: a nurse signed out at night comes back to the saved one.
+  await page.addInitScript(() => {
+    localStorage.setItem("theme", "night");
+  });
+  await page.clock.install();
+  await openPatient(page);
+  await page.clock.fastForward(12 * HOUR + MINUTE);
+  await expect(page.getByRole("alert")).toHaveText(
+    "Your session ended after 12 hours. Sign in again.",
+  );
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
+  await checkScreen(page);
+  await shot(page, "session-ended-night");
 });
 
 test("a PIN-locked session says what happens next", async ({ page }) => {

@@ -2,6 +2,7 @@ import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../api/client";
 import { MOCK_EMAILS, MOCK_PIN } from "../mocks/staff";
 import { HELD_NOTE_ROOT, holdNote } from "../notes/heldNote";
 import { renderApp } from "../test/render";
@@ -59,7 +60,7 @@ describe("the browser's own idle lock", () => {
     await openPage();
     await pass(299_000);
     expect(screen.queryByLabelText("PIN")).toBeNull();
-    await pass(2_000);
+    await pass(7_000);
     expect(await screen.findByLabelText("PIN")).toBeVisible();
     expect(screen.getByText("Locked after 5 minutes without use.")).toBeVisible();
     expect(screen.queryByText(/Demo patient/)).toBeNull();
@@ -74,7 +75,7 @@ describe("the browser's own idle lock", () => {
     fireEvent.keyDown(document.body, { key: "a" });
     await pass(250_000);
     expect(screen.queryByLabelText("PIN")).toBeNull();
-    await pass(51_000);
+    await pass(56_000);
     expect(await screen.findByLabelText("PIN")).toBeVisible();
   });
 
@@ -89,16 +90,6 @@ describe("the browser's own idle lock", () => {
       send();
     }
     expect(screen.queryByLabelText("PIN")).toBeNull();
-  });
-
-  it("is not kept open by requests", async () => {
-    const { queryClient } = await openPage();
-    await pass(250_000);
-    await act(async () => {
-      await queryClient.invalidateQueries({ queryKey: ["patients"] });
-    });
-    await pass(51_000);
-    expect(await screen.findByLabelText("PIN")).toBeVisible();
   });
 
   it("locks on waking up even when the timer ran late, and a key press then does not save it", async () => {
@@ -121,7 +112,7 @@ describe("the browser's own idle lock", () => {
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
     const note = await screen.findByLabelText("Your note");
     await userEvent.type(note, "pt c/o hilo");
-    await pass(301_000);
+    await pass(310_000);
     await screen.findByLabelText("PIN");
     expect(screen.queryByLabelText("Your note")).toBeNull();
     expect(screen.queryByText(/Demo patient/)).toBeNull();
@@ -132,13 +123,79 @@ describe("the browser's own idle lock", () => {
 
   it("does not run while a gate is up, and starts again after the unlock", async () => {
     await openPage();
-    await pass(301_000);
+    await pass(310_000);
     const pin = await screen.findByLabelText("PIN");
     await userEvent.type(pin, `${MOCK_PIN}{Enter}`);
     await screen.findByRole("heading", { name: /^Patients on this (ward|unit)$/ });
     await pass(299_000);
     expect(screen.queryByLabelText("PIN")).toBeNull();
-    await pass(2_000);
+    await pass(8_000);
+    expect(await screen.findByLabelText("PIN")).toBeVisible();
+  });
+});
+
+describe("the browser never locks before the server does", () => {
+  const LIST = /^Patients on this (ward|unit)$/;
+
+  it("waits for the server's own clock after a tab comes back, then keeps the lock", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await openPage();
+    await pass(250_000);
+    // Seen again with no click: the read restarts the server's count, so the browser's moves too.
+    document.dispatchEvent(new Event("visibilitychange"));
+    await pass(500);
+    await pass(51_000);
+    expect(screen.queryByLabelText("PIN")).toBeNull();
+    expect(screen.getByRole("heading", { name: LIST })).toBeVisible();
+
+    // The server would lock at 550 s; the browser follows at 555 s.
+    await pass(260_000);
+    expect(await screen.findByLabelText("PIN")).toBeVisible();
+
+    // The server is locked too: a wrong PIN is wrong, it does not lift the lock.
+    await userEvent.type(screen.getByLabelText("PIN"), "000000{Enter}");
+    expect(await screen.findByText(/^Wrong PIN\./)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: LIST })).toBeNull();
+
+    // Neither does switching away and back.
+    document.dispatchEvent(new Event("visibilitychange"));
+    await pass(500);
+    expect(screen.getByLabelText("PIN")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: LIST })).toBeNull();
+    // Nothing threw in a mock handler along the way.
+    expect(stderr).not.toHaveBeenCalled();
+    stderr.mockRestore();
+  });
+
+  it("lifts the lock only with the right PIN after that", async () => {
+    await openPage();
+    await pass(250_000);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await pass(310_000);
+    await userEvent.type(await screen.findByLabelText("PIN"), `${MOCK_PIN}{Enter}`);
+    expect(await screen.findByRole("heading", { name: LIST })).toBeVisible();
+  });
+
+  it("is pushed later by a request sent after the last activity, but not by the draft poll", async () => {
+    const { queryClient } = await openPage();
+    fireEvent.keyDown(document.body, { key: "a" });
+    await pass(200_000);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["patients"] });
+    });
+    await pass(290_000);
+    // 490 s: past 300 s of no activity, but the server was last touched at 200 s.
+    expect(screen.queryByLabelText("PIN")).toBeNull();
+    await pass(20_000);
+    expect(await screen.findByLabelText("PIN")).toBeVisible();
+  });
+
+  it("is not pushed by the draft-job poll", async () => {
+    await openPage();
+    fireEvent.keyDown(document.body, { key: "a" });
+    await pass(200_000);
+    await api.GET("/api/v1/draft-jobs/{job_id}", { params: { path: { job_id: "a-job" } } });
+    await pass(110_000);
     expect(await screen.findByLabelText("PIN")).toBeVisible();
   });
 });
@@ -188,6 +245,11 @@ describe("another tab changes who this tab is", () => {
     const { queryClient } = await openPage();
     const other = queryClient.getQueryData<Session>(sessionKey);
     expect(other).toBeDefined();
+    // What the first person has in the cache: a patient she opened and a note she was typing.
+    queryClient.setQueryData(["patient", "first-persons-patient"], { name: "kept for her" });
+    holdNote(queryClient, "p1", "her unsent words");
+    expect(queryClient.getQueryData(["patient", "first-persons-patient"])).toBeDefined();
+    expect(queryClient.getQueryData([HELD_NOTE_ROOT, "p1"])).toBeDefined();
     server.use(
       http.get("*/api/v1/session", () =>
         HttpResponse.json({
@@ -201,9 +263,38 @@ describe("another tab changes who this tab is", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     expect(await screen.findByText("Paolo Cruz")).toBeVisible();
     expect(screen.queryByText("Hana Reyes")).toBeNull();
-    expect(
-      queryClient.getQueryCache().findAll({ queryKey: ["patients"] }).length,
-    ).toBeLessThanOrEqual(1);
+    // Gone from the cache itself, not just hidden from the new person.
+    expect(queryClient.getQueryData(["patient", "first-persons-patient"])).toBeUndefined();
+    expect(queryClient.getQueryData([HELD_NOTE_ROOT, "p1"])).toBeUndefined();
+  });
+});
+
+describe("a timer clock that pauses while the machine sleeps", () => {
+  // Fake timers keep their own clock: moving the system time does not fire a due timer, which is
+  // what a timer that did not run during sleep looks like. No visibility event, no activity.
+  it("still locks within a tick of waking", async () => {
+    await openPage();
+    vi.setSystemTime(Date.now() + 20 * MINUTE);
+    await pass(16_000);
+    expect(await screen.findByLabelText("PIN")).toBeVisible();
+  });
+
+  it("still ends the session within a tick of waking past its hours", async () => {
+    await openPage();
+    vi.setSystemTime(Date.now() + 13 * 60 * MINUTE);
+    await pass(16_000);
+    expect(await screen.findByText(sessionEndedWords(12))).toBeVisible();
+  });
+
+  it("sends no request just to check the clock", async () => {
+    await openPage();
+    const { counter, stop } = countSessionReads();
+    try {
+      await pass(200_000);
+      expect(counter.reads).toBe(0);
+    } finally {
+      stop();
+    }
   });
 });
 
@@ -232,7 +323,7 @@ describe("the session's hard end", () => {
 
   it("ends it under a lock screen too, and drops the held note", async () => {
     const { queryClient } = await openPage();
-    await pass(301_000);
+    await pass(310_000);
     await screen.findByLabelText("PIN");
     holdNote(queryClient, "patient-x", "typed words");
     await pass(12 * 60 * MINUTE);

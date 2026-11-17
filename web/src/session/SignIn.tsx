@@ -9,7 +9,7 @@ import { groupPersonas, personaLabel } from "./personas";
 import { DEMO_ENDED, DEMO_EXPIRED } from "./pin";
 import { sessionEndedWords } from "./expiry";
 import {
-  demoEndedKey,
+  signInNoticeKey,
   personasQuery,
   signInOptionsQuery,
   useSignIn,
@@ -34,9 +34,9 @@ export function SignIn() {
   const personas = useQuery({ ...personasQuery, enabled: !options.isPending && offered.personas });
   const signIn = useSignIn();
   const queryClient = useQueryClient();
-  // Set when a demo session ended on its own (a fifth wrong PIN); nothing fetches it.
-  const demoEnded = useQuery({
-    queryKey: demoEndedKey,
+  // Set when a session ended on its own (a fifth wrong demo PIN, or the hours ran out); nothing fetches it.
+  const signInNotice = useQuery({
+    queryKey: signInNoticeKey,
     queryFn: () => Promise.resolve<SignInNotice>(false),
     enabled: false,
   });
@@ -57,19 +57,19 @@ export function SignIn() {
           {offered.personas ? " Everything in the demo is made-up data." : ""}
         </p>
 
-        {error || demoEnded.data ? (
+        {error || signInNotice.data ? (
           <p
             role="alert"
             className={cn(
               "mt-4 flex items-start gap-2 rounded-control border px-3 py-2",
               // Running out of hours is routine (sign in again), not a refusal: amber, not red.
-              !error && typeof demoEnded.data === "object"
+              !error && typeof signInNotice.data === "object"
                 ? "border-review bg-review-tint text-review"
                 : "border-stop bg-stop-tint text-stop",
             )}
           >
             <Icon name="flag" className="mt-0.5" />
-            <span>{error ? SIGN_IN_MESSAGES[error] : noticeWords(demoEnded.data)}</span>
+            <span>{error ? SIGN_IN_MESSAGES[error] : noticeWords(signInNotice.data)}</span>
           </p>
         ) : null}
 
@@ -129,7 +129,7 @@ export function SignIn() {
                               disabled={signIn.isPending}
                               onClick={() => {
                                 if (error) clearError();
-                                queryClient.setQueryData(demoEndedKey, false);
+                                queryClient.setQueryData(signInNoticeKey, false);
                                 signIn.mutate(persona.id, {
                                   onSuccess: () => void navigate({ to: "/" }),
                                 });
