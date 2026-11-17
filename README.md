@@ -99,14 +99,17 @@ Empty sections stay empty and are flagged for the nurse.
 
 ---
 
-## Features (planned)
+## Features
 
-- [ ] **Rough note → FDAR or SOAPIE note**, with the format set per facility
-- [ ] **Source-linked lines:** every line carries its source quotes; code verifies the quotes and the numbers
-- [ ] **Known identifiers removed before any AI call:** the patient's names, relatives, record number and dates, plus patterns such as phone numbers and email addresses, become tokens before the note reaches the model (data minimisation)
-- [ ] **Philippine and US wards:** timezone, shifts, units, note format and wording are facility settings that an admin edits, so nothing is hard-coded for one country
-- [ ] **Missing-items checklist** (plain code, no AI), checked against the patient's record: no allergies recorded, lines and tubes or pending tests not mentioned, medicines due but not recorded as given, held or refused, and fall risk with no safety measure written
-- [ ] **Review and sign:** signed notes are immutable and hashed
+Ticked features have shipped; the rest are planned.
+
+- [x] **Rough note → FDAR note** (DAR on a US unit), with the format set per facility
+- [ ] **SOAPIE notes** as a second format
+- [x] **Source-linked lines:** every line carries its source quotes; code verifies the quotes and the numbers
+- [x] **Known identifiers removed before any AI call:** the patient's names, relatives, record number and dates, plus patterns such as phone numbers and email addresses, become tokens before the note reaches the model (data minimisation)
+- [x] **Philippine and US wards:** timezone, shifts, units, note format and wording are facility settings that an admin edits, so nothing is hard-coded for one country
+- [x] **Missing-items checklist** (plain code, no AI), checked against the patient's record: no allergies recorded, lines and tubes or pending tests not mentioned, medicines due but not recorded as given, held or refused, and fall risk with no safety measure written
+- [x] **Review and sign:** signed notes are immutable and hashed
 - [ ] **Sign in with Google** (OpenID Connect, invite-only, no account passwords stored), with demo personas for visitors
 - [ ] **Built for shared ward PCs:** idle lock, and a personal signing PIN for unlocking and for every signature, so the next nurse can't act as the last one
 - [ ] **Eval harness** with a synthetic gold set (AI-reviewed; nurse review pending) and a CI quality gate
@@ -313,7 +316,7 @@ Open it at `localhost` (the mock needs localhost or https). Like `make dev` it u
 Each release ships one complete feature through every layer, from the screen to the database.
 
 - [x] **v0.1** Foundation: monorepo, Docker Compose, CI
-- [ ] **v0.2** First feature, end to end: rough note → checked FDAR draft with source highlights → edit → sign
+- [x] **v0.2** First feature, end to end: rough note → checked FDAR draft with source highlights → edit → sign
 - [ ] **v0.3** Live on AWS: Terraform, continuous deployment, Google sign-in, async drafts on SQS
 - [ ] **v0.4** Eval harness with a CI gate and first published results: a model comparison (accuracy, cost and time per draft), prompt-injection cases, and a scikit-learn section classifier measured against Claude; plus glossary lookup for ward shorthand (hybrid search with pgvector)
 - [ ] **v0.5** MCP server and tool-using agent: read-only patient and glossary tools, every call in a hash-chained audit log, a draft SBAR handoff, and an eval comparison; the agent is built by hand and again with LangGraph, with a decision record on the trade-offs

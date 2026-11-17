@@ -16,6 +16,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
   photo, traced AI calls with a dashboard and an error alert, and a nightly pipeline; the full ward
   moves to v0.7. The Evaluation section adds a prompt-injection metric and the new comparisons, and
   measures run-to-run variance on the cheapest model. All of it is planned.
+- README: v0.2 and the features it shipped are ticked (FDAR drafts, source-linked lines,
+  identifiers removed before any AI call, Philippine and US ward settings, the missing-items
+  checklist, review and sign), and SOAPIE is its own unticked line.
 
 ## [0.2.0] - 2026-11-17
 
