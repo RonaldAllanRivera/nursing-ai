@@ -1,8 +1,15 @@
 """The app's lifespan: it builds what the routes read from app.state, and disposes the engine."""
 
+from typing import Literal
+
+import httpx
 import pytest
+from fastapi import FastAPI
 from nursing_api.app import create_app
+from nursing_api.auth.oidc import GoogleIdentity, GoogleOidc
+from nursing_api.queue import ManagedQueue
 from nursing_api.settings import Settings
+from nursing_api.worker import InProcessQueue
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
@@ -23,3 +30,65 @@ async def test_lifespan_disposes_the_engine(
         engine = app.state.engine
         assert disposed == []
     assert disposed == [engine]
+
+
+UNUSED = "postgresql+asyncpg://unused@localhost/unused"
+
+
+async def status_of(app: FastAPI, method: str, path: str) -> int:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return (await client.request(method, path, json={})).status_code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("role", "status"), [("api", 404), ("worker", 501), ("ops", 501)])
+async def test_events_route_absent_for_the_api_role(
+    role: Literal["api", "worker", "ops"], status: int
+) -> None:
+    app = create_app(Settings(database_url=UNUSED, app_role=role))
+    assert await status_of(app, "POST", "/events") == status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("app_env", "status"), [("dev", 404), ("demo", 404), ("prod", 404), ("test", 501)]
+)
+async def test_the_test_sign_in_exists_only_in_test(
+    app_env: Literal["dev", "test", "demo", "prod"], status: int
+) -> None:
+    app = create_app(Settings(database_url=UNUSED, app_env=app_env))
+    assert await status_of(app, "POST", "/api/v1/test/session") == status
+
+
+class StandInGoogle:
+    """Satisfies the Google port without any network: the auth lane's FakeGoogle signs tokens."""
+
+    def authorization_url(
+        self, *, state: str, nonce: str, code_challenge: str, redirect_uri: str
+    ) -> str:
+        return f"https://accounts.example.com/o/auth?state={state}"
+
+    async def exchange(self, *, code: str, code_verifier: str, redirect_uri: str) -> str:
+        return "an-id-token"
+
+    async def verify_id_token(self, id_token: str, *, nonce: str) -> GoogleIdentity:
+        return GoogleIdentity(sub="1001", email="nurse@example.com", email_verified=True, name=None)
+
+
+def test_create_app_takes_a_google_client() -> None:
+    google: GoogleOidc = StandInGoogle()
+    app = create_app(Settings(database_url=UNUSED), google=google)
+    assert app.state.google is google
+
+
+def test_without_google_settings_there_is_no_google_client() -> None:
+    assert create_app(Settings(database_url=UNUSED)).state.google is None
+
+
+@pytest.mark.asyncio
+async def test_without_a_queue_url_drafts_run_in_process(database_url: str) -> None:
+    app = create_app(Settings(database_url=database_url))
+    async with app.router.lifespan_context(app):
+        queue: ManagedQueue = app.state.queue
+        assert isinstance(queue, InProcessQueue)

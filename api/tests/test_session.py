@@ -13,6 +13,13 @@ from .helpers import ADMIN, NOW, PH_STAFF, US_STAFF, MutableClock, client_for, r
 SESSION = "/api/v1/session"
 
 
+async def start(client: httpx.AsyncClient, persona_id: UUID) -> httpx.Response:
+    """Signs in through the persona route itself (the shared helper writes its session directly)."""
+    response = await client.post(SESSION, json={"persona_id": str(persona_id)})
+    assert response.status_code == 201, response.text
+    return response
+
+
 def shift_of(response: httpx.Response) -> dict[str, str]:
     shift: dict[str, str] = response.json()["shift"]
     return shift
@@ -101,7 +108,7 @@ async def test_personas_need_no_session_and_name_the_facility(client: httpx.Asyn
 async def test_sign_in_returns_the_session_and_get_reads_it_back(
     client: httpx.AsyncClient,
 ) -> None:
-    created = await sign_in(client, PH_STAFF)
+    created = await start(client, PH_STAFF)
     read = await client.get(SESSION)
     assert read.status_code == 200
     assert read.json() == created.json()
@@ -126,7 +133,7 @@ async def test_session_starts_on_the_nearest_shift(
     client: httpx.AsyncClient, clock: MutableClock, persona: UUID, local_time: str, code: str
 ) -> None:
     clock.set(datetime.fromisoformat(local_time))
-    created = await sign_in(client, persona)
+    created = await start(client, persona)
     assert shift_of(created)["code"] == code
 
 
@@ -167,7 +174,7 @@ async def test_shift_change_needs_a_session(client: httpx.AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_admin_session_has_no_facility_or_shift(client: httpx.AsyncClient) -> None:
-    created = await sign_in(client, ADMIN)
+    created = await start(client, ADMIN)
     assert created.json()["facility_key"] is None
     assert created.json()["shift"] is None
     assert created.json()["role"] == "admin"

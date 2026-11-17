@@ -124,7 +124,7 @@ async def test_replay_mode_without_a_recording_fails_with_replay_missing(
 ) -> None:
     async with (
         running_app(database_url, clock, ai_mode="replay") as app,
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+        client_for(app) as client,
     ):
         await sign_in(client, PH_STAFF)
         job = await post_and_finish(app, client, text="unrecorded note, replay test")
@@ -160,7 +160,7 @@ async def test_the_provider_factory_receives_the_notes_patient(
 
     async with (
         running_app(database_url, clock, provider_for=factory) as app,
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+        client_for(app) as client,
     ):
         await sign_in(client, PH_STAFF)
         await post_and_finish(app, client)
@@ -186,7 +186,7 @@ async def test_the_worker_passes_the_shifts_rough_notes_to_the_pipeline(
     monkeypatch.setattr("nursing_api.worker.run_fdar_pipeline", spying_pipeline)
     async with (
         running_app(database_url, clock) as app,
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+        client_for(app) as client,
     ):
         await sign_in(client, PH_STAFF)
         first = await post_note(client, PH_CASE.patient_id, "first note", key="a")
@@ -370,9 +370,7 @@ async def test_cap_reached_fails_job_without_calling_provider(
     app = create_app(settings, clock=clock, provider_for=lambda _patient: spy)
     async with app.router.lifespan_context(app):
         await record_spend(app, "0.90")  # the worst-case estimate of one call is more than 10c
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with client_for(app) as client:
             await sign_in(client, PH_STAFF)
             job = await post_and_finish(app, client)
         assert (job["status"], job["failure"]) == ("failed", "ai_budget_reached")
@@ -389,9 +387,7 @@ async def test_a_call_within_the_cap_goes_through_and_is_recorded(
     app = create_app(settings, clock=clock, provider_for=lambda _patient: spy)
     async with app.router.lifespan_context(app):
         await record_spend(app, "0.90")
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with client_for(app) as client:
             await sign_in(client, PH_STAFF)
             job = await post_and_finish(app, client)
         assert job["status"] == "succeeded"
@@ -406,9 +402,7 @@ async def test_the_cap_counts_this_utc_month_only(database_url: str, clock: Muta
     async with app.router.lifespan_context(app):
         await record_spend(app, "0.90")
         clock.set(clock.now().replace(month=12, day=2))
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with client_for(app) as client:
             await sign_in(client, PH_STAFF)
             job = await post_and_finish(app, client)
     assert job["status"] == "succeeded"

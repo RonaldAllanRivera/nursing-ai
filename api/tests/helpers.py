@@ -1,5 +1,7 @@
 """Helpers the API tests share: a clock the test can move, signing in, and the privacy check."""
 
+import hashlib
+import secrets
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -8,10 +10,15 @@ from uuid import UUID
 import httpx
 from fastapi import FastAPI
 from nursing_api.app import create_app
+from nursing_api.routes import SESSION_COOKIE
 from nursing_api.settings import Settings
 from nursing_core.demo import DemoCase
 from nursing_core.domain.patient import PatientRecord
+from nursing_core.domain.shifts import default_shift
 from nursing_core.ports import LlmProvider
+from nursing_core.storage import tables
+from nursing_core.storage.rows import shift_columns
+from sqlalchemy import insert
 
 # The demo night: 08:00 in Manila (the 6-2 shift) and 16:00 the day before in Los Angeles (7a-7p).
 NOW = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
@@ -63,16 +70,55 @@ async def running_app(
         yield app
 
 
-def client_for(app: FastAPI) -> httpx.AsyncClient:
-    """A client that answers 500 for an unexpected error, as a server would, instead of raising."""
-    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    return httpx.AsyncClient(transport=transport, base_url="http://test")
+class AppClient(httpx.AsyncClient):
+    """A client on one app, which `sign_in` needs to write a session into the app's database."""
+
+    def __init__(self, app: FastAPI) -> None:
+        # Answers 500 for an unexpected error, as a server would, instead of raising.
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        super().__init__(transport=transport, base_url="http://test")
+        self.app = app
+
+
+def client_for(app: FastAPI) -> AppClient:
+    return AppClient(app)
 
 
 async def sign_in(client: httpx.AsyncClient, persona_id: UUID) -> httpx.Response:
-    """Sign in as a demo persona; the client keeps the session cookie."""
-    response = await client.post("/api/v1/session", json={"persona_id": str(persona_id)})
-    assert response.status_code == 201, response.text
+    """Sign in as a demo persona whose PIN is already proved: the session is open, as every test
+    of a data route needs once the server enforces the PIN gate. The client keeps the cookie and
+    sends the session's CSRF token from then on. Answers what GET /api/v1/session answers.
+
+    It writes the session row itself, through the table (frozen by the contract), so a change to
+    the session repository's methods never breaks the tests that only need to be signed in.
+    Tests of signing in itself call POST /api/v1/session.
+    """
+    assert isinstance(client, AppClient), "sign in with a client from client_for(app)"
+    state = client.app.state
+    now: datetime = state.clock.now()
+    user = await state.users.get_user(persona_id)
+    shift, hours = None, 12  # the admin's session: no shift, 12 hours
+    if user.facility_key is not None:
+        profile = (await state.facilities.get_facility(user.facility_key)).profile
+        shift, hours = default_shift(now, profile), profile.session_max_hours
+    token, csrf_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    async with state.engine.begin() as conn:
+        await conn.execute(
+            insert(tables.session).values(
+                token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                user_id=user.id,
+                created_at=now,
+                expires_at=now + timedelta(hours=hours),
+                csrf_token=csrf_token,
+                pin_verified_at=now,
+                last_active_at=now,
+                **shift_columns(shift),
+            )
+        )
+    client.cookies.set(SESSION_COOKIE.model.name, token)
+    client.headers["X-CSRF-Token"] = csrf_token
+    response = await client.get("/api/v1/session")
+    assert response.status_code == 200, response.text
     return response
 
 

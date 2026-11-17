@@ -148,7 +148,14 @@ TEMPLATES = {
 
 
 def app() -> FastAPI:
-    return create_app(Settings(database_url="postgresql+asyncpg://unused@localhost/unused"))
+    # A test-env worker, so the hidden routes (the test sign-in, /events) are registered too.
+    return create_app(
+        Settings(
+            database_url="postgresql+asyncpg://unused@localhost/unused",
+            app_env="test",
+            app_role="worker",
+        )
+    )
 
 
 def operation(spec: dict[str, Any], method: str, path: str) -> dict[str, Any]:

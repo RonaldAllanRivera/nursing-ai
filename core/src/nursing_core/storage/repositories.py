@@ -5,9 +5,7 @@ Each aggregate lives in its own module; this file only re-exports them.
 
 from nursing_core.storage.accounts import (
     SESSION_LIFETIME,
-    MonthUsage,
     PgSessionRepository,
-    PgUsageRepository,
     PgUserRepository,
     StoredSession,
     StoredUser,
@@ -15,6 +13,7 @@ from nursing_core.storage.accounts import (
 from nursing_core.storage.facilities import PgFacilityRepository
 from nursing_core.storage.notes import PgNoteRepository
 from nursing_core.storage.patients import PgPatientRepository
+from nursing_core.storage.usage import MonthUsage, PgUsageRepository
 
 __all__ = [
     "SESSION_LIFETIME",

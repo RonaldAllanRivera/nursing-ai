@@ -20,8 +20,8 @@ from nursing_core.storage.repositories import (
 )
 
 from nursing_api.problems import NotSignedIn
+from nursing_api.queue import ManagedQueue
 from nursing_api.routes import SESSION_COOKIE
-from nursing_api.worker import InProcessQueue
 
 
 def get_clock(request: Request) -> Clock:
@@ -54,8 +54,8 @@ def get_notes(request: Request) -> PgNoteRepository:
     return notes
 
 
-def get_queue(request: Request) -> InProcessQueue:
-    queue: InProcessQueue = request.app.state.queue
+def get_queue(request: Request) -> ManagedQueue:
+    queue: ManagedQueue = request.app.state.queue
     return queue
 
 
@@ -65,7 +65,7 @@ SessionsDep = Annotated[PgSessionRepository, Depends(get_sessions)]
 FacilitiesDep = Annotated[PgFacilityRepository, Depends(get_facilities)]
 PatientsDep = Annotated[PgPatientRepository, Depends(get_patients)]
 NotesDep = Annotated[PgNoteRepository, Depends(get_notes)]
-QueueDep = Annotated[InProcessQueue, Depends(get_queue)]
+QueueDep = Annotated[ManagedQueue, Depends(get_queue)]
 
 
 @dataclass(frozen=True)
