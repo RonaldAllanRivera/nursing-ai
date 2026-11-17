@@ -53,3 +53,25 @@ def test_the_api_gets_its_ai_mode_from_the_environment_and_never_the_key_or_the_
     assert env["AI_MODE"] == "${AI_MODE:-mock}"
     assert "ANTHROPIC_API_KEY" not in env
     assert "AI_MONTHLY_CAP_USD" not in env
+
+
+def test_api_container_listens_on_8080() -> None:
+    # The Lambda Web Adapter forwards to 8080, so the image listens there everywhere, Compose too.
+    dockerfile = (ROOT / "api" / "Dockerfile").read_text()
+    assert "EXPOSE 8080\n" in dockerfile
+    assert dockerfile.rstrip().endswith(
+        'CMD ["uvicorn", "--factory", "nursing_api.app:create_app", '
+        '"--host", "0.0.0.0", "--port", "8080"]'
+    )
+    api = services()["api"]
+    assert api["ports"] == ["127.0.0.1:${API_PORT:-8000}:8080"]
+    assert "http://127.0.0.1:8080/api/v1/health" in " ".join(api["healthcheck"]["test"])
+
+
+def test_the_api_gets_the_site_url_and_the_google_settings_from_dotenv() -> None:
+    # Compose fills `${X:-}` from .env; a name .env leaves out arrives empty, which reads as unset.
+    env = services()["api"]["environment"]
+    assert env["APP_ENV"] == "${APP_ENV:-dev}"
+    assert env["SITE_URL"] == "http://localhost:${WEB_PORT:-5173}"
+    for name in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "BOOTSTRAP_ADMIN_EMAIL"):
+        assert env[name] == f"${{{name}:-}}"

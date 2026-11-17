@@ -69,7 +69,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Live (demo and prod) it never opens a connection: a crawler polling it would otherwise keep
+         *     a paused database awake. The ops function's `smoke` task checks the database there instead.
+         */
         get: operations["health_api_v1_health_get"];
         put?: never;
         post?: never;
@@ -477,7 +481,7 @@ export interface components {
              * Database
              * @enum {string}
              */
-            database: "ok" | "unreachable";
+            database: "ok" | "unreachable" | "not_checked";
             /**
              * Status
              * @enum {string}

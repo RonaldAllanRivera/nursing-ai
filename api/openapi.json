@@ -517,7 +517,8 @@
           "database": {
             "enum": [
               "ok",
-              "unreachable"
+              "unreachable",
+              "not_checked"
             ],
             "title": "Database",
             "type": "string"
@@ -1706,6 +1707,7 @@
     },
     "/api/v1/health": {
       "get": {
+        "description": "Live (demo and prod) it never opens a connection: a crawler polling it would otherwise keep\na paused database awake. The ops function's `smoke` task checks the database there instead.",
         "operationId": "health_api_v1_health_get",
         "responses": {
           "200": {

@@ -17,5 +17,5 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER app
-EXPOSE 8000
-CMD ["uvicorn", "--factory", "nursing_api.app:create_app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8080
+CMD ["uvicorn", "--factory", "nursing_api.app:create_app", "--host", "0.0.0.0", "--port", "8080"]

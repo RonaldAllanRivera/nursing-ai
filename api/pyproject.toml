@@ -4,7 +4,10 @@ version = "0.2.0"
 description = "FastAPI backend for Nursing Documentation AI."
 requires-python = ">=3.13"
 dependencies = [
+    "authlib>=1.9.3",
+    "boto3>=1.43.123",
     "fastapi>=0.162.5",
+    "joserfc>=1.8.0",
     "nursing-core",
     "pydantic-settings>=2.16.2",
     "structlog>=26.1.0",
