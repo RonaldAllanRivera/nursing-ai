@@ -18,6 +18,7 @@ from nursing_core.storage.repositories import PgUsageRepository
 from pydantic import SecretStr
 
 TOKEN = "zebracanary-session-token"  # noqa: S105 (a canary, not a password)
+CSRF = "zebracanary-csrf-token"
 NOW = datetime(2026, 11, 12, 6, 0, tzinfo=UTC)
 
 
@@ -44,8 +45,10 @@ def a_shift() -> ShiftRef:
 
 def test_the_token_is_not_in_a_signed_in_repr() -> None:
     user = a_user()
-    session = StoredSession(user_id=user.id, shift=a_shift(), expires_at=NOW)
-    assert TOKEN not in repr(SignedIn(user=user, session=session, token=TOKEN))
+    session = StoredSession(user_id=user.id, shift=a_shift(), expires_at=NOW, csrf_token=CSRF)
+    shown = repr(SignedIn(user=user, session=session, token=TOKEN))
+    assert TOKEN not in shown
+    assert CSRF not in shown
 
 
 def test_the_token_is_not_in_a_nurse_repr() -> None:

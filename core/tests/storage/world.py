@@ -152,6 +152,7 @@ async def build_world(engine: AsyncEngine) -> World:
                     "display_name": nurse.display_name,
                     "initials": nurse.initials,
                     "role": nurse.role.value,
+                    "persona": True,
                     "facility_id": facility_id,
                 },
                 {
@@ -159,6 +160,7 @@ async def build_world(engine: AsyncEngine) -> World:
                     "display_name": admin.display_name,
                     "initials": admin.initials,
                     "role": admin.role.value,
+                    "persona": True,
                     "facility_id": None,
                 },
             ],

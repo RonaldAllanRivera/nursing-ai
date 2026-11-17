@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, get_args
 
@@ -17,20 +18,24 @@ from nursing_core.domain.users import Role
 from nursing_core.storage import tables
 from nursing_core.storage.migrate import upgrade
 from nursing_core.storage.testdb import fresh_database
-from sqlalchemy import Connection, insert, text, update
+from sqlalchemy import Connection, insert, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 NOW = datetime(2026, 11, 15, 8, 0, tzinfo=UTC)
 HASH = "a" * 64
+LATEST = "0003"
 
 
 def _id() -> uuid.UUID:
     return uuid.uuid4()
 
 
-async def _build_world(engine: AsyncEngine) -> dict[str, uuid.UUID]:
-    """One synthetic facility with a nurse, a patient, an encounter and a rough note."""
+async def _build_world(engine: AsyncEngine, *, before_0003: bool = False) -> dict[str, uuid.UUID]:
+    """One synthetic facility with a nurse, a patient, an encounter and a rough note.
+
+    The nurse is a demo persona; `before_0003` leaves out the column 0003 adds.
+    """
     ids = {
         name: _id()
         for name in ("facility", "nurse", "ward", "bed", "patient", "encounter", "rough_note")
@@ -61,6 +66,7 @@ async def _build_world(engine: AsyncEngine) -> dict[str, uuid.UUID]:
                 initials="DN",
                 role=Role.STAFF_NURSE,
                 facility_id=ids["facility"],
+                **({} if before_0003 else {"persona": True}),
             )
         )
         await conn.execute(
@@ -302,6 +308,7 @@ async def test_database_refuses_a_version_whose_hash_signer_time_or_version_is_n
                 initials="OD",
                 role=Role.STAFF_NURSE,
                 facility_id=ids["facility"],
+                persona=True,
             )
         )
         await conn.execute(insert(tables.note).values(note))
@@ -368,7 +375,7 @@ async def test_the_record_guards_apply_to_a_database_that_already_holds_notes(
         await upgrade(url, "0001")
         engine = create_engine(url)
         try:
-            ids = await _build_world(engine)
+            ids = await _build_world(engine, before_0003=True)
             note = _note_values(ids)
             async with engine.begin() as conn:
                 await conn.execute(insert(tables.note).values(note))
@@ -380,7 +387,7 @@ async def test_the_record_guards_apply_to_a_database_that_already_holds_notes(
             async with engine.connect() as conn:
                 head = (await conn.execute(text("SELECT version_num FROM alembic_version"))).one()
                 kept = (await conn.execute(text("SELECT count(*) FROM note_version"))).scalar_one()
-            assert (head[0], kept) == ("0002", 1)
+            assert (head[0], kept) == (LATEST, 1)
             with pytest.raises(DBAPIError, match=r"rough_note.*UPDATE not allowed"):
                 async with engine.begin() as conn:
                     await conn.execute(update(tables.rough_note).values(text="changed"))
@@ -461,7 +468,7 @@ async def test_facility_change_without_author_is_only_for_version_one(
 @pytest.mark.asyncio
 async def test_admin_alone_has_no_facility(engine: AsyncEngine) -> None:
     ids = await _build_world(engine)
-    base = {"display_name": "Demo", "initials": "D"}
+    base = {"display_name": "Demo", "initials": "D", "persona": True}
     async with engine.begin() as conn:
         await conn.execute(
             insert(tables.app_user).values(id=_id(), role=Role.ADMIN, facility_id=None, **base)
@@ -670,4 +677,245 @@ async def test_the_secondary_indexes_exist(engine: AsyncEngine) -> None:
         "ix_draft_job_status",
         "ix_ai_usage_created_at",
         "ix_session_user_id",
+        "ix_ai_spend_hold_expires_at",
+        "uq_draft_job_rough_note_id_unless_failed",
     } <= found
+
+
+def _job(ids: dict[str, uuid.UUID], status: JobStatus, **extra: Any) -> dict[str, Any]:
+    return {
+        "id": _id(),
+        "rough_note_id": ids["rough_note"],
+        "status": status,
+        "failure": None,
+        "note_id": None,
+        "created_at": NOW,
+        "updated_at": NOW,
+    } | extra
+
+
+def _failed(ids: dict[str, uuid.UUID]) -> dict[str, Any]:
+    return _job(ids, JobStatus.FAILED, failure=JobFailure.PROVIDER_ERROR)
+
+
+def _person(ids: dict[str, uuid.UUID], **extra: Any) -> dict[str, Any]:
+    return {
+        "id": _id(),
+        "display_name": "Demo Nurse B",
+        "initials": "DB",
+        "role": Role.STAFF_NURSE,
+        "facility_id": ids["facility"],
+    } | extra
+
+
+@pytest.mark.asyncio
+async def test_0003_marks_existing_users_as_personas(postgres_url: str) -> None:
+    # P1 made only the demo personas, so a database at 0002 holds nobody else.
+    async with fresh_database(postgres_url, "template1") as url:
+        await upgrade(url, "0002")
+        engine = create_engine(url)
+        try:
+            ids = await _build_world(engine, before_0003=True)
+            await upgrade(url)
+            async with engine.connect() as conn:
+                head = (await conn.execute(text("SELECT version_num FROM alembic_version"))).one()
+                user = (
+                    await conn.execute(
+                        select(tables.app_user).where(tables.app_user.c.id == ids["nurse"])
+                    )
+                ).one()
+        finally:
+            await engine.dispose()
+    assert head[0] == LATEST
+    assert (user.persona, user.email, user.pin_hash, user.pin_failures) == (True, None, None, 0)
+
+
+@pytest.mark.asyncio
+async def test_0003_clears_sessions(postgres_url: str) -> None:
+    # The new columns have no value to give an old session; its person simply signs in again.
+    async with fresh_database(postgres_url, "template1") as url:
+        await upgrade(url, "0002")
+        engine = create_engine(url)
+        try:
+            ids = await _build_world(engine, before_0003=True)
+            async with engine.begin() as conn:
+                await conn.execute(
+                    insert(tables.session).values(
+                        token_hash=HASH,
+                        user_id=ids["nurse"],
+                        created_at=NOW,
+                        expires_at=NOW + timedelta(hours=12),
+                    )
+                )
+            await upgrade(url)
+            async with engine.connect() as conn:
+                left = (await conn.execute(text("SELECT count(*) FROM session"))).scalar_one()
+        finally:
+            await engine.dispose()
+    assert left == 0
+
+
+@pytest.mark.asyncio
+async def test_0003_allows_a_new_job_after_a_failed_one_only(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.draft_job).values(_failed(ids)))
+        await conn.execute(insert(tables.draft_job).values(_failed(ids)))
+        await conn.execute(insert(tables.draft_job).values(_job(ids, JobStatus.QUEUED)))
+        kept = (await conn.execute(text("SELECT count(*) FROM draft_job"))).scalar_one()
+    assert kept == 3
+
+
+@pytest.mark.asyncio
+async def test_0003_refuses_a_new_job_after_a_succeeded_one(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    note = _note_values(ids)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.note).values(note))
+        await conn.execute(
+            insert(tables.draft_job).values(_job(ids, JobStatus.SUCCEEDED, note_id=note["id"]))
+        )
+    with pytest.raises(IntegrityError, match="uq_draft_job_rough_note_id_unless_failed"):
+        async with engine.begin() as conn:
+            await conn.execute(insert(tables.draft_job).values(_job(ids, JobStatus.QUEUED)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(JobStatus.QUEUED, JobStatus.QUEUED), (JobStatus.QUEUED, JobStatus.RUNNING)],
+)
+async def test_0003_refuses_two_open_jobs_for_one_rough_note(
+    engine: AsyncEngine, first: JobStatus, second: JobStatus
+) -> None:
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.draft_job).values(_job(ids, first)))
+    with pytest.raises(IntegrityError, match="uq_draft_job_rough_note_id_unless_failed"):
+        async with engine.begin() as conn:
+            await conn.execute(insert(tables.draft_job).values(_job(ids, second)))
+
+
+@pytest.mark.asyncio
+async def test_non_persona_user_needs_a_lowercase_email(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    with pytest.raises(IntegrityError, match="ck_app_user_email_unless_persona"):
+        async with engine.begin() as conn:
+            await conn.execute(insert(tables.app_user).values(_person(ids)))
+    with pytest.raises(IntegrityError, match="ck_app_user_email_is_lowercase"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.app_user).values(_person(ids, email="Nurse.B@example.com"))
+            )
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(tables.app_user).values(_person(ids, email="nurse.b@example.com"))
+        )
+
+
+@pytest.mark.asyncio
+async def test_email_is_unique(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(tables.app_user).values(_person(ids, email="nurse.b@example.com"))
+        )
+    with pytest.raises(IntegrityError, match="uq_app_user_email"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.app_user).values(_person(ids, email="nurse.b@example.com"))
+            )
+
+
+@pytest.mark.asyncio
+async def test_google_subject_is_unique(engine: AsyncEngine) -> None:
+    # One Google account binds to one person: a second email can't reuse it.
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(tables.app_user).values(
+                _person(ids, email="nurse.b@example.com", google_sub="1001")
+            )
+        )
+    with pytest.raises(IntegrityError, match="uq_app_user_google_sub"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.app_user).values(
+                    _person(ids, email="nurse.c@example.com", google_sub="1001")
+                )
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [("app_user", "pin_failures"), ("session", "pin_failures"), ("draft_job", "attempts")],
+)
+async def test_counters_never_go_negative(engine: AsyncEngine, table: str, column: str) -> None:
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        await conn.execute(insert(tables.draft_job).values(_job(ids, JobStatus.QUEUED)))
+        await conn.execute(
+            insert(tables.session).values(
+                token_hash=HASH,
+                user_id=ids["nurse"],
+                created_at=NOW,
+                expires_at=NOW + timedelta(hours=12),
+                csrf_token="csrf-canary-1",  # noqa: S106 (a canary, not a secret)
+                last_active_at=NOW,
+            )
+        )
+    with pytest.raises(IntegrityError, match=f"ck_{table}_{column}_not_negative"):
+        async with engine.begin() as conn:
+            await conn.execute(update(tables.metadata.tables[table]).values({column: -1}))
+
+
+@pytest.mark.asyncio
+async def test_spend_hold_amount_is_positive(engine: AsyncEngine) -> None:
+    hold = {"created_at": NOW, "expires_at": NOW + timedelta(minutes=15), "job_id": None}
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(tables.ai_spend_hold).values(id=_id(), amount_usd=Decimal("0.01"), **hold)
+        )
+    with pytest.raises(IntegrityError, match="ck_ai_spend_hold_amount_positive"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(tables.ai_spend_hold).values(id=_id(), amount_usd=Decimal(0), **hold)
+            )
+
+
+@pytest.mark.asyncio
+async def test_session_max_hours_between_1_and_24(engine: AsyncEngine) -> None:
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        hours = (
+            await conn.execute(
+                select(tables.facility.c.session_max_hours).where(
+                    tables.facility.c.id == ids["facility"]
+                )
+            )
+        ).scalar_one()
+        await conn.execute(text("UPDATE facility SET session_max_hours = 14"))
+    assert hours == 12
+    for bad in (0, 25):
+        with pytest.raises(IntegrityError, match="ck_facility_session_max_hours_range"):
+            async with engine.begin() as conn:
+                await conn.execute(update(tables.facility).values(session_max_hours=bad))
+
+
+@pytest.mark.asyncio
+async def test_a_reset_row_needs_no_author(engine: AsyncEngine) -> None:
+    # The demo's settings go back to the preset at a persona's sign-in: nobody wrote that row.
+    ids = await _build_world(engine)
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(tables.facility_change).values(
+                id=_id(),
+                facility_id=ids["facility"],
+                version=2,
+                changed_by=None,
+                changed_at=NOW,
+                settings={},
+                reset=True,
+            )
+        )

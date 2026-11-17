@@ -371,6 +371,7 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
                     "display_name": persona.display_name,
                     "initials": persona.initials,
                     "role": persona.role.value,
+                    "persona": True,
                     "facility_id": facility_ids[persona.facility_key]
                     if persona.facility_key
                     else None,

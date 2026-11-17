@@ -24,6 +24,7 @@ def facility_columns(settings: FacilitySettings) -> dict[str, object]:
         "unit_weight": settings.units.weight.value if settings.units.weight else None,
         "unit_volume": settings.units.volume.value,
         "clock": settings.clock,
+        "session_max_hours": settings.session_max_hours,
     }
 
 

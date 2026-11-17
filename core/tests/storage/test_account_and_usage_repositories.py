@@ -95,6 +95,34 @@ async def test_tokens_are_random_and_an_admin_session_has_no_shift(engine: Async
 
 
 @pytest.mark.asyncio
+async def test_each_session_gets_its_own_csrf_token_never_in_a_repr(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+
+    first = await repo.create(world.admin_id, None, NOW)
+    second = await repo.create(world.admin_id, None, NOW)
+
+    one, two = await repo.get(first, NOW), await repo.get(second, NOW)
+    assert one is not None
+    assert two is not None
+    assert one.csrf_token != two.csrf_token
+    assert len(one.csrf_token) >= 43
+    assert one.csrf_token not in (first, second)
+    assert one.csrf_token not in repr(one)
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(
+                    tables.session.c.last_active_at,
+                    tables.session.c.pin_verified_at,
+                    tables.session.c.pin_failures,
+                ).where(tables.session.c.token_hash == hashlib.sha256(first.encode()).hexdigest())
+            )
+        ).one()
+    assert tuple(row) == (NOW, None, 0)
+
+
+@pytest.mark.asyncio
 async def test_set_shift_and_delete(engine: AsyncEngine) -> None:
     world = await build_world(engine)
     repo = PgSessionRepository(engine)

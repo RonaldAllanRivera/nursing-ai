@@ -394,6 +394,11 @@ export interface components {
             name: string;
             /** Note Formats */
             note_formats: components["schemas"]["NoteFormat"][];
+            /**
+             * Session Max Hours
+             * @default 12
+             */
+            session_max_hours: number;
             /** Shifts */
             shifts: components["schemas"]["ShiftDefinition"][];
             /** Timezone */
@@ -422,6 +427,11 @@ export interface components {
             name: string;
             /** Note Formats */
             note_formats: components["schemas"]["NoteFormat"][];
+            /**
+             * Session Max Hours
+             * @default 12
+             */
+            session_max_hours: number;
             /** Shifts */
             shifts: components["schemas"]["ShiftDefinition"][];
             /** Timezone */

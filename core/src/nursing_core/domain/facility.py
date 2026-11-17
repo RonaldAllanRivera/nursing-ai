@@ -94,6 +94,9 @@ class FacilitySettings(DomainModel):
     default_note_format: NoteFormat
     units: UnitDefaults
     clock: Literal["24h", "12h"] = "24h"
+    # How long a sign-in lasts: a shift plus handover and late charting. Settings saved before
+    # this existed read as 12.
+    session_max_hours: int = Field(default=12, ge=1, le=24)
 
     @field_validator("timezone")
     @classmethod
@@ -181,4 +184,5 @@ def preset(region: Literal["PH", "US"], key: str, name: str) -> FacilityProfile:
         note_formats=[NoteFormat.FDAR],
         default_note_format=NoteFormat.FDAR,
         units=UnitDefaults(temperature=Ucum.DEG_F, weight=None, volume=Ucum.ML),
+        session_max_hours=14,
     )

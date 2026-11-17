@@ -19,6 +19,8 @@ export interface FormValues {
   temperature: "Cel" | "[degF]";
   weight: "kg" | "[lb_av]" | "none";
   clock: "24h" | "12h";
+  /** Carried through unchanged until the form shows it, so a save never resets it. */
+  session_max_hours: number;
 }
 
 /**
@@ -72,6 +74,11 @@ export function settingsSchema() {
     temperature: z.enum(["Cel", "[degF]"], "Choose a temperature unit."),
     weight: z.enum(["kg", "[lb_av]", "none"], "Choose a weight unit."),
     clock: z.enum(["24h", "12h"], "Choose 24-hour or 12-hour."),
+    session_max_hours: z
+      .number()
+      .int("Enter whole hours.")
+      .min(1, "Enter 1 to 24 hours.")
+      .max(24, "Enter 1 to 24 hours."),
   });
 }
 
@@ -95,6 +102,7 @@ export function toFormValues(facility: Schemas["FacilityOut"]): FormValues {
     temperature: p.units.temperature === "[degF]" ? "[degF]" : "Cel",
     weight: p.units.weight === "[lb_av]" ? "[lb_av]" : p.units.weight === null ? "none" : "kg",
     clock: p.clock,
+    session_max_hours: p.session_max_hours,
   };
 }
 
@@ -120,6 +128,7 @@ export function toSettings(values: FormValues): Schemas["FacilitySettings"] {
       volume: "mL",
     },
     clock: values.clock,
+    session_max_hours: values.session_max_hours,
   };
 }
 

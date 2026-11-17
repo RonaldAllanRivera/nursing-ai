@@ -154,6 +154,7 @@ export const demoApi: DemoApi = {
           "volume": "mL"
         },
         "clock": "24h",
+        "session_max_hours": 12,
         "key": "ph-demo"
       },
       "version": 1,
@@ -216,6 +217,7 @@ export const demoApi: DemoApi = {
           "volume": "mL"
         },
         "clock": "24h",
+        "session_max_hours": 14,
         "key": "us-demo"
       },
       "version": 1,

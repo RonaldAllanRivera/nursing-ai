@@ -57,6 +57,7 @@ async def load_facilities(
                         "volume": row.unit_volume,
                     },
                     "clock": row.clock,
+                    "session_max_hours": row.session_max_hours,
                 }
             ),
             version=row.version,

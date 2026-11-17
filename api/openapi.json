@@ -272,6 +272,13 @@
             "title": "Note Formats",
             "type": "array"
           },
+          "session_max_hours": {
+            "default": 12,
+            "maximum": 24.0,
+            "minimum": 1.0,
+            "title": "Session Max Hours",
+            "type": "integer"
+          },
           "shifts": {
             "items": {
               "$ref": "#/components/schemas/ShiftDefinition"
@@ -339,6 +346,13 @@
             "minItems": 1,
             "title": "Note Formats",
             "type": "array"
+          },
+          "session_max_hours": {
+            "default": 12,
+            "maximum": 24.0,
+            "minimum": 1.0,
+            "title": "Session Max Hours",
+            "type": "integer"
           },
           "shifts": {
             "items": {

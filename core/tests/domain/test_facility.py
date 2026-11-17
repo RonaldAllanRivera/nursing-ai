@@ -169,3 +169,25 @@ def test_us_preset_matches_the_region_table() -> None:
 def test_us_preset_has_no_default_weight_unit() -> None:
     us = preset("US", "us-demo", "SYNTHETIC Demo Hospital (US)")
     assert us.units == UnitDefaults(temperature=Ucum.DEG_F, weight=None, volume=Ucum.ML)
+
+
+def test_presets_session_max_hours_ph_12_us_14() -> None:
+    # A US 12-hour shift plus handover and late charting runs past 12 hours.
+    assert preset("PH", "ph-x", "PH").session_max_hours == 12
+    assert preset("US", "us-x", "US").session_max_hours == 14
+
+
+def test_settings_saved_before_p2_read_as_12_hours() -> None:
+    # A P1 `facility_change` row's JSON has no `session_max_hours`.
+    saved_in_p1 = preset("PH", "ph-x", "PH").model_dump(mode="json", exclude={"key"})
+    del saved_in_p1["session_max_hours"]
+    assert FacilitySettings.model_validate(saved_in_p1).session_max_hours == 12
+
+
+def test_session_max_hours_is_between_1_and_24() -> None:
+    saved = preset("PH", "ph-x", "PH").model_dump(mode="json", exclude={"key"})
+    for hours in (1, 24):
+        assert FacilitySettings.model_validate({**saved, "session_max_hours": hours})
+    for hours in (0, 25):
+        with pytest.raises(ValidationError):
+            FacilitySettings.model_validate({**saved, "session_max_hours": hours})

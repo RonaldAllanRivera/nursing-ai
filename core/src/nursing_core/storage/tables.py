@@ -1,7 +1,7 @@
 """The database tables, one SQLAlchemy Core `Table` each, on one `MetaData`.
 
-The first migration (`migrations/versions/0001_initial.py`) is the fixed record of this schema;
-a test checks the two agree. Ids are made by the application, so no id column has a default.
+The migrations in `migrations/versions/` are the fixed record of this schema; a test checks
+that they and these tables agree. Ids are made by the application, so no id column has a default.
 Every instant is `timestamptz`. A status column has a check constraint listing the values of
 the domain enum it holds, read from the enum here so the two can't drift.
 """
@@ -103,6 +103,7 @@ facility = Table(
     Column("unit_weight", Text, nullable=True),
     Column("unit_volume", Text, nullable=False),
     Column("clock", Text, nullable=False),
+    Column("session_max_hours", Integer, nullable=False, server_default=text("12")),
     Column("version", Integer, nullable=False),
     # app_user also points back at facility: `use_alter` marks this key as the one added last.
     Column("updated_by", Uuid, ForeignKey("app_user.id", use_alter=True), nullable=True),
@@ -121,6 +122,7 @@ facility = Table(
     CheckConstraint("version > 0", name="version_positive"),
     CheckConstraint("cardinality(note_formats) > 0", name="has_a_note_format"),
     CheckConstraint("default_note_format = ANY (note_formats)", name="default_is_offered"),
+    CheckConstraint("session_max_hours BETWEEN 1 AND 24", name="session_max_hours_range"),
 )
 
 shift_definition = Table(
@@ -147,8 +149,24 @@ app_user = Table(
     Column("initials", Text, nullable=False),
     Column("role", Text, nullable=False),
     _fk("facility_id", "facility.id", nullable=True),
+    # Who signs in with Google: the invited email (stored lowercase) and the Google subject bound
+    # at the first sign-in. A demo persona needs neither.
+    Column("email", Text, nullable=True),
+    Column("google_sub", Text, nullable=True),
+    Column("persona", Boolean, nullable=False, server_default=text("false")),
+    _instant("revoked_at", nullable=True),
+    _fk("invited_by", "app_user.id", nullable=True),
+    # The signing PIN's Argon2id hash, never the PIN; five wrong tries set `pin_locked_at`.
+    Column("pin_hash", Text, nullable=True),
+    Column("pin_failures", Integer, nullable=False, server_default=text("0")),
+    _instant("pin_locked_at", nullable=True),
+    UniqueConstraint("email"),
+    UniqueConstraint("google_sub"),
     _values("role", Role),
     CheckConstraint("(facility_id IS NULL) = (role = 'admin')", name="admin_alone_has_no_facility"),
+    CheckConstraint("email = lower(email)", name="email_is_lowercase"),
+    CheckConstraint("persona OR email IS NOT NULL", name="email_unless_persona"),
+    CheckConstraint("pin_failures >= 0", name="pin_failures_not_negative"),
 )
 
 facility_change = Table(
@@ -160,9 +178,13 @@ facility_change = Table(
     _fk("changed_by", "app_user.id", nullable=True),
     _instant("changed_at"),
     Column("settings", JSONB, nullable=False),
+    # A demo reset back to the preset (at a persona's sign-in): a row nobody wrote.
+    Column("reset", Boolean, nullable=False, server_default=text("false")),
     UniqueConstraint("facility_id", "version"),
     CheckConstraint("version > 0", name="version_positive"),
-    CheckConstraint("changed_by IS NOT NULL OR version = 1", name="author_unless_first"),
+    CheckConstraint(
+        "changed_by IS NOT NULL OR version = 1 OR reset", name="author_unless_first_or_reset"
+    ),
 )
 
 ward = Table(
@@ -245,6 +267,12 @@ session = Table(
     Column("shift_timezone", Text, nullable=True),
     _instant("created_at"),
     _instant("expires_at"),
+    # Sent back in the session's answer and required in X-CSRF-Token on every unsafe request.
+    Column("csrf_token", Text, nullable=False),
+    _instant("pin_verified_at", nullable=True),
+    _instant("last_active_at"),
+    # Wrong PINs typed in this session: what counts for a shared demo persona.
+    Column("pin_failures", Integer, nullable=False, server_default=text("0")),
     CheckConstraint(
         "(shift_code IS NULL) = (shift_label IS NULL) "
         "AND (shift_code IS NULL) = (shift_starts_at IS NULL) "
@@ -254,6 +282,7 @@ session = Table(
         name="shift_all_or_none",
     ),
     CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+    CheckConstraint("pin_failures >= 0", name="pin_failures_not_negative"),
     Index("ix_session_user_id", "user_id"),
 )
 
@@ -323,14 +352,26 @@ draft_job = Table(
     _fk("note_id", "note.id", nullable=True),
     _instant("created_at"),
     _instant("updated_at"),
-    UniqueConstraint("rough_note_id"),
+    # A claim is a lease (SQS delivers at least once): each claim adds an attempt.
+    Column("attempts", Integer, nullable=False, server_default=text("0")),
+    _instant("claimed_at", nullable=True),
     _values("status", JobStatus),
     _values("failure", JobFailure),
     CheckConstraint("(status = 'failed') = (failure IS NOT NULL)", name="failure_only_when_failed"),
     CheckConstraint(
         "(status = 'succeeded') = (note_id IS NOT NULL)", name="note_only_when_succeeded"
     ),
+    CheckConstraint("attempts >= 0", name="attempts_not_negative"),
     Index("ix_draft_job_status", "status"),
+    # A rough note may be drafted again after a failure, but never has two live jobs.
+    Index(
+        "uq_draft_job_rough_note_id_unless_failed",
+        "rough_note_id",
+        unique=True,
+        postgresql_where=text(
+            f"status IN ({_listed(s.value for s in JobStatus if s is not JobStatus.FAILED)})"
+        ),
+    ),
 )
 
 note_version = Table(
@@ -364,4 +405,18 @@ ai_usage = Table(
     CheckConstraint("input_tokens >= 0 AND output_tokens >= 0", name="tokens_not_negative"),
     CheckConstraint("cost_usd >= 0", name="cost_not_negative"),
     Index("ix_ai_usage_created_at", "created_at"),
+)
+
+# The worst case of a live AI call in flight, counted against the monthly cap until its usage
+# is recorded (the same transaction deletes it) or it expires after a crash.
+ai_spend_hold = Table(
+    "ai_spend_hold",
+    metadata,
+    _pk(),
+    _fk("job_id", "draft_job.id", nullable=True),
+    Column("amount_usd", Numeric(12, 6), nullable=False),
+    _instant("created_at"),
+    _instant("expires_at"),
+    CheckConstraint("amount_usd > 0", name="amount_positive"),
+    Index("ix_ai_spend_hold_expires_at", "expires_at"),
 )

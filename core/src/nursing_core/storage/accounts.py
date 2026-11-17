@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime
+from pydantic import AwareDatetime, Field
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -44,6 +44,7 @@ class StoredSession(DomainModel):
     user_id: UUID
     shift: ShiftRef | None  # None for the admin
     expires_at: AwareDatetime
+    csrf_token: str = Field(repr=False)  # the X-CSRF-Token value: never in a repr or a log
 
 
 def _hash(token: str) -> str:
@@ -100,6 +101,8 @@ class PgSessionRepository:
                     user_id=user_id,
                     created_at=now,
                     expires_at=now + SESSION_LIFETIME,
+                    csrf_token=secrets.token_urlsafe(32),
+                    last_active_at=now,
                     **shift_columns(shift),
                 )
             )
@@ -118,7 +121,12 @@ class PgSessionRepository:
         if row is None:
             return None
         shift = optional_shift_from_row(row)
-        return StoredSession(user_id=row.user_id, shift=shift, expires_at=row.expires_at)
+        return StoredSession(
+            user_id=row.user_id,
+            shift=shift,
+            expires_at=row.expires_at,
+            csrf_token=row.csrf_token,
+        )
 
     async def set_shift(self, token: str, shift: ShiftRef) -> None:
         async with self._engine.begin() as conn:

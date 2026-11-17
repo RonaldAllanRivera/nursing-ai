@@ -23,6 +23,13 @@ describe("settings form values", () => {
     }
   });
 
+  it("keeps the facility's session length through the form's rules", () => {
+    // No field shows it yet, but a save must never put a 14-hour facility back to 12.
+    if (!us) throw new Error("no demo facility");
+    const parsed = settingsSchema().parse(toFormValues(us));
+    expect(toSettings(parsed).session_max_hours).toBe(14);
+  });
+
   it("accepts both demo facilities' values", () => {
     for (const facility of [ph, us]) {
       if (!facility) throw new Error("no demo facility");
