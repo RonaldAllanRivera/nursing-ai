@@ -1,11 +1,10 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { useState } from "react";
-import { createQueryClient } from "./app/queryClient";
 import { createAppRouter } from "./app/router";
 
-export function App() {
-  const [queryClient] = useState(createQueryClient);
+/** The client is made once by the caller, outside render: StrictMode runs a state initializer twice in development. */
+export function App({ queryClient }: { queryClient: QueryClient }) {
   const [router] = useState(() => createAppRouter({ queryClient }));
   return (
     <QueryClientProvider client={queryClient}>

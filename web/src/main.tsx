@@ -1,10 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { createQueryClient } from "./app/queryClient";
 import "./styles/app.css";
 import { applyTheme, readTheme } from "./theme/theme";
 
 applyTheme(readTheme());
+
+// Made once, here, outside render: the API client reads the CSRF token from this client's cache.
+const queryClient = createQueryClient();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root element");
@@ -29,7 +33,7 @@ createRoot(root).render(
         plain http network address.
       </p>
     ) : (
-      <App />
+      <App queryClient={queryClient} />
     )}
   </StrictMode>,
 );
