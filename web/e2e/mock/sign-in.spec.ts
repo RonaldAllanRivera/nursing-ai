@@ -38,6 +38,22 @@ test("sign-in with Google on: refusal, Google link first, personas and PIN, by k
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
 });
 
+test("sign-in in the night theme (a nurse signed out at night) passes axe too", async ({
+  page,
+}) => {
+  await setMockOptions(page, { google: true });
+  await page.addInitScript(() => {
+    localStorage.setItem("theme", "night");
+  });
+  await page.goto("/sign-in?error=no_access");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByText("Demo PIN: 135790")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Sign in with Google" })).toBeVisible();
+  await checkScreen(page);
+  await shot(page, "sign-in-night");
+});
+
 test("the other two refusals read plainly", async ({ page }) => {
   await setMockOptions(page, { google: true });
   await page.goto("/sign-in?error=expired");

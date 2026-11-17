@@ -11,8 +11,8 @@ export function DemoBanner() {
   const options = useQuery(signInOptionsQuery);
   if (!offeredFrom(options.data).banner) return null;
   return (
-    <p className="flex items-center justify-center gap-2 border-b border-rule bg-review-tint px-4 py-2 text-center text-14 font-semibold text-review">
-      <Icon name="flag" />
+    <p className="flex items-start justify-start gap-2 border-b border-rule bg-review-tint px-4 py-2 text-left text-14 font-semibold text-review sm:items-center sm:justify-center sm:text-center">
+      <Icon name="flag" className="mt-0.5 sm:mt-0" />
       <span>{DEMO_BANNER}</span>
     </p>
   );

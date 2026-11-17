@@ -24,7 +24,7 @@ describe("signInErrorFrom", () => {
 });
 
 describe("the words", () => {
-  it("uses the plan's sentence for no_access and tells what to do in the others", () => {
+  it("uses the agreed sentence for no_access and tells what to do in the others", () => {
     expect(SIGN_IN_MESSAGES.no_access).toBe(
       "You don't have access yet. Ask the admin to invite your Google account.",
     );

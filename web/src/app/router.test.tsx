@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { sessionKey } from "../session/session";
+import { DEMO_BANNER } from "../session/signInOptions";
 import { server } from "../test/setup";
 import { PendingScreen, ShellFrame } from "./RouteScreens";
 import { renderApp } from "../test/render";
@@ -129,6 +130,25 @@ describe("app router", () => {
     );
     await userEvent.click(choice);
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
+
+  it("keeps the demo banner on the error screen", async () => {
+    spyOnConsole({
+      warn: "Warning: Error in route match: /app/",
+      error: expect.objectContaining({ name: "ApiError", status: 500 }),
+    });
+    const { router, queryClient } = await renderApp("/sign-in");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
+    );
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    server.use(http.get("*/api/v1/session", () => HttpResponse.json({}, { status: 500 })));
+    queryClient.removeQueries({ queryKey: sessionKey });
+    await router.navigate({ to: "/patients" });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong loading this page.",
+    );
+    expect(screen.getByText(DEMO_BANNER)).toBeVisible();
   });
 
   it("shows a plain screen with Try again when the session does not load, and recovers", async () => {

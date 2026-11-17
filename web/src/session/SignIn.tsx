@@ -38,7 +38,7 @@ export function SignIn() {
             role="alert"
             className="mt-4 flex items-start gap-2 rounded-control border border-stop bg-stop-tint px-3 py-2 text-stop"
           >
-            <Icon name="close" className="mt-0.5" />
+            <Icon name="flag" className="mt-0.5" />
             <span>{SIGN_IN_MESSAGES[error]}</span>
           </p>
         ) : null}

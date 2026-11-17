@@ -6,7 +6,8 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { ensureOk, unwrap } from "../api/errors";
+import { ApiError, ensureOk, unwrap } from "../api/errors";
+import { retryQuery } from "../app/queryClient";
 import type { components } from "../api/schema";
 
 export type Session = components["schemas"]["SessionOut"];
@@ -34,12 +35,15 @@ export const personasQuery = queryOptions({
 
 /**
  * What the sign-in page offers. It never touches the database, so it is safe to ask on every
- * screen (the demo banner reads it too). No retries: when it fails the screen falls back at once.
+ * screen (the demo banner reads it too). One failure must not cost the whole visit its banner or
+ * its Google link, so it follows the app's retry rules; only a 501 (no auth on this server yet)
+ * stops at once, and the screen falls back to the persona list.
  */
 export const signInOptionsQuery = queryOptions({
   queryKey: ["sign-in-options"],
   queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/sign-in-options", { signal })),
-  retry: false,
+  retry: (count, error) =>
+    !(error instanceof ApiError && error.status === 501) && retryQuery(count, error),
   staleTime: 5 * 60_000,
 });
 
