@@ -5,7 +5,7 @@ import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
 import { HealthStatus } from "../health/HealthStatus";
 import { groupPersonas, personaLabel } from "./personas";
-import { DEMO_ENDED } from "./pin";
+import { DEMO_ENDED, DEMO_EXPIRED } from "./pin";
 import { demoEndedKey, personasQuery, signInOptionsQuery, useSignIn } from "./session";
 import { GOOGLE_START, SIGN_IN_MESSAGES, offeredFrom, signInErrorFrom } from "./signInOptions";
 
@@ -21,7 +21,7 @@ export function SignIn() {
   // Set when a demo session ended on its own (a fifth wrong PIN); nothing fetches it.
   const demoEnded = useQuery({
     queryKey: demoEndedKey,
-    queryFn: () => Promise.resolve(false),
+    queryFn: () => Promise.resolve<"fifth" | "expired" | false>(false),
     enabled: false,
   });
   const navigate = useNavigate();
@@ -47,7 +47,13 @@ export function SignIn() {
             className="mt-4 flex items-start gap-2 rounded-control border border-stop bg-stop-tint px-3 py-2 text-stop"
           >
             <Icon name="flag" className="mt-0.5" />
-            <span>{error ? SIGN_IN_MESSAGES[error] : DEMO_ENDED}</span>
+            <span>
+              {error
+                ? SIGN_IN_MESSAGES[error]
+                : demoEnded.data === "fifth"
+                  ? DEMO_ENDED
+                  : DEMO_EXPIRED}
+            </span>
           </p>
         ) : null}
 

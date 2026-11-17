@@ -19,9 +19,23 @@ export const PIN_LOCKED = "Your PIN is locked. Ask a head nurse or the admin to 
 export const PIN_CONNECTION = "Couldn't check your PIN. Check your connection and try again.";
 export const PIN_SHORT = "A PIN is 6 digits, 0 to 9.";
 export const PINS_DIFFER = "The two PINs don't match.";
+export const PIN_CHANGED = "Your sign-in changed in another window. Checking where it stands.";
 /** Shown on the sign-in screen after a demo person's fifth wrong PIN ended the session. */
 export const DEMO_ENDED =
   "That was the fifth wrong PIN, so the demo session ended. Choose a person to start again.";
+/** Shown when a demo session ended for another reason (it ran out while she sat at the PIN screen). */
+export const DEMO_EXPIRED = "Your demo session ended. Choose a person to start again.";
+
+/**
+ * Why a demo session ended when the PIN request answered 401: the fifth wrong PIN only if the try
+ * before it was the last one (`tries_left` 1), anything else is a session that ran out. `null`
+ * when the failure is not a 401.
+ */
+export function demoEndedReason(error: unknown, previous: unknown): "fifth" | "expired" | null {
+  if (!(error instanceof ApiError) || error.status !== 401) return null;
+  const was = previous instanceof ApiError ? previous.problem : undefined;
+  return was?.code === "pin_wrong" && was.tries_left === 1 ? "fifth" : "expired";
+}
 
 /** "Locked after 5 minutes without use." from the session's `idle_lock_seconds`. */
 export function idleLockWords(seconds: number): string {
@@ -40,9 +54,14 @@ export function pinProblemMessage(error: unknown, persona: boolean): string {
     const left = problem.tries_left;
     if (typeof left !== "number") return "Wrong PIN.";
     const counted = `Wrong PIN. ${String(left)} ${left === 1 ? "try" : "tries"} left.`;
-    return persona && left === 1 ? `${counted} Another wrong PIN ends this demo session.` : counted;
+    if (left !== 1) return counted;
+    // The last try: say what one more wrong PIN costs, which depends on who she is.
+    return persona
+      ? `${counted} Another wrong PIN ends this demo session.`
+      : `${counted} Another wrong PIN locks it until a head nurse or the admin resets it.`;
   }
   if (error.status === 423 && problem?.code === "pin_locked") return PIN_LOCKED;
+  if (error.status === 409) return PIN_CHANGED;
   if (error.status === 422) {
     const field = problem?.errors?.find((e) => e.field === "body.pin");
     if (field) return field.message;

@@ -1,5 +1,5 @@
 import { Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
 import { Button } from "../components/ui/Button";
@@ -8,6 +8,7 @@ import { roleLabel } from "../session/personas";
 import { screenForGate } from "../session/pin";
 import { useSession, useSignOut } from "../session/session";
 import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
+import { useRestoreFocusAfterGate } from "./gateFocus";
 import { ShellFrame } from "./RouteScreens";
 import { ShiftControl } from "./ShiftControl";
 
@@ -40,6 +41,9 @@ export function Shell() {
   const { data: session } = useSession();
   const signOut = useSignOut();
   const navigate = useNavigate();
+  const page = useRef<HTMLElement>(null);
+  const gateUp = session ? screenForGate(session.gate) !== null : false;
+  useRestoreFocusAfterGate(gateUp, page);
 
   // No session (signed out, or a request came back 401): the sign-in screen.
   if (session === null) return <Navigate to="/sign-in" />;
@@ -104,12 +108,17 @@ export function Shell() {
         </div>
       </header>
       <AidLine />
-      <main className="mx-auto max-w-[1280px] px-4 pt-2 pb-12 sm:px-6">
+      <main
+        ref={page}
+        tabIndex={-1}
+        className="mx-auto max-w-[1280px] px-4 pt-2 pb-12 outline-none sm:px-6"
+      >
         {/* A gate replaces the page (same address, header stays): nothing of a patient is left in
             the page while someone has not proved who they are, and the page comes back as it was. */}
-        {screenForGate(session.gate) === null ? (
+        {!gateUp ? (
           <ShellFrame.Provider value={true}>
-            <Outlet />
+            {/* Keyed by who is signed in: if the session turns out to be someone else's, the page starts again, with nothing typed by the last person. */}
+            <Outlet key={session.user_id} />
           </ShellFrame.Provider>
         ) : (
           <GateScreen session={session} />

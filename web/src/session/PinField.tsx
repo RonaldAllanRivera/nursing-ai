@@ -17,7 +17,8 @@ interface PinFieldProps {
   /** Hidden-from-sight help the field is also described by (the screen's hint). */
   describedBy?: string;
   ref?: Ref<HTMLInputElement>;
-  disabled?: boolean;
+  /** Held still while a request is out, so digits typed meanwhile are not wiped by the clear after a wrong PIN. */
+  readOnly?: boolean;
 }
 
 /**
@@ -32,7 +33,7 @@ export function PinField({
   message,
   describedBy,
   ref,
-  disabled,
+  readOnly,
 }: PinFieldProps) {
   const messageId = `${id}-message`;
   const described = [describedBy, message ? messageId : undefined].filter(Boolean).join(" ");
@@ -49,7 +50,7 @@ export function PinField({
         autoComplete="off"
         maxLength={PIN_LENGTH}
         value={value}
-        disabled={disabled}
+        readOnly={readOnly}
         aria-invalid={message ? true : undefined}
         aria-describedby={described || undefined}
         onChange={(event) => {

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
-import { GateFrame, WhoLine } from "./GateFrame";
+import { GateFrame, IDLE_ID, WHO_ID, WhoLine } from "./GateFrame";
 import { PIN_SHORT, idleLockWords, isPinTyped, pinProblemMessage } from "./pin";
 import { PinField } from "./PinField";
 import { signInOptionsQuery, useUnlock, type Session } from "./session";
@@ -24,7 +24,7 @@ export function UnlockScreen({ session }: { session: Session }) {
 
   const message = short
     ? PIN_SHORT
-    : unlock.isError
+    : unlock.error !== null
       ? pinProblemMessage(unlock.error, persona)
       : null;
   const idle = session.gate === "idle_locked";
@@ -32,7 +32,11 @@ export function UnlockScreen({ session }: { session: Session }) {
   return (
     <GateFrame heading={`Enter your PIN, ${session.display_name}`}>
       <WhoLine session={session} />
-      {idle ? <p className="mt-1 text-ink-2">{idleLockWords(session.idle_lock_seconds)}</p> : null}
+      {idle ? (
+        <p id={IDLE_ID} className="mt-1 text-ink-2">
+          {idleLockWords(session.idle_lock_seconds)}
+        </p>
+      ) : null}
       {demoPin ? (
         <p className="mt-3 inline-block rounded-control border border-rule-strong bg-sheet px-2 py-0.5 font-note text-ink">{`Demo PIN: ${demoPin}`}</p>
       ) : null}
@@ -40,18 +44,17 @@ export function UnlockScreen({ session }: { session: Session }) {
         className="mt-4 grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          if (unlock.isPending) return;
+          if (unlock.pending) return;
           if (!isPinTyped(pin)) {
             setShort(true);
             return;
           }
           setShort(false);
-          unlock.mutate(pin, {
-            onError: () => {
-              // A wrong PIN is gone from the field at once, and the cursor is back in it.
-              setPin("");
-              field.current?.focus();
-            },
+          void unlock.run(pin).then((ok) => {
+            if (ok) return;
+            // A wrong PIN is gone from the field at once, and the cursor is back in it.
+            setPin("");
+            field.current?.focus();
           });
         }}
       >
@@ -64,11 +67,13 @@ export function UnlockScreen({ session }: { session: Session }) {
             setPin(value);
             setShort(false);
           }}
+          describedBy={idle ? `${WHO_ID} ${IDLE_ID}` : WHO_ID}
           message={message}
+          readOnly={unlock.pending}
         />
         <div>
-          <Button type="submit" variant="primary" disabled={unlock.isPending}>
-            {unlock.isPending ? "Checking…" : "Unlock"}
+          <Button type="submit" variant="primary" disabled={unlock.pending}>
+            {unlock.pending ? "Checking…" : "Unlock"}
           </Button>
         </div>
       </form>

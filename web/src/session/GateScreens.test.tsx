@@ -2,12 +2,14 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
+import { api } from "../api/client";
 import { MOCK_EMAILS, MOCK_PIN } from "../mocks/staff";
 import { holdNote, readHeldNote } from "../notes/heldNote";
+import type { QueryClient } from "@tanstack/react-query";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { chooseAndUnlock, DEMO_PIN, signInAsPersona, typePin } from "../test/signIn";
-import { DEMO_ENDED, PIN_LOCKED } from "./pin";
+import { DEMO_ENDED, DEMO_EXPIRED, PIN_LOCKED } from "./pin";
 import { sessionKey, type Session } from "./session";
 
 const SARAH = "Staff nurse · Sarah Navarro, RN";
@@ -55,7 +57,7 @@ describe("enter your PIN", () => {
     expect(field).toHaveValue("");
     expect(field).toHaveFocus();
     expect(field).toHaveAttribute("aria-invalid", "true");
-    expect(field).toHaveAccessibleDescription("Wrong PIN. 4 tries left.");
+    expect(field).toHaveAccessibleDescription(expect.stringContaining("Wrong PIN. 4 tries left."));
     expectNoPatientData();
   });
 
@@ -123,8 +125,12 @@ describe("enter your PIN", () => {
     await typePin("999999");
     await screen.findByText("Wrong PIN. 4 tries left.");
     for (let i = 0; i < 3; i += 1) await typePin("999999");
-    // A Google user's last try carries no demo warning.
-    expect(await screen.findByText("Wrong PIN. 1 try left.")).toBeVisible();
+    // A Google user's last try says what one more wrong PIN costs her.
+    expect(
+      await screen.findByText(
+        "Wrong PIN. 1 try left. Another wrong PIN locks it until a head nurse or the admin resets it.",
+      ),
+    ).toBeVisible();
     await typePin("999999");
     expect(await screen.findByText(PIN_LOCKED)).toBeVisible();
     expect(screen.queryByLabelText("PIN")).toBeNull();
@@ -162,6 +168,7 @@ describe("the other gates", () => {
       }),
     ]);
     expect(await screen.findByRole("heading", { name: /^Choose a PIN, / })).toBeVisible();
+    expect(screen.getByText(/until you choose a PIN\./)).toBeVisible();
     expectNoPatientData();
     await userEvent.type(screen.getByLabelText("New PIN"), "135792");
     await userEvent.type(screen.getByLabelText("Type it again"), "135793{Enter}");
@@ -220,16 +227,31 @@ describe("the page comes back as it was", () => {
     expect(screen.queryByText(/pt c\/o hilo/)).toBeNull();
     expectNoPatientData();
     await typePin(DEMO_PIN);
-    expect(await screen.findByLabelText("Your note")).toHaveValue("pt c/o hilo since 2am");
+    const back = await screen.findByLabelText("Your note");
+    expect(back).toHaveValue("pt c/o hilo since 2am");
+    // The cursor is back in the box she was typing in, not lost to the top of the page.
+    await waitFor(() => {
+      expect(back).toHaveFocus();
+    });
     expect(localStorage.length + sessionStorage.length).toBe(0);
   });
 
-  it("drops a held note on sign-out and when a person signs in", async () => {
+  it("drops a held note on sign-out", async () => {
     const { queryClient } = await signInAsPersona(SARAH);
     await screen.findByRole("heading", { name: "Patients on this ward" });
     holdNote(queryClient, "p1", "unsent");
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     await screen.findByRole("heading", { name: "Sign in" });
+    expect(readHeldNote(queryClient, "p1")).toBe("");
+  });
+
+  it("drops a held note when another person signs in", async () => {
+    const { queryClient, router } = await signInAsPersona(SARAH);
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    holdNote(queryClient, "p1", "unsent");
+    await router.navigate({ to: "/sign-in" });
+    await chooseAndUnlock("Staff nurse · Emily Carter, RN");
+    await screen.findByRole("heading", { name: "Patients on this unit" });
     expect(readHeldNote(queryClient, "p1")).toBe("");
   });
 
@@ -255,5 +277,175 @@ describe("the page comes back as it was", () => {
     await renderApp("/sign-in");
     await chooseAndUnlock("Staff nurse · Emily Carter, RN");
     expect(await screen.findByRole("heading", { name: "Patients on this unit" })).toBeVisible();
+  });
+});
+
+const PATIENT_A = "00000000-0000-4000-8000-000000000011";
+const problemJson = (status: number, code: string) =>
+  HttpResponse.json(
+    { type: "about:blank", title: "x", status, code },
+    { status, headers: { "Content-Type": "application/problem+json" } },
+  );
+
+/** Mutations in the cache that still hold one of these PINs as their variables. */
+function mutationsHolding(queryClient: QueryClient, pins: string[]) {
+  return queryClient
+    .getMutationCache()
+    .getAll()
+    .filter((m) => pins.some((pin) => JSON.stringify(m.state.variables ?? null).includes(pin)));
+}
+
+describe("a PIN lives only in the field and the one request", () => {
+  it("is not kept in the mutation cache after a wrong try, nor after a right one", async () => {
+    const { queryClient } = await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin("999999");
+    await screen.findByText("Wrong PIN. 4 tries left.");
+    await waitFor(() => {
+      expect(mutationsHolding(queryClient, ["999999"])).toEqual([]);
+    });
+    await typePin(DEMO_PIN);
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    await waitFor(() => {
+      expect(mutationsHolding(queryClient, ["999999", DEMO_PIN])).toEqual([]);
+    });
+  });
+
+  it("is not kept after setting a PIN either", async () => {
+    const { queryClient } = await renderApp("/patients", newcomer);
+    await userEvent.type(await screen.findByLabelText("New PIN"), "135792");
+    await userEvent.type(screen.getByLabelText("Type it again"), "135792{Enter}");
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    await waitFor(() => {
+      expect(mutationsHolding(queryClient, ["135792"])).toEqual([]);
+    });
+  });
+});
+
+describe("the gate and the cursor", () => {
+  it("describes the PIN field by whose session it is, and by the idle lock", async () => {
+    const { queryClient } = await renderApp("/patients", head("open"));
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    act(() => {
+      queryClient.setQueryData<Session | null>(sessionKey, (s) =>
+        s ? { ...s, gate: "idle_locked" } : s,
+      );
+    });
+    const field = await screen.findByLabelText("PIN");
+    expect(field).toHaveAccessibleDescription(
+      /Nobody sees a patient until the PIN is entered\..*Locked after 5 minutes without use\./,
+    );
+  });
+
+  it("puts the cursor on the page when the gate goes and what had it is not back", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin(DEMO_PIN);
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+});
+
+describe("one person's data never meets another's", () => {
+  it("drops the unsent note and empties the form when a refetch of the session answers another user", async () => {
+    const { queryClient } = await signInAsPersona(SARAH);
+    await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
+    const box = await screen.findByLabelText("Your note");
+    await userEvent.click(box);
+    await userEvent.paste("A's unsent text");
+    expect(readHeldNote(queryClient, PATIENT_A)).toBe("A's unsent text");
+    const mine = queryClient.getQueryData<Session>(sessionKey);
+    // Another tab signed in as someone else: the shared cookie now answers as her.
+    server.use(
+      http.get("*/api/v1/session", () =>
+        HttpResponse.json({ ...mine, user_id: "someone-else", display_name: "Emily Carter, RN" }),
+      ),
+    );
+    await act(() => queryClient.invalidateQueries({ queryKey: sessionKey }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Your note")).toHaveValue("");
+    });
+    expect(readHeldNote(queryClient, PATIENT_A)).toBe("");
+  });
+
+  it("does not hand a held note to a different user who later owns the form", async () => {
+    const { queryClient } = await signInAsPersona(SARAH);
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    holdNote(queryClient, PATIENT_A, "A's unsent text");
+    const mine = queryClient.getQueryData<Session>(sessionKey);
+    queryClient.setQueryData(sessionKey, { ...mine, user_id: "someone-else" });
+    expect(readHeldNote(queryClient, PATIENT_A)).toBe("");
+  });
+});
+
+describe("what a failed PIN request says and does", () => {
+  it("says a demo session that ran out is not a fifth wrong PIN", async () => {
+    await renderApp("/sign-in", {}, [
+      http.post("*/api/v1/session/unlock", () => problemJson(401, "not_signed_in")),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin(DEMO_PIN);
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(screen.getByText(DEMO_EXPIRED)).toBeVisible();
+    expect(screen.queryByText(DEMO_ENDED)).toBeNull();
+  });
+
+  it("looks at the session again on a 409 instead of stranding her", async () => {
+    const { queryClient } = await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await screen.findByLabelText("PIN");
+    // Another window opened this session: the server is open now, this tab's copy is not.
+    const other = await api.POST("/api/v1/session/unlock", { body: { pin: DEMO_PIN } });
+    expect(other.response.status).toBe(200);
+    expect(queryClient.getQueryData<Session>(sessionKey)?.gate).toBe("enter_pin");
+    // So this unlock is a conflict (409), and the page looks at the session again.
+    await typePin(DEMO_PIN);
+    expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
+  });
+
+  it("keeps the field still while the check is out, so typed digits are not wiped", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await renderApp("/sign-in", {}, [
+      http.post("*/api/v1/session/unlock", async () => {
+        await held;
+        return problemJson(403, "pin_wrong");
+      }),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin("999999");
+    const field = screen.getByLabelText("PIN");
+    await waitFor(() => {
+      expect(field).toHaveAttribute("readonly");
+    });
+    await userEvent.type(field, "123");
+    expect(field).toHaveValue("999999");
+    release();
+    await waitFor(() => {
+      expect(field).not.toHaveAttribute("readonly");
+    });
+    expect(field).toHaveValue("");
+  });
+});
+
+describe("a note that was sent", () => {
+  it("is no longer held, so coming back to the patient shows an empty box", async () => {
+    const { queryClient, router } = await signInAsPersona(SARAH);
+    await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
+    const box = await screen.findByLabelText("Your note");
+    await userEvent.click(box);
+    await userEvent.paste("pt c/o hilo since 2am");
+    expect(readHeldNote(queryClient, PATIENT_A)).toBe("pt c/o hilo since 2am");
+    await userEvent.click(screen.getByRole("button", { name: "Save note" }));
+    await waitFor(() => {
+      expect(readHeldNote(queryClient, PATIENT_A)).toBe("");
+    });
+    await screen.findByRole("heading", { name: "Your note" }, { timeout: 8000 });
+    await act(() =>
+      router.navigate({ to: "/patients/$patientId", params: { patientId: PATIENT_A } }),
+    );
+    expect(await screen.findByLabelText("Your note")).toHaveValue("");
   });
 });

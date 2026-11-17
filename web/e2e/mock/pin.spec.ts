@@ -16,16 +16,14 @@ const HEAD = "hana.reyes@example.com";
 const INVITED = "irene.lim@example.com";
 const LOCKED = "lito.santos@example.com";
 
-/** `count` wrong PINs, each one waited for (a try sent before the last answer would be wiped with the field). */
+/** `count` wrong PINs in a row. The field is read-only while a try is out, so `fill` waits for the answer by itself. */
 async function wrongTries(page: Page, count: number) {
   const field = page.getByLabel("PIN", { exact: true });
   for (let n = 1; n <= count; n++) {
     await field.fill("999999");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("alert")).toContainText(/^Wrong PIN\. \d tr/);
-    await expect(page.getByRole("alert")).toContainText(String(5 - n));
-    await expect(field).toHaveValue("");
   }
+  await expect(page.getByRole("alert")).toContainText(`${String(5 - count)} try left`);
 }
 
 test("a demo person enters the PIN by keyboard; a wrong one counts and empties the field", async ({

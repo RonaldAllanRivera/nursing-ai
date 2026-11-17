@@ -7,6 +7,8 @@ import {
 } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ApiError, ensureOk, unwrap } from "../api/errors";
+import { demoEndedReason } from "./pin";
+import { usePinRequest } from "./usePinRequest";
 import { retryOptions } from "../api/retry";
 import type { components } from "../api/schema";
 
@@ -14,13 +16,20 @@ export type Session = components["schemas"]["SessionOut"];
 
 export const sessionKey = ["session"] as const;
 
-/** The signed-in person, or `null` when there is no session (a 401 is an answer, not a failure). */
+/**
+ * The signed-in person, or `null` when there is no session (a 401 is an answer, not a failure).
+ * Everything cached is about one person: when an answer names someone else (another tab signed
+ * in as another nurse and the shared cookie changed) or nobody, the last person's data is
+ * dropped here, before the new answer is stored and anything renders with it.
+ */
 export const sessionQuery = queryOptions({
   queryKey: sessionKey,
-  queryFn: async ({ signal }): Promise<Session | null> => {
+  queryFn: async ({ signal, client }): Promise<Session | null> => {
     const answer = await api.GET("/api/v1/session", { signal });
-    if (answer.response.status === 401) return null;
-    return unwrap(answer);
+    const next = answer.response.status === 401 ? null : unwrap(answer);
+    const previous = client.getQueryData<Session | null>(sessionKey);
+    if (previous && previous.user_id !== next?.user_id) clearPersonData(client);
+    return next;
   },
 });
 
@@ -73,40 +82,52 @@ export function useSignIn() {
   });
 }
 
-/** Why the sign-in screen is showing after a demo session ended on its own (a fifth wrong PIN); it goes when a person is chosen. */
+/** Why the sign-in screen is showing after a demo session ended on its own: `"fifth"` (a fifth wrong PIN) or `"expired"`. It goes when a person is chosen. */
 export const demoEndedKey = ["sign-in-notice"] as const;
+
+/** A 409 at a PIN screen means the session moved on elsewhere (another window opened it or set the PIN): look again, and the right screen shows. */
+function lookAgainOnConflict(queryClient: QueryClient, error: unknown) {
+  if (error instanceof ApiError && error.status === 409) {
+    void queryClient.invalidateQueries({ queryKey: sessionKey });
+  }
+}
 
 /** Sets the first PIN of a Google user's first sign-in. Success answers the open session. */
 export function useSetPin() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (pin: string) =>
-      unwrap(await api.POST("/api/v1/session/pin", { body: { pin } })),
-    onSuccess: (session) => {
+  return usePinRequest(
+    async (pin: string) => unwrap(await api.POST("/api/v1/session/pin", { body: { pin } })),
+    {
       // Not clearPersonData: the page under the gate, and the note she was typing, come back.
-      queryClient.setQueryData(sessionKey, session);
+      onSuccess: (session) => {
+        queryClient.setQueryData(sessionKey, session);
+      },
+      onError: (error) => {
+        lookAgainOnConflict(queryClient, error);
+      },
     },
-  });
+  );
 }
 
 /**
- * Proves who is at the keyboard (after sign-in, or after an idle lock). A demo person's fifth
- * wrong PIN answers 401, which has already signed the app out; this says why on the sign-in screen.
+ * Proves who is at the keyboard (after sign-in, or after an idle lock). A demo person's 401 has
+ * already signed the app out; this says why on the sign-in screen.
  */
 export function useUnlock(persona: boolean) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (pin: string) =>
-      unwrap(await api.POST("/api/v1/session/unlock", { body: { pin } })),
-    onSuccess: (session) => {
-      queryClient.setQueryData(sessionKey, session);
+  return usePinRequest(
+    async (pin: string) => unwrap(await api.POST("/api/v1/session/unlock", { body: { pin } })),
+    {
+      onSuccess: (session) => {
+        queryClient.setQueryData(sessionKey, session);
+      },
+      onError: (error, previous) => {
+        lookAgainOnConflict(queryClient, error);
+        const reason = persona ? demoEndedReason(error, previous) : null;
+        if (reason) queryClient.setQueryData(demoEndedKey, reason);
+      },
     },
-    onError: (error) => {
-      if (persona && error instanceof ApiError && error.status === 401) {
-        queryClient.setQueryData(demoEndedKey, true);
-      }
-    },
-  });
+  );
 }
 
 export function useSignOut() {

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { ApiError, type Problem } from "../api/errors";
 import {
   DEMO_ENDED,
+  DEMO_EXPIRED,
+  PIN_CHANGED,
+  demoEndedReason,
   PIN_CONNECTION,
   PIN_LOCKED,
   idleLockWords,
@@ -34,9 +37,6 @@ describe("pinProblemMessage", () => {
   });
 
   it("says 1 try left in the singular, and warns a demo person that the next one ends the session", () => {
-    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 1 }), false)).toBe(
-      "Wrong PIN. 1 try left.",
-    );
     expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 1 }), true)).toBe(
       "Wrong PIN. 1 try left. Another wrong PIN ends this demo session.",
     );
@@ -69,10 +69,43 @@ describe("pinProblemMessage", () => {
     ).toBe(PIN_CONNECTION);
   });
 
+  it("warns a Google user on the last try that another wrong PIN locks it until a reset", () => {
+    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 1 }), false)).toBe(
+      "Wrong PIN. 1 try left. Another wrong PIN locks it until a head nurse or the admin resets it.",
+    );
+    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 2 }), false)).toBe(
+      "Wrong PIN. 2 tries left.",
+    );
+  });
+
+  it("says the session changed on a 409 (opened or set in another window)", () => {
+    expect(pinProblemMessage(problem(409, "invalid_request"), false)).toBe(PIN_CHANGED);
+    expect(pinProblemMessage(problem(409, "pin_already_set"), false)).toBe(PIN_CHANGED);
+  });
+
   it("explains the ended demo session", () => {
     expect(DEMO_ENDED).toBe(
       "That was the fifth wrong PIN, so the demo session ended. Choose a person to start again.",
     );
+  });
+});
+
+describe("demoEndedReason", () => {
+  const wrongAtOne = problem(403, "pin_wrong", { tries_left: 1 });
+  const unauthorized = problem(401, "not_signed_in");
+
+  it("is the fifth wrong PIN only when the try before it was the last one", () => {
+    expect(demoEndedReason(unauthorized, wrongAtOne)).toBe("fifth");
+  });
+
+  it("is an expired session for any other 401, and nothing for other answers", () => {
+    expect(demoEndedReason(unauthorized, null)).toBe("expired");
+    expect(demoEndedReason(unauthorized, problem(403, "pin_wrong", { tries_left: 3 }))).toBe(
+      "expired",
+    );
+    expect(demoEndedReason(problem(403, "pin_wrong", { tries_left: 1 }), null)).toBeNull();
+    expect(demoEndedReason(new Error("offline"), null)).toBeNull();
+    expect(DEMO_EXPIRED).toBe("Your demo session ended. Choose a person to start again.");
   });
 });
 

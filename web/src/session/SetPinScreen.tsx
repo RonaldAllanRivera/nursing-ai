@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
-import { GateFrame, WhoLine } from "./GateFrame";
+import { GateFrame, WHO_ID, WhoLine } from "./GateFrame";
 import { PIN_SHORT, PINS_DIFFER, isPinTyped, pinProblemMessage } from "./pin";
 import { PinField } from "./PinField";
 import { useSetPin, type Session } from "./session";
@@ -12,16 +12,22 @@ export function SetPinScreen({ session }: { session: Session }) {
   const setPin = useSetPin();
   const [first, setFirst] = useState("");
   const [again, setAgain] = useState("");
+  // A problem found here, before anything was sent. The server's own words come from `setPin.error`.
   const [problem, setProblem] = useState<Problem>(null);
+  // Once she edits a field the server's last answer no longer applies.
+  const [edited, setEdited] = useState(false);
   const firstField = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     firstField.current?.focus();
   }, []);
 
+  const serverWords =
+    setPin.error !== null && !edited ? pinProblemMessage(setPin.error, false) : null;
+
   return (
     <GateFrame heading={`Choose a PIN, ${session.display_name}`}>
-      <WhoLine session={session} />
+      <WhoLine session={session} reason="Nobody sees a patient until you choose a PIN." />
       <p id="set-pin-hint" className="mt-3 text-ink-2">
         You will type it after every sign-in and when you sign a note. Use 6 digits that are not one
         digit repeated or a run like 123456.
@@ -30,7 +36,7 @@ export function SetPinScreen({ session }: { session: Session }) {
         className="mt-4 grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          if (setPin.isPending) return;
+          if (setPin.pending) return;
           if (!isPinTyped(first)) {
             setProblem({ field: "first", text: PIN_SHORT });
             return;
@@ -40,14 +46,13 @@ export function SetPinScreen({ session }: { session: Session }) {
             return;
           }
           setProblem(null);
-          setPin.mutate(first, {
-            onError: (error) => {
-              // The server's words (a weak PIN) go on the first field; both are cleared to try again.
-              setProblem({ field: "first", text: pinProblemMessage(error, false) });
-              setFirst("");
-              setAgain("");
-              firstField.current?.focus();
-            },
+          setEdited(false);
+          void setPin.run(first).then((ok) => {
+            if (ok) return;
+            // Both are cleared to try again, and the cursor goes to the first one.
+            setFirst("");
+            setAgain("");
+            firstField.current?.focus();
           });
         }}
       >
@@ -59,9 +64,13 @@ export function SetPinScreen({ session }: { session: Session }) {
           onChange={(value) => {
             setFirst(value);
             setProblem(null);
+            setEdited(true);
           }}
-          describedBy="set-pin-hint"
-          message={problem?.field === "first" ? problem.text : null}
+          describedBy={`${WHO_ID} set-pin-hint`}
+          message={
+            problem?.field === "first" ? problem.text : problem === null ? serverWords : null
+          }
+          readOnly={setPin.pending}
         />
         <PinField
           id="set-pin-again"
@@ -70,12 +79,14 @@ export function SetPinScreen({ session }: { session: Session }) {
           onChange={(value) => {
             setAgain(value);
             setProblem(null);
+            setEdited(true);
           }}
           message={problem?.field === "again" ? problem.text : null}
+          readOnly={setPin.pending}
         />
         <div>
-          <Button type="submit" variant="primary" disabled={setPin.isPending}>
-            {setPin.isPending ? "Saving…" : "Save PIN"}
+          <Button type="submit" variant="primary" disabled={setPin.pending}>
+            {setPin.pending ? "Saving…" : "Save PIN"}
           </Button>
         </div>
       </form>
