@@ -631,10 +631,22 @@ async def test_redraft_knows_the_note_and_its_author(engine: AsyncEngine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_two_redrafts_at_once_make_one_job(engine: AsyncEngine) -> None:
+async def test_two_redrafts_at_once_make_one_job(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
     world = await build_world(engine)
     repo = PgNoteRepository(engine, CLOCK)
     rough, _ = await _failed(repo, world, JobFailure.INVALID_OUTPUT)
+    # Pause after reading the newest job, so that without the rough note's row lock every tap
+    # would read the failed job before any had inserted (and the losers would hit the unique index).
+    newest = notes_module._newest_job  # pyright: ignore[reportPrivateUsage]
+
+    async def slow_newest(*args: Any) -> Any:
+        row = await newest(*args)
+        await asyncio.sleep(0.2)
+        return row
+
+    monkeypatch.setattr(notes_module, "_newest_job", slow_newest)
 
     results = await asyncio.gather(
         *(repo.redraft(rough.id, world.nurse_id, LATER) for _ in range(4))
