@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from nursing_core.demo import DEMO_FACILITIES
 from nursing_core.domain.errors import NotFound, StaleVersion
 from nursing_core.domain.facility import FacilityProfile, FacilitySettings, StoredFacility
+from nursing_core.domain.shifts import shift_containing
 from nursing_core.ports import Clock
 from nursing_core.storage import tables
 from nursing_core.storage.rows import facility_columns, shift_rows
@@ -147,6 +148,27 @@ class PgFacilityRepository:
         The key and the name stay as they are; the history row has no author. A facility with no
         preset is `NotFound`.
         """
+        reset = await self._reset(key, now, only_if_stale=False)
+        if reset is None:  # unreachable: only the stale check can decline
+            raise NotFound("no such facility")
+        return reset
+
+    async def reset_stale_to_presets(self, now: datetime) -> list[str]:
+        """Puts back every demo facility a persona changed before its current nursing day began.
+
+        The facility's own timezone and shifts decide where a nursing day starts. A facility whose
+        latest change is already a reset, or was made by an invited person (or is the seed), is
+        left alone. Returns the keys it reset.
+        """
+        done: list[str] = []
+        for preset in DEMO_FACILITIES:
+            if await self._reset(preset.key, now, only_if_stale=True) is not None:
+                done.append(preset.key)
+        return done
+
+    async def _reset(
+        self, key: str, now: datetime, *, only_if_stale: bool
+    ) -> StoredFacility | None:
         preset = next((p for p in DEMO_FACILITIES if p.key == key), None)
         if preset is None:
             raise NotFound("no preset for this facility")
@@ -160,9 +182,43 @@ class PgFacilityRepository:
             ).one_or_none()
             if current is None:
                 raise NotFound("no such facility")
+            if only_if_stale and not await _persona_changed_before_today(
+                conn, current.id, key, now
+            ):
+                return None
             settings = FacilitySettings.model_validate(
                 preset.model_dump(exclude={"key"}) | {"name": current.name}
             )
             return await _write_version(
                 conn, current.id, current.version + 1, settings, None, now, reset=True
             )
+
+
+async def _persona_changed_before_today(
+    conn: AsyncConnection, facility_id: UUID, key: str, now: datetime
+) -> bool:
+    """True when a persona made the latest change, before the nursing day `now` falls in."""
+    latest = (
+        await conn.execute(
+            select(
+                tables.facility_change.c.changed_at,
+                tables.facility_change.c.reset,
+                tables.app_user.c.persona,
+            )
+            .select_from(
+                tables.facility_change.outerjoin(
+                    tables.app_user, tables.app_user.c.id == tables.facility_change.c.changed_by
+                )
+            )
+            .where(tables.facility_change.c.facility_id == facility_id)
+            .order_by(tables.facility_change.c.version.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    if latest is None or latest.reset or not latest.persona:
+        return False
+    profile = (await load_facilities(conn, _FACILITY.c.key == key))[0].profile
+    return (
+        shift_containing(latest.changed_at, profile).shift_date
+        < shift_containing(now, profile).shift_date
+    )

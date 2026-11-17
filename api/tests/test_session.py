@@ -37,9 +37,7 @@ def shift_of(response: httpx.Response) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("app_env", "secure"), [("dev", False), ("test", False), ("demo", True), ("prod", True)]
-)
+@pytest.mark.parametrize(("app_env", "secure"), [("dev", False), ("test", False), ("demo", True)])
 async def test_session_cookie_secure_only_in_demo_and_prod(
     database_url: str, clock: MutableClock, app_env: str, secure: bool
 ) -> None:
@@ -551,3 +549,14 @@ async def test_a_right_pin_between_wrong_ones_never_locks_early(
 
     assert (wrong.status_code, wrong.json()["tries_left"]) == (403, 4)
     assert (await user_row(app, user_id)).pin_locked_at is None
+
+
+@pytest.mark.asyncio
+async def test_persona_session_starts_at_enter_pin(app: FastAPI, client: httpx.AsyncClient) -> None:
+    started = await start(client, PH_STAFF)
+    assert started.json()["gate"] == "enter_pin"
+    async with app.state.engine.begin() as conn:
+        verified = (await conn.execute(select(tables.session.c.pin_verified_at))).scalar_one()
+    assert verified is None
+    locked = await client.get("/api/v1/patients")
+    assert (locked.status_code, locked.json()["code"]) == (423, "enter_pin")

@@ -1,17 +1,34 @@
 """The admin's facility settings: who may read and edit them, the ETag, and the kept history."""
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_api.schemas import FacilityUpdateIn
-from nursing_core.demo import DEMO_PIN, load_demo_cases
+from nursing_core.demo import DEMO_FACILITIES, DEMO_PIN, load_demo_cases
+from nursing_core.domain.facility import FacilitySettings
+from nursing_core.domain.users import Role
 from nursing_core.storage import tables
 from sqlalchemy import select, update
 from sqlalchemy.exc import DBAPIError
 
-from .helpers import ADMIN, PH_HEAD, PH_STAFF, US_STAFF, client_for, drain, post_note, sign_in
+from .fake_google import add_google_user
+from .helpers import (
+    ADMIN,
+    PH_HEAD,
+    PH_STAFF,
+    US_STAFF,
+    MutableClock,
+    client_for,
+    drain,
+    post_note,
+    running_app,
+    sign_in,
+)
 
 PH_CASE = load_demo_cases()[0]
 PH = "/api/v1/facilities/ph-demo"
@@ -353,3 +370,128 @@ async def test_settings_save_needs_the_pin(app: FastAPI, client: httpx.AsyncClie
     ]
     assert [a.status_code for a in answers] == [403, 403, 403, 403, 401]
     assert (await client.get(PH)).status_code == 401
+
+
+# The demo's presets and the nursing-day reset.
+RESET_PH = f"{PH}/reset"
+
+
+async def move_shifts(client: httpx.AsyncClient, version: int) -> None:
+    """The signed-in admin moves the PH shifts and day start (a change by that person)."""
+    body = moved_shifts(await settings_of(client))
+    saved = await client.put(PH, json=body | {"name": "Renamed SYNTHETIC"}, headers=match(version))
+    assert saved.status_code == 200, saved.text
+
+
+async def persona_signs_in(app: FastAPI) -> None:
+    """A fresh visitor signs in as the PH staff nurse through the route (this runs the reset)."""
+    async with client_for(app) as visitor:
+        response = await visitor.post("/api/v1/session", json={"persona_id": str(PH_STAFF)})
+    assert response.status_code == 201, response.text
+
+
+def preset_of(key: str) -> FacilitySettings:
+    preset = next(p for p in DEMO_FACILITIES if p.key == key)
+    return FacilitySettings.model_validate(preset.model_dump(exclude={"key"}))
+
+
+@asynccontextmanager
+async def demo_app(
+    database_url: str, clock: MutableClock
+) -> AsyncGenerator[tuple[FastAPI, httpx.AsyncClient]]:
+    """A demo-environment app and a client over https (its cookie is Secure)."""
+    async with running_app(database_url, clock, "demo") as app, client_for(app) as client:
+        client.base_url = httpx.URL("https://test")
+        yield app, client
+
+
+@pytest.mark.asyncio
+async def test_persona_edit_is_put_back_after_the_nursing_day_turns(
+    app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    await sign_in(client, ADMIN)
+    await move_shifts(client, 1)
+    await client.delete("/api/v1/session")
+    # The same nursing day: the next visitor still sees the persona's edit.
+    clock.advance(timedelta(hours=1))
+    await persona_signs_in(app)
+    assert (await app.state.facilities.get_facility("ph-demo")).version == 2
+    # The day turns: the next sign-in puts it back, once (the one after finds a reset row).
+    clock.advance(timedelta(hours=24))
+    await persona_signs_in(app)
+    await persona_signs_in(app)
+    stored = await app.state.facilities.get_facility("ph-demo")
+    expected = preset_of("ph-demo").model_copy(update={"name": "Renamed SYNTHETIC"})
+    assert stored.profile.model_dump(exclude={"key"}) == expected.model_dump()
+    rows = await history(app, "ph-demo")
+    assert [(r.version, r.reset, r.changed_by) for r in rows] == [
+        (1, False, None),
+        (2, False, ADMIN),
+        (3, True, None),
+    ]
+    # The other facility was never touched.
+    assert (await app.state.facilities.get_facility("us-demo")).version == 1
+
+
+@pytest.mark.asyncio
+async def test_invited_admins_edit_is_never_reset(
+    app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    invited = await add_google_user(
+        app, "gale.admin@example.com", Role.ADMIN, None, pin=DEMO_PIN, sub="sub-gale"
+    )
+    await sign_in(client, invited)
+    await move_shifts(client, 1)
+    await client.delete("/api/v1/session")
+    clock.advance(timedelta(days=3))
+    await persona_signs_in(app)
+    stored = await app.state.facilities.get_facility("ph-demo")
+    assert (stored.version, stored.profile.name) == (2, "Renamed SYNTHETIC")
+    assert [r.reset for r in await history(app, "ph-demo")] == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_reset_button_restores_the_preset_now(database_url: str, clock: MutableClock) -> None:
+    async with demo_app(database_url, clock) as (_app, admin):
+        await sign_in(admin, ADMIN)
+        await move_shifts(admin, 1)
+        no_header = await admin.post(RESET_PH, json={"pin": DEMO_PIN})
+        stale = await admin.post(RESET_PH, json={"pin": DEMO_PIN}, headers=match(1))
+        wrong = await admin.post(RESET_PH, json={"pin": "864209"}, headers=match(2))
+        assert (no_header.status_code, stale.status_code, wrong.status_code) == (428, 412, 403)
+        assert wrong.json()["code"] == "pin_wrong"
+        assert (await admin.get(PH)).json()["version"] == 2
+        reset = await admin.post(RESET_PH, json={"pin": DEMO_PIN}, headers=match(2))
+        assert reset.status_code == 200, reset.text
+        assert reset.headers["etag"] == '"f3"'
+        assert reset.json()["version"] == 3
+        profile = reset.json()["profile"]
+        assert profile["shifts"][0]["code"] == "6-2"
+        assert profile["day_starts_at"] == "06:00:00"
+        assert DEMO_PIN not in reset.text
+        again = await admin.get(PH)
+        assert again.json()["profile"] == profile
+        assert again.headers["etag"] == '"f3"'
+
+
+@pytest.mark.asyncio
+async def test_reset_button_is_403_outside_demo(
+    app: FastAPI, client: httpx.AsyncClient, database_url: str, clock: MutableClock
+) -> None:
+    # `dev` (the fixture app) is not the public demo, even for the admin persona.
+    await sign_in(client, ADMIN)
+    await move_shifts(client, 1)
+    refused = await client.post(RESET_PH, json={"pin": DEMO_PIN}, headers=match(2))
+    assert (refused.status_code, refused.json()["code"]) == (403, "forbidden")
+    assert (await app.state.facilities.get_facility("ph-demo")).version == 2
+    # In demo, a nurse persona and an invited admin are refused too.
+    async with demo_app(database_url, clock) as (demo, visitor):
+        invited = await add_google_user(
+            demo, "gale.admin@example.com", Role.ADMIN, None, pin=DEMO_PIN, sub="sub-gale"
+        )
+        for who in (PH_STAFF, invited):
+            await visitor.delete("/api/v1/session")
+            await sign_in(visitor, who)
+            answer = await visitor.post(RESET_PH, json={"pin": DEMO_PIN}, headers=match(2))
+            assert (answer.status_code, answer.json()["code"]) == (403, "forbidden"), who
+        assert (await demo.state.facilities.get_facility("ph-demo")).version == 2

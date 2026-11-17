@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Request, Response
 from nursing_core.auth.pins import PinRefused, check_new_pin, hash_pin
-from nursing_core.demo import DEMO_PERSONAS
+from nursing_core.demo import DEMO_FACILITY_NAMES, DEMO_PERSONAS
 from nursing_core.domain.errors import NotFound
 from nursing_core.domain.shifts import default_shift, shift_choices
 from nursing_core.domain.users import SessionGate
@@ -98,10 +98,17 @@ async def begin_session(
     return session
 
 
+def ensure_personas_offered(request: Request) -> None:
+    """The demo personas exist everywhere but `prod`, where they answer 404 like unknown ones."""
+    settings: Settings = request.app.state.settings
+    if settings.app_env == "prod":
+        raise NotFound("no such persona")
+
+
 @router.get("/personas", response_model=list[PersonaOut], responses=problems(404))
-async def list_personas(facilities: FacilitiesDep) -> list[PersonaOut]:
+async def list_personas(request: Request) -> list[PersonaOut]:
     """The demo people a visitor can sign in as, each with their role."""
-    names = {f.profile.key: f.profile.name for f in await facilities.list_facilities()}
+    ensure_personas_offered(request)
     return [
         PersonaOut(
             id=persona.id,
@@ -109,7 +116,9 @@ async def list_personas(facilities: FacilitiesDep) -> list[PersonaOut]:
             initials=persona.initials,
             role=persona.role,
             facility_key=persona.facility_key,
-            facility_name=names[persona.facility_key] if persona.facility_key else None,
+            facility_name=DEMO_FACILITY_NAMES[persona.facility_key]
+            if persona.facility_key
+            else None,
         )
         for persona in DEMO_PERSONAS
     ]
@@ -126,6 +135,7 @@ async def start_session(
     facilities: FacilitiesDep,
 ) -> SessionOut:
     """Signs in as a demo persona and sets the session cookie."""
+    ensure_personas_offered(request)
     user = await users.get_user(body.persona_id)
     if not user.persona:
         # An invited person signs in with Google only: their id opens nothing here, and looks
@@ -133,6 +143,8 @@ async def start_session(
         raise NotFound("no such persona")
     now = clock.now()
     settings: Settings = request.app.state.settings
+    # The first visitor of a new nursing day finds the demo's settings back at their presets.
+    await facilities.reset_stale_to_presets(now)
     session = await begin_session(
         user,
         now=now,

@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, Header, Request, Response
 from nursing_core.domain.errors import Forbidden, StaleVersion
 from nursing_core.domain.facility import StoredFacility
 from nursing_core.domain.shifts import shift_choices
@@ -9,9 +9,10 @@ from nursing_core.ports import Clock
 
 from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
 from nursing_api.deps import AdminDep, ClockDep, FacilitiesDep, SessionsDep, SignedInDep, UsersDep
-from nursing_api.problems import PreconditionRequired, not_built, problems
+from nursing_api.problems import PreconditionRequired, problems
 from nursing_api.routes import CSRF, SIGNED_IN, etag_header
 from nursing_api.schemas import FacilityOut, FacilityUpdateIn, PinIn
+from nursing_api.settings import Settings
 
 router = APIRouter(prefix="/api/v1/facilities", tags=["facilities"], dependencies=SIGNED_IN)
 
@@ -100,6 +101,32 @@ async def update_facility(
 
 
 @router.post("/{facility_key}/reset", response_model=FacilityOut, responses=SAVE, dependencies=CSRF)
-async def reset_facility(facility_key: str, body: PinIn, if_match: IfMatch = None) -> Response:
+async def reset_facility(
+    facility_key: str,
+    body: PinIn,
+    request: Request,
+    response: Response,
+    admin: AdminDep,
+    clock: ClockDep,
+    facilities: FacilitiesDep,
+    users: UsersDep,
+    sessions: SessionsDep,
+    signed_in: SignedInDep,
+    if_match: IfMatch = None,
+) -> FacilityOut | Response:
     """The demo's admin persona puts a facility back to its preset at once."""
-    return not_built()
+    settings: Settings = request.app.state.settings
+    if settings.app_env != "demo" or not admin.persona:
+        raise Forbidden("only the demo's admin persona resets settings")
+    if not if_match:
+        raise PreconditionRequired
+    current = await facilities.get_facility(facility_key)
+    if if_match != etag(current.version):
+        raise StaleVersion("the facility has changed")
+    try:
+        await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
+    except SessionEnded:
+        return session_ended_response()
+    saved = await facilities.reset_to_preset(facility_key, clock.now())
+    response.headers["ETag"] = etag(saved.version)
+    return facility_out(saved, clock)
