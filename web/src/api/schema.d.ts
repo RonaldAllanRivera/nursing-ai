@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/v1/auth/google/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Google Callback
+         * @description Google's redirect back: an invited person gets a session; anyone else, a reason.
+         */
+        get: operations["google_callback_api_v1_auth_google_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/google/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Google Start
+         * @description Sends the browser to Google (404 when Google sign-in is off). Reads no database.
+         */
+        get: operations["google_start_api_v1_auth_google_start_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/draft-jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -52,10 +92,31 @@ export interface paths {
         get: operations["get_facility_api_v1_facilities__facility_key__get"];
         /**
          * Update Facility
-         * @description The admin edits a facility's settings. Notes already written keep their shift.
+         * @description The admin edits a facility's settings, with their PIN. Notes already written keep their
+         *     shift.
          */
         put: operations["update_facility_api_v1_facilities__facility_key__put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/facilities/{facility_key}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Facility
+         * @description The demo's admin persona puts a facility back to its preset at once.
+         */
+        post: operations["reset_facility_api_v1_facilities__facility_key__reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -151,7 +212,8 @@ export interface paths {
         put?: never;
         /**
          * Sign Note
-         * @description Signs the draft: 409 review_incomplete lists the lines that still need the nurse.
+         * @description Signs the draft with the nurse's PIN: 409 review_incomplete lists the lines that still
+         *     need her.
          */
         post: operations["sign_note_api_v1_notes__note_id__sign_post"];
         delete?: never;
@@ -240,6 +302,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/rough-notes/{rough_note_id}/draft-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draft Again
+         * @description Try drafting again: a new job after a retryable failure; the open job if one is running.
+         */
+        post: operations["draft_again_api_v1_rough_notes__rough_note_id__draft_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session": {
         parameters: {
             query?: never;
@@ -262,6 +344,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/session/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Pin
+         * @description After the first Google sign-in: choose a six-digit PIN (409 when one is already set).
+         */
+        post: operations["set_pin_api_v1_session_pin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session/shift": {
         parameters: {
             query?: never;
@@ -276,6 +378,110 @@ export interface paths {
          */
         put: operations["change_shift_api_v1_session_shift_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/session/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock
+         * @description The PIN after a sign-in or the idle lock. A wrong one is 403 with the tries left.
+         */
+        post: operations["unlock_api_v1_session_unlock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sign-in-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sign In Options
+         * @description What the sign-in page offers: Google, the demo personas and their PIN. Reads no database.
+         */
+        get: operations["sign_in_options_api_v1_sign_in_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Staff
+         * @description Everyone invited, for the admin; a head nurse's own facility. Personas aren't listed.
+         */
+        get: operations["list_staff_api_v1_users_get"];
+        put?: never;
+        /**
+         * Invite
+         * @description The admin invites a Google account by email, with a role and a facility.
+         */
+        post: operations["invite_api_v1_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{user_id}/pin-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Pin
+         * @description In person: the admin, or a head nurse for her facility's nurses, clears a locked PIN.
+         */
+        post: operations["reset_pin_api_v1_users__user_id__pin_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{user_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke
+         * @description The admin ends someone's access and sessions; the row stays for their signed notes.
+         */
+        post: operations["revoke_api_v1_users__user_id__revoke_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -332,6 +538,8 @@ export interface components {
             id: string;
             /** Note Id */
             note_id: string | null;
+            /** Retryable */
+            retryable: boolean;
             /**
              * Rough Note Id
              * Format: uuid
@@ -406,10 +614,10 @@ export interface components {
             units: components["schemas"]["UnitDefaults"];
         };
         /**
-         * FacilitySettings
-         * @description Everything the admin edits. The key is not here: it never changes.
+         * FacilityUpdateIn
+         * @description A settings save: the settings and the admin's PIN, which proves it is still them.
          */
-        FacilitySettings: {
+        FacilityUpdateIn: {
             /**
              * Clock
              * @default 24h
@@ -427,6 +635,8 @@ export interface components {
             name: string;
             /** Note Formats */
             note_formats: components["schemas"]["NoteFormat"][];
+            /** Pin */
+            pin: string;
             /**
              * Session Max Hours
              * @default 12
@@ -497,6 +707,16 @@ export interface components {
              * @enum {string}
              */
             status: "healthy" | "unhealthy";
+        };
+        /** InviteIn */
+        InviteIn: {
+            /** Email */
+            email: string;
+            /** Facility Key */
+            facility_key: string | null;
+            /** Pin */
+            pin: string;
+            role: components["schemas"]["Role"];
         };
         /**
          * JobFailure
@@ -580,6 +800,8 @@ export interface components {
         };
         /** PatientDetail */
         PatientDetail: {
+            /** Demo Note */
+            demo_note: string | null;
             /** Notes */
             notes: components["schemas"]["ShiftNoteOut"][];
             shift: components["schemas"]["ShiftRef"];
@@ -622,13 +844,18 @@ export interface components {
             initials: string;
             role: components["schemas"]["Role"];
         };
+        /** PinIn */
+        PinIn: {
+            /** Pin */
+            pin: string;
+        };
         /** Problem */
         Problem: {
             /**
              * Code
              * @enum {string}
              */
-            code: "not_signed_in" | "forbidden" | "not_found" | "note_locked" | "review_incomplete" | "stale_version" | "precondition_required" | "idempotency_key_reused" | "invalid_request" | "not_implemented";
+            code: "not_signed_in" | "forbidden" | "not_found" | "note_locked" | "review_incomplete" | "stale_version" | "precondition_required" | "idempotency_key_reused" | "invalid_request" | "not_implemented" | "set_pin" | "enter_pin" | "idle_locked" | "pin_locked" | "csrf_failed" | "pin_wrong" | "pin_already_set" | "email_taken" | "already_drafted" | "not_retryable" | "daily_draft_limit" | "database_waking";
             /** Detail */
             detail?: string | null;
             /** Errors */
@@ -639,6 +866,8 @@ export interface components {
             status: number;
             /** Title */
             title: string;
+            /** Tries Left */
+            tries_left?: number | null;
             /**
              * Type
              * @default about:blank
@@ -688,6 +917,13 @@ export interface components {
              */
             written_at: string;
         };
+        /**
+         * SessionGate
+         * @description What a session may do now. The server decides it on every request: only `open` reaches
+         *     patient data; the others name the screen the web app shows instead.
+         * @enum {string}
+         */
+        SessionGate: "open" | "set_pin" | "enter_pin" | "idle_locked" | "pin_locked";
         /** SessionIn */
         SessionIn: {
             /**
@@ -698,12 +934,27 @@ export interface components {
         };
         /** SessionOut */
         SessionOut: {
+            /** Csrf Token */
+            csrf_token: string;
             /** Display Name */
             display_name: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
             /** Facility Key */
             facility_key: string | null;
+            gate: components["schemas"]["SessionGate"];
+            /** Idle Lock Seconds */
+            idle_lock_seconds: number;
             /** Initials */
             initials: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "persona" | "google";
             role: components["schemas"]["Role"];
             shift: components["schemas"]["ShiftRef"] | null;
             /**
@@ -786,6 +1037,29 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
+        /**
+         * SignInOptionsOut
+         * @description What the sign-in page offers. Answered without the database, so a visitor (or a crawler)
+         *     never wakes a paused one.
+         */
+        SignInOptionsOut: {
+            /** Demo */
+            demo: boolean;
+            /** Demo Pin */
+            demo_pin: string | null;
+            /** Google */
+            google: boolean;
+            /** Personas */
+            personas: boolean;
+        };
+        /**
+         * SignNoteIn
+         * @description Signing a note: the nurse's PIN proves it is her at the keyboard.
+         */
+        SignNoteIn: {
+            /** Pin */
+            pin: string;
+        };
         /** Signature */
         Signature: {
             /** Content Hash */
@@ -831,6 +1105,36 @@ export interface components {
             volume: components["schemas"]["Ucum"];
             weight: components["schemas"]["Ucum"] | null;
         };
+        /**
+         * UserOut
+         * @description A person on the staff list. Demo personas are never listed.
+         */
+        UserOut: {
+            /** Display Name */
+            display_name: string;
+            /** Email */
+            email: string;
+            /** Facility Key */
+            facility_key: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Initials */
+            initials: string;
+            /** Pin Locked */
+            pin_locked: boolean;
+            role: components["schemas"]["Role"];
+            status: components["schemas"]["UserStatus"];
+        };
+        /**
+         * UserStatus
+         * @description An invited person reads `invited` until the first Google sign-in. Revoked rows stay,
+         *     because signed notes point at their author.
+         * @enum {string}
+         */
+        UserStatus: "invited" | "active" | "revoked";
     };
     responses: never;
     parameters: never;
@@ -840,6 +1144,55 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    google_callback_api_v1_auth_google_callback_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    /** @description The app, or the sign-in page with ?error= */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    google_start_api_v1_auth_google_start_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    /** @description Google's account chooser */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     get_job_api_v1_draft_jobs__job_id__get: {
         parameters: {
             query?: never;
@@ -896,6 +1249,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     list_facilities_api_v1_facilities_get: {
@@ -918,6 +1280,15 @@ export interface operations {
             };
             /** @description Not signed in */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -985,6 +1356,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     update_facility_api_v1_facilities__facility_key__put: {
@@ -1001,7 +1381,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FacilitySettings"];
+                "application/json": components["schemas"]["FacilityUpdateIn"];
             };
         };
         responses: {
@@ -1054,6 +1434,109 @@ export interface operations {
             };
             /** @description The request isn't valid */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A required header is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reset_facility_api_v1_facilities__facility_key__reset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required: 428 without it */
+                "If-Match"?: string | null;
+            };
+            path: {
+                facility_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The version, for If-Match on the next change */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FacilityOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The note or setting has changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1159,6 +1642,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     discard_note_api_v1_notes__note_id__discard_post: {
@@ -1233,6 +1725,15 @@ export interface operations {
             };
             /** @description The request isn't valid */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1335,6 +1836,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description A required header is missing */
             428: {
                 headers: {
@@ -1358,7 +1868,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignNoteIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1425,6 +1939,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description A required header is missing */
             428: {
                 headers: {
@@ -1465,6 +1988,15 @@ export interface operations {
             };
             /** @description Not allowed */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1523,6 +2055,15 @@ export interface operations {
             };
             /** @description The request isn't valid */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1597,8 +2138,26 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description A required header is missing */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many requests */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1624,6 +2183,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonaOut"][];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    draft_again_api_v1_rough_notes__rough_note_id__draft_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rough_note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    /** @description The draft job to poll */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftJobOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -1715,6 +2370,75 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_pin_api_v1_session_pin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     change_shift_api_v1_session_shift_put: {
@@ -1759,6 +2483,362 @@ export interface operations {
             };
             /** @description The request isn't valid */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    unlock_api_v1_session_unlock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sign_in_options_api_v1_sign_in_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInOptionsOut"];
+                };
+            };
+        };
+    };
+    list_staff_api_v1_users_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"][];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invite_api_v1_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reset_pin_api_v1_users__user_id__pin_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    revoke_api_v1_users__user_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The request isn't valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Locked: sign in or unlock first */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };

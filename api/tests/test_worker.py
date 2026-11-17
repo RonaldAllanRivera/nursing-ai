@@ -113,6 +113,8 @@ async def test_a_patient_without_a_demo_case_fails_with_replay_missing(
     await app.state.queue.drain()
     job = (await client.get(f"/api/v1/draft-jobs/{posted.json()['id']}")).json()
     assert (job["status"], job["failure"], job["note_id"]) == ("failed", "replay_missing", None)
+    # A missing recording would be missing again: no "Try drafting again".
+    assert job["retryable"] is False
     assert (await app.state.usage.month_total(app.state.clock.now()))[1] == 0
 
 

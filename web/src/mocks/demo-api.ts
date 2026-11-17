@@ -58,7 +58,12 @@ export const demoApi: DemoApi = {
         "ends_at": "2026-11-11T22:00:00Z",
         "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
-      }
+      },
+      "kind": "persona",
+      "gate": "open",
+      "csrf_token": "mock-csrf-token",
+      "expires_at": "2026-11-12T17:10:00+08:00",
+      "idle_lock_seconds": 300
     },
     "00000000-0000-4000-8000-000000000102": {
       "user_id": "00000000-0000-4000-8000-000000000102",
@@ -73,7 +78,12 @@ export const demoApi: DemoApi = {
         "ends_at": "2026-11-11T22:00:00Z",
         "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
-      }
+      },
+      "kind": "persona",
+      "gate": "open",
+      "csrf_token": "mock-csrf-token",
+      "expires_at": "2026-11-12T17:10:00+08:00",
+      "idle_lock_seconds": 300
     },
     "00000000-0000-4000-8000-000000000201": {
       "user_id": "00000000-0000-4000-8000-000000000201",
@@ -88,7 +98,12 @@ export const demoApi: DemoApi = {
         "ends_at": "2026-11-13T03:00:00Z",
         "shift_date": "2026-11-12",
         "timezone": "America/Los_Angeles"
-      }
+      },
+      "kind": "persona",
+      "gate": "open",
+      "csrf_token": "mock-csrf-token",
+      "expires_at": "2026-11-13T00:15:00-08:00",
+      "idle_lock_seconds": 300
     },
     "00000000-0000-4000-8000-000000000202": {
       "user_id": "00000000-0000-4000-8000-000000000202",
@@ -103,7 +118,12 @@ export const demoApi: DemoApi = {
         "ends_at": "2026-11-13T03:00:00Z",
         "shift_date": "2026-11-12",
         "timezone": "America/Los_Angeles"
-      }
+      },
+      "kind": "persona",
+      "gate": "open",
+      "csrf_token": "mock-csrf-token",
+      "expires_at": "2026-11-13T00:15:00-08:00",
+      "idle_lock_seconds": 300
     },
     "00000000-0000-4000-8000-000000000901": {
       "user_id": "00000000-0000-4000-8000-000000000901",
@@ -111,7 +131,12 @@ export const demoApi: DemoApi = {
       "initials": "VL",
       "role": "admin",
       "facility_key": null,
-      "shift": null
+      "shift": null,
+      "kind": "persona",
+      "gate": "open",
+      "csrf_token": "mock-csrf-token",
+      "expires_at": "2026-11-12T22:15:00-08:00",
+      "idle_lock_seconds": 300
     }
   },
   "facilities": {
@@ -301,7 +326,8 @@ export const demoApi: DemoApi = {
         "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
       },
-      "notes": []
+      "notes": [],
+      "demo_note": "pt c/o hilo since 2am, BP 90/60 HR 112. pinainom ng water 200ml, still weak.\nnanginginig around 3am, T 37.9. nagsuka x1 ~4am, mga 100ml.\nIVF D5LR 1L @ 30gtts/min infusing well L arm"
     },
     "00000000-0000-4000-8000-000000000021": {
       "summary": {
@@ -321,7 +347,8 @@ export const demoApi: DemoApi = {
         "shift_date": "2026-11-11",
         "timezone": "Asia/Manila"
       },
-      "notes": []
+      "notes": [],
+      "demo_note": "hindi makatulog since 11pm, restless. repositioned, lights dimmed. nakatulog ng 0100.\n0330 Lola Dora febrile, T 37.8, chilling. TSB done, paracetamol 500mg given per order. anak na si Ramil at bedside, informed."
     },
     "00000000-0000-4000-8000-000000000031": {
       "summary": {
@@ -341,7 +368,8 @@ export const demoApi: DemoApi = {
         "shift_date": "2026-11-12",
         "timezone": "America/Los_Angeles"
       },
-      "notes": []
+      "notes": [],
+      "demo_note": "0830 pt A&Ox4, c/o R hip pain 6/10, oxycodone 5mg PO given per MAR. T 100.2F HR 96 BP 142/84\nRR 18 SpO2 95% 2L NC. wt 176 lb this AM. dtr Linda at bedside, updated on POC. 1015 pain 3/10.\nambulated 10 ft w/ walker with PT, tolerated. SCDs on, bed alarm on, call light within reach."
     }
   },
   "jobs": {
@@ -350,21 +378,24 @@ export const demoApi: DemoApi = {
       "rough_note_id": "00000000-0000-4000-8000-000000000013",
       "status": "succeeded",
       "failure": null,
-      "note_id": "00000000-0000-4000-8000-000000000015"
+      "note_id": "00000000-0000-4000-8000-000000000015",
+      "retryable": false
     },
     "00000000-0000-4000-8000-000000000024": {
       "id": "00000000-0000-4000-8000-000000000024",
       "rough_note_id": "00000000-0000-4000-8000-000000000023",
       "status": "succeeded",
       "failure": null,
-      "note_id": "00000000-0000-4000-8000-000000000025"
+      "note_id": "00000000-0000-4000-8000-000000000025",
+      "retryable": false
     },
     "00000000-0000-4000-8000-000000000034": {
       "id": "00000000-0000-4000-8000-000000000034",
       "rough_note_id": "00000000-0000-4000-8000-000000000033",
       "status": "succeeded",
       "failure": null,
-      "note_id": "00000000-0000-4000-8000-000000000035"
+      "note_id": "00000000-0000-4000-8000-000000000035",
+      "retryable": false
     }
   },
   "notes": {

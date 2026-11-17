@@ -112,6 +112,10 @@
             ],
             "title": "Note Id"
           },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
           "rough_note_id": {
             "format": "uuid",
             "title": "Rough Note Id",
@@ -126,7 +130,8 @@
           "rough_note_id",
           "status",
           "failure",
-          "note_id"
+          "note_id",
+          "retryable"
         ],
         "title": "DraftJobOut",
         "type": "object"
@@ -309,9 +314,9 @@
         "title": "FacilityProfile",
         "type": "object"
       },
-      "FacilitySettings": {
+      "FacilityUpdateIn": {
         "additionalProperties": false,
-        "description": "Everything the admin edits. The key is not here: it never changes.",
+        "description": "A settings save: the settings and the admin's PIN, which proves it is still them.",
         "properties": {
           "clock": {
             "default": "24h",
@@ -347,6 +352,11 @@
             "title": "Note Formats",
             "type": "array"
           },
+          "pin": {
+            "pattern": "^[0-9]{6}$",
+            "title": "Pin",
+            "type": "string"
+          },
           "session_max_hours": {
             "default": 12,
             "maximum": 24.0,
@@ -378,9 +388,10 @@
           "shifts",
           "note_formats",
           "default_note_format",
-          "units"
+          "units",
+          "pin"
         ],
-        "title": "FacilitySettings",
+        "title": "FacilityUpdateIn",
         "type": "object"
       },
       "FdarDraft": {
@@ -551,6 +562,43 @@
           "database"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "InviteIn": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "title": "Email",
+            "type": "string"
+          },
+          "facility_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Key"
+          },
+          "pin": {
+            "pattern": "^[0-9]{6}$",
+            "title": "Pin",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "email",
+          "role",
+          "facility_key",
+          "pin"
+        ],
+        "title": "InviteIn",
         "type": "object"
       },
       "JobFailure": {
@@ -755,6 +803,17 @@
       },
       "PatientDetail": {
         "properties": {
+          "demo_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demo Note"
+          },
           "notes": {
             "items": {
               "$ref": "#/components/schemas/ShiftNoteOut"
@@ -772,7 +831,8 @@
         "required": [
           "summary",
           "shift",
-          "notes"
+          "notes",
+          "demo_note"
         ],
         "title": "PatientDetail",
         "type": "object"
@@ -875,6 +935,21 @@
         "title": "PersonaOut",
         "type": "object"
       },
+      "PinIn": {
+        "additionalProperties": false,
+        "properties": {
+          "pin": {
+            "pattern": "^[0-9]{6}$",
+            "title": "Pin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin"
+        ],
+        "title": "PinIn",
+        "type": "object"
+      },
       "Problem": {
         "properties": {
           "code": {
@@ -888,7 +963,19 @@
               "precondition_required",
               "idempotency_key_reused",
               "invalid_request",
-              "not_implemented"
+              "not_implemented",
+              "set_pin",
+              "enter_pin",
+              "idle_locked",
+              "pin_locked",
+              "csrf_failed",
+              "pin_wrong",
+              "pin_already_set",
+              "email_taken",
+              "already_drafted",
+              "not_retryable",
+              "daily_draft_limit",
+              "database_waking"
             ],
             "title": "Code",
             "type": "string"
@@ -939,6 +1026,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "tries_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tries Left"
           },
           "type": {
             "default": "about:blank",
@@ -1042,6 +1140,18 @@
         "title": "RoughNoteOut",
         "type": "object"
       },
+      "SessionGate": {
+        "description": "What a session may do now. The server decides it on every request: only `open` reaches\npatient data; the others name the screen the web app shows instead.",
+        "enum": [
+          "open",
+          "set_pin",
+          "enter_pin",
+          "idle_locked",
+          "pin_locked"
+        ],
+        "title": "SessionGate",
+        "type": "string"
+      },
       "SessionIn": {
         "additionalProperties": false,
         "properties": {
@@ -1059,8 +1169,17 @@
       },
       "SessionOut": {
         "properties": {
+          "csrf_token": {
+            "title": "Csrf Token",
+            "type": "string"
+          },
           "display_name": {
             "title": "Display Name",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
             "type": "string"
           },
           "facility_key": {
@@ -1074,8 +1193,23 @@
             ],
             "title": "Facility Key"
           },
+          "gate": {
+            "$ref": "#/components/schemas/SessionGate"
+          },
+          "idle_lock_seconds": {
+            "title": "Idle Lock Seconds",
+            "type": "integer"
+          },
           "initials": {
             "title": "Initials",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "persona",
+              "google"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "role": {
@@ -1103,7 +1237,12 @@
           "initials",
           "role",
           "facility_key",
-          "shift"
+          "shift",
+          "kind",
+          "gate",
+          "csrf_token",
+          "expires_at",
+          "idle_lock_seconds"
         ],
         "title": "SessionOut",
         "type": "object"
@@ -1250,6 +1389,58 @@
         "title": "ShiftRef",
         "type": "object"
       },
+      "SignInOptionsOut": {
+        "description": "What the sign-in page offers. Answered without the database, so a visitor (or a crawler)\nnever wakes a paused one.",
+        "properties": {
+          "demo": {
+            "title": "Demo",
+            "type": "boolean"
+          },
+          "demo_pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demo Pin"
+          },
+          "google": {
+            "title": "Google",
+            "type": "boolean"
+          },
+          "personas": {
+            "title": "Personas",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "google",
+          "personas",
+          "demo",
+          "demo_pin"
+        ],
+        "title": "SignInOptionsOut",
+        "type": "object"
+      },
+      "SignNoteIn": {
+        "additionalProperties": false,
+        "description": "Signing a note: the nurse's PIN proves it is her at the keyboard.",
+        "properties": {
+          "pin": {
+            "pattern": "^[0-9]{6}$",
+            "title": "Pin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin"
+        ],
+        "title": "SignNoteIn",
+        "type": "object"
+      },
       "Signature": {
         "additionalProperties": false,
         "properties": {
@@ -1366,9 +1557,80 @@
         ],
         "title": "UnitDefaults",
         "type": "object"
+      },
+      "UserOut": {
+        "description": "A person on the staff list. Demo personas are never listed.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "facility_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Key"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "initials": {
+            "title": "Initials",
+            "type": "string"
+          },
+          "pin_locked": {
+            "title": "Pin Locked",
+            "type": "boolean"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "initials",
+          "role",
+          "facility_key",
+          "status",
+          "pin_locked"
+        ],
+        "title": "UserOut",
+        "type": "object"
+      },
+      "UserStatus": {
+        "description": "An invited person reads `invited` until the first Google sign-in. Revoked rows stay,\nbecause signed notes point at their author.",
+        "enum": [
+          "invited",
+          "active",
+          "revoked"
+        ],
+        "title": "UserStatus",
+        "type": "string"
       }
     },
     "securitySchemes": {
+      "csrf": {
+        "description": "The csrf_token from the session's answer; required on every change",
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "type": "apiKey"
+      },
       "session": {
         "description": "The session cookie set by POST /api/v1/session",
         "in": "cookie",
@@ -1383,6 +1645,62 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/google/callback": {
+      "get": {
+        "description": "Google's redirect back: an invited person gets a session; anyone else, a reason.",
+        "operationId": "google_callback_api_v1_auth_google_callback_get",
+        "responses": {
+          "302": {
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "description": "The app, or the sign-in page with ?error=",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Google Callback",
+        "tags": [
+          "session"
+        ]
+      }
+    },
+    "/api/v1/auth/google/start": {
+      "get": {
+        "description": "Sends the browser to Google (404 when Google sign-in is off). Reads no database.",
+        "operationId": "google_start_api_v1_auth_google_start_get",
+        "responses": {
+          "302": {
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "description": "Google's account chooser",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          }
+        },
+        "summary": "Google Start",
+        "tags": [
+          "session"
+        ]
+      }
+    },
     "/api/v1/draft-jobs/{job_id}": {
       "get": {
         "operationId": "get_job_api_v1_draft_jobs__job_id__get",
@@ -1448,6 +1766,16 @@
               }
             },
             "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -1489,6 +1817,16 @@
               }
             },
             "description": "Not signed in"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -1574,6 +1912,16 @@
               }
             },
             "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -1587,7 +1935,7 @@
         ]
       },
       "put": {
-        "description": "The admin edits a facility's settings. Notes already written keep their shift.",
+        "description": "The admin edits a facility's settings, with their PIN. Notes already written keep their\nshift.",
         "operationId": "update_facility_api_v1_facilities__facility_key__put",
         "parameters": [
           {
@@ -1622,7 +1970,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/FacilitySettings"
+                "$ref": "#/components/schemas/FacilityUpdateIn"
               }
             }
           },
@@ -1697,6 +2045,16 @@
             },
             "description": "The request isn't valid"
           },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
           "428": {
             "content": {
               "application/problem+json": {
@@ -1711,9 +2069,159 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "csrf": []
           }
         ],
         "summary": "Update Facility",
+        "tags": [
+          "facilities"
+        ]
+      }
+    },
+    "/api/v1/facilities/{facility_key}/reset": {
+      "post": {
+        "description": "The demo's admin persona puts a facility back to its preset at once.",
+        "operationId": "reset_facility_api_v1_facilities__facility_key__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "facility_key",
+            "required": true,
+            "schema": {
+              "title": "Facility Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required: 428 without it",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required: 428 without it",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacilityOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "The version, for If-Match on the next change",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The note or setting has changed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A required header is missing"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Reset Facility",
         "tags": [
           "facilities"
         ]
@@ -1821,6 +2329,16 @@
               }
             },
             "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -1947,6 +2465,16 @@
             },
             "description": "The request isn't valid"
           },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
           "428": {
             "content": {
               "application/problem+json": {
@@ -1961,6 +2489,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "csrf": []
           }
         ],
         "summary": "Discard Note",
@@ -2124,6 +2655,16 @@
             },
             "description": "The request isn't valid"
           },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
           "428": {
             "content": {
               "application/problem+json": {
@@ -2138,6 +2679,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "csrf": []
           }
         ],
         "summary": "Act On Line",
@@ -2148,7 +2692,7 @@
     },
     "/api/v1/notes/{note_id}/sign": {
       "post": {
-        "description": "Signs the draft: 409 review_incomplete lists the lines that still need the nurse.",
+        "description": "Signs the draft with the nurse's PIN: 409 review_incomplete lists the lines that still\nneed her.",
         "operationId": "sign_note_api_v1_notes__note_id__sign_post",
         "parameters": [
           {
@@ -2180,6 +2724,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignNoteIn"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -2259,6 +2813,16 @@
             },
             "description": "The request isn't valid"
           },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
           "428": {
             "content": {
               "application/problem+json": {
@@ -2273,6 +2837,9 @@
         "security": [
           {
             "session": []
+          },
+          {
+            "csrf": []
           }
         ],
         "summary": "Sign Note",
@@ -2319,6 +2886,16 @@
               }
             },
             "description": "Not allowed"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -2398,6 +2975,16 @@
               }
             },
             "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -2514,6 +3101,16 @@
             },
             "description": "The request isn't valid"
           },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
           "428": {
             "content": {
               "application/problem+json": {
@@ -2523,11 +3120,24 @@
               }
             },
             "description": "A required header is missing"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too many requests"
           }
         },
         "security": [
           {
             "session": []
+          },
+          {
+            "csrf": []
           }
         ],
         "summary": "Add Rough Note",
@@ -2554,11 +3164,141 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
           }
         },
         "summary": "List Personas",
         "tags": [
           "session"
+        ]
+      }
+    },
+    "/api/v1/rough-notes/{rough_note_id}/draft-jobs": {
+      "post": {
+        "description": "Try drafting again: a new job after a retryable failure; the open job if one is running.",
+        "operationId": "draft_again_api_v1_rough_notes__rough_note_id__draft_jobs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rough_note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Rough Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftJobOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "description": "The draft job to poll",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too many requests"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Draft Again",
+        "tags": [
+          "notes"
         ]
       }
     },
@@ -2568,11 +3308,24 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
           }
         },
         "security": [
           {
             "session": []
+          },
+          {
+            "csrf": []
           }
         ],
         "summary": "End Session",
@@ -2665,6 +3418,86 @@
         ]
       }
     },
+    "/api/v1/session/pin": {
+      "post": {
+        "description": "After the first Google sign-in: choose a six-digit PIN (409 when one is already set).",
+        "operationId": "set_pin_api_v1_session_pin_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Set Pin",
+        "tags": [
+          "session"
+        ]
+      }
+    },
     "/api/v1/session/shift": {
       "put": {
         "description": "A nurse switches her session to the previous, current or next shift.",
@@ -2719,6 +3552,192 @@
               }
             },
             "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Change Shift",
+        "tags": [
+          "session"
+        ]
+      }
+    },
+    "/api/v1/session/unlock": {
+      "post": {
+        "description": "The PIN after a sign-in or the idle lock. A wrong one is 403 with the tries left.",
+        "operationId": "unlock_api_v1_session_unlock_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Unlock",
+        "tags": [
+          "session"
+        ]
+      }
+    },
+    "/api/v1/sign-in-options": {
+      "get": {
+        "description": "What the sign-in page offers: Google, the demo personas and their PIN. Reads no database.",
+        "operationId": "sign_in_options_api_v1_sign_in_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInOptionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sign In Options",
+        "tags": [
+          "session"
+        ]
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "description": "Everyone invited, for the admin; a head nurse's own facility. Personas aren't listed.",
+        "operationId": "list_staff_api_v1_users_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserOut"
+                  },
+                  "title": "Response List Staff Api V1 Users Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
           }
         },
         "security": [
@@ -2726,9 +3745,301 @@
             "session": []
           }
         ],
-        "summary": "Change Shift",
+        "summary": "List Staff",
         "tags": [
-          "session"
+          "staff"
+        ]
+      },
+      "post": {
+        "description": "The admin invites a Google account by email, with a role and a facility.",
+        "operationId": "invite_api_v1_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Invite",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/pin-reset": {
+      "post": {
+        "description": "In person: the admin, or a head nurse for her facility's nurses, clears a locked PIN.",
+        "operationId": "reset_pin_api_v1_users__user_id__pin_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Reset Pin",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/revoke": {
+      "post": {
+        "description": "The admin ends someone's access and sessions; the row stays for their signed notes.",
+        "operationId": "revoke_api_v1_users__user_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not signed in"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not allowed"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request isn't valid"
+          },
+          "423": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Locked: sign in or unlock first"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "csrf": []
+          }
+        ],
+        "summary": "Revoke",
+        "tags": [
+          "staff"
         ]
       }
     }

@@ -1,5 +1,8 @@
 import createClient, { type Client } from "openapi-fetch";
-import type { paths } from "./schema";
+import type { components, paths } from "./schema";
+
+/** A facility's settings: a settings save's body without the PIN that proves who saved. */
+export type FacilitySettings = Omit<components["schemas"]["FacilityUpdateIn"], "pin">;
 
 /** A request that has not answered after this long is aborted. */
 export const REQUEST_TIMEOUT_MS = 10_000;

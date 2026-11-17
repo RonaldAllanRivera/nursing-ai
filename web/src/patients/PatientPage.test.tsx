@@ -177,6 +177,7 @@ describe("patient page", () => {
           status: "failed",
           failure: "ai_budget_reached",
           note_id: null,
+          retryable: false,
         }),
       ),
     );
@@ -197,6 +198,7 @@ describe("patient page", () => {
             status: "failed",
             failure: "provider_error",
             note_id: null,
+            retryable: true,
           }),
         ),
       );
@@ -454,6 +456,7 @@ describe("patient page", () => {
       status,
       failure: null,
       note_id: null,
+      retryable: false,
       ...extra,
     });
     const detail = demoApi.patientDetails[PATIENT_A];

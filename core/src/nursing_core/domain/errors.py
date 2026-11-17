@@ -69,3 +69,23 @@ class ReplayMissing(DomainError):
 
 class PhiLeak(DomainError):
     """A known identity string reached a provider. The message never says which one."""
+
+
+class EmailTaken(DomainError):
+    """An invite for an email that already belongs to someone."""
+
+
+class IdentityMismatch(DomainError):
+    """The email is already bound to another Google account (a recycled or moved address)."""
+
+
+class AlreadyDrafted(DomainError):
+    """The rough note already has a draft: trying again would make a second note."""
+
+
+class NotRetryable(DomainError):
+    """The draft failed in a way a new attempt would repeat (a refusal, no recording, no budget)."""
+
+
+class DatabaseWaking(DomainError):
+    """The database is resuming from a pause (or didn't answer in time): try again shortly."""

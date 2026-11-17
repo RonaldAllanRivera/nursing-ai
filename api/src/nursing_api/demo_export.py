@@ -6,7 +6,7 @@ is typed `DemoApi`, so `tsc` checks every field of the mock data against the con
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -17,6 +17,7 @@ from nursing_core.domain.jobs import JobStatus
 from nursing_core.domain.notes import GenerationInfo, NoteStatus
 from nursing_core.domain.patient import PatientSummary
 from nursing_core.domain.shifts import default_shift, shift_choices
+from nursing_core.domain.users import SessionGate
 from pydantic import BaseModel, ConfigDict, Field
 
 from nursing_api.schemas import (
@@ -28,6 +29,10 @@ from nursing_api.schemas import (
     RoughNoteOut,
     SessionOut,
 )
+from nursing_api.settings import Settings
+
+# Not a secret: the mock API's stand-in for a session's CSRF token.
+MOCK_CSRF_TOKEN = "mock-csrf-token"  # noqa: S105
 
 DEMO_API_PATH = Path(__file__).resolve().parents[3] / "web" / "src" / "mocks" / "demo-api.ts"
 HEADER = (
@@ -92,6 +97,8 @@ def build() -> DemoApiData:
             profile=profile, version=1, shift_choices=shift_choices(now[profile.key], profile)
         )
 
+    # The mock's sessions are open persona sessions: the mock models no PIN or CSRF check yet.
+    idle_lock_seconds = Settings.model_fields["idle_lock_minutes"].default * 60
     sessions: dict[str, SessionOut] = {}
     personas: list[PersonaOut] = []
     for persona in DEMO_PERSONAS:
@@ -113,6 +120,12 @@ def build() -> DemoApiData:
             role=persona.role,
             facility_key=persona.facility_key,
             shift=default_shift(now[facility.key], facility) if facility else None,
+            kind="persona",
+            gate=SessionGate.OPEN,
+            csrf_token=MOCK_CSRF_TOKEN,
+            expires_at=(now[facility.key] if facility else max(now.values()))
+            + timedelta(hours=facility.session_max_hours if facility else 12),
+            idle_lock_seconds=idle_lock_seconds,
         )
 
     patients: dict[str, list[PatientSummary]] = {key: [] for key in facilities}
@@ -125,7 +138,10 @@ def build() -> DemoApiData:
         patients[case.facility_key].append(summary)
         facility = facilities[case.facility_key]
         details[str(case.patient_id)] = PatientDetail(
-            summary=summary, shift=default_shift(now[case.facility_key], facility), notes=[]
+            summary=summary,
+            shift=default_shift(now[case.facility_key], facility),
+            notes=[],
+            demo_note=case.rough_note.text,
         )
         job_for_patient[str(case.patient_id)] = _job_id(case)
         jobs[str(_job_id(case))] = DraftJobOut(
@@ -134,6 +150,7 @@ def build() -> DemoApiData:
             status=JobStatus.SUCCEEDED,
             failure=None,
             note_id=_note_id(case),
+            retryable=False,
         )
         rough = case.rough_note
         notes[str(_note_id(case))] = NoteOut(

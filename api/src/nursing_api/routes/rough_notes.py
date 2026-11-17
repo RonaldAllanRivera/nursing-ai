@@ -14,15 +14,17 @@ from nursing_api.deps import (
     QueueDep,
     ensure_own_facility,
 )
-from nursing_api.problems import HeaderRefused, PreconditionRequired, problems
-from nursing_api.routes import SIGNED_IN
+from nursing_api.problems import HeaderRefused, PreconditionRequired, not_built, problems
+from nursing_api.routes import CSRF, SIGNED_IN, location_header
 from nursing_api.routes.jobs import job_out
 from nursing_api.schemas import DraftJobOut, RoughNoteIn
 
 # A longer key would pass Postgres's index-row limit and end as a plain 500.
 MAX_IDEMPOTENCY_KEY = 200
 
-router = APIRouter(prefix="/api/v1/patients", tags=["notes"], dependencies=SIGNED_IN)
+router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=SIGNED_IN)
+# A new job counts toward the person's daily draft cap (429).
+POSTED = {202: {"headers": location_header("The draft job to poll")}}
 
 
 def body_hash(patient_id: UUID, text: str) -> str:
@@ -37,17 +39,11 @@ def body_hash(patient_id: UUID, text: str) -> str:
 
 
 @router.post(
-    "/{patient_id}/rough-notes",
+    "/patients/{patient_id}/rough-notes",
     status_code=202,
     response_model=DraftJobOut,
-    responses={
-        202: {
-            "headers": {
-                "Location": {"description": "The draft job to poll", "schema": {"type": "string"}}
-            }
-        },
-        **problems(401, 403, 404, 422, 428),
-    },
+    responses={**POSTED, **problems(401, 403, 404, 422, 423, 428, 429)},
+    dependencies=CSRF,
 )
 async def add_rough_note(
     patient_id: UUID,
@@ -89,3 +85,15 @@ async def add_rough_note(
         await queue.enqueue(job.id)
     response.headers["Location"] = f"/api/v1/draft-jobs/{job.id}"
     return job_out(job)
+
+
+@router.post(
+    "/rough-notes/{rough_note_id}/draft-jobs",
+    status_code=202,
+    response_model=DraftJobOut,
+    responses={**POSTED, **problems(401, 403, 404, 409, 422, 423, 429)},
+    dependencies=CSRF,
+)
+async def draft_again(rough_note_id: UUID) -> Response:
+    """Try drafting again: a new job after a retryable failure; the open job if one is running."""
+    return not_built()

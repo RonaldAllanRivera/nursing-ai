@@ -6,7 +6,7 @@ from uuid import UUID
 import httpx
 import pytest
 from fastapi import FastAPI
-from nursing_core.demo import DemoCase, load_demo_cases
+from nursing_core.demo import DEMO_PIN, DemoCase, load_demo_cases
 from nursing_core.domain.facility import FacilitySettings
 from nursing_core.domain.hashing import SignedContent, content_hash, signed_content
 from nursing_core.domain.notes import NoteStatus, unresolved_line_ids
@@ -15,6 +15,8 @@ from nursing_core.storage import tables
 from sqlalchemy import func, select
 
 from .helpers import ADMIN, PH_HEAD, PH_STAFF, US_STAFF, MutableClock, drain, post_note, sign_in
+
+SIGN = {"pin": DEMO_PIN}
 
 CASES = load_demo_cases()
 PH_CASE = CASES[0]
@@ -139,7 +141,7 @@ async def test_a_change_that_changes_nothing_keeps_the_version(
     ("method", "tail", "body"),
     [
         ("PATCH", "/lines/e1-D2", {"action": "confirm"}),
-        ("POST", "/sign", None),
+        ("POST", "/sign", SIGN),
         ("POST", "/discard", None),
     ],
 )
@@ -177,7 +179,7 @@ async def test_sign_and_discard_with_stale_etag_are_412(
     await sign_in(client, PH_STAFF)
     note_id = await make_draft(app, client)
     await confirm_flagged(client, note_id)
-    response = await client.post(url(note_id, tail), headers=V1)
+    response = await client.post(url(note_id, tail), json=SIGN, headers=V1)
     assert response.status_code == 412
 
 
@@ -272,7 +274,7 @@ async def test_a_restored_source_found_line_needs_a_confirm_before_signing(
     # own wording, so it takes the stricter reading: a summary, which needs one more confirm.
     assert (line["status"], line["review"]) == ("summary", "pending")
     await confirm_flagged_from(client, note_id, FLAGGED, restored.json()["version"])
-    refused = await client.post(url(note_id, "/sign"), headers=ifm(5))
+    refused = await client.post(url(note_id, "/sign"), json=SIGN, headers=ifm(5))
     assert refused.status_code == 409
     assert refused.json()["code"] == "review_incomplete"
     assert refused.json()["line_ids"] == ["e1-D1"]
@@ -323,7 +325,7 @@ async def test_sign_refused_while_lines_need_review(
 ) -> None:
     await sign_in(client, PH_STAFF)
     note_id = await make_draft(app, client)
-    response = await client.post(url(note_id, "/sign"), headers=V1)
+    response = await client.post(url(note_id, "/sign"), json=SIGN, headers=V1)
     assert response.status_code == 409
     body = response.json()
     assert body["code"] == "review_incomplete"
@@ -342,7 +344,9 @@ async def test_sign_hashes_signed_content(
     before = await app.state.notes.get_note(note_id)
     rough = await app.state.notes.get_rough_note(before.rough_note_id)
     expected = signed_content(before, rough, PH_STAFF, clock.now())
-    response = await client.post(url(note_id, "/sign"), headers=ifm(confirmed.json()["version"]))
+    response = await client.post(
+        url(note_id, "/sign"), json=SIGN, headers=ifm(confirmed.json()["version"])
+    )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "signed"
@@ -368,7 +372,7 @@ async def test_removed_lines_are_not_in_the_signed_content(
         await client.patch(
             line_url(note_id, line_id), json={"action": "confirm"}, headers=ifm(version)
         )
-    response = await client.post(url(note_id, "/sign"), headers=ifm(4))
+    response = await client.post(url(note_id, "/sign"), json=SIGN, headers=ifm(4))
     assert response.status_code == 200, response.text
     [row] = await note_versions(app, note_id)
     lines = [
@@ -388,7 +392,9 @@ async def test_another_nurse_of_the_facility_may_sign_and_is_named(
     note_id = await make_draft(app, client)
     confirmed = await confirm_flagged(client, note_id)
     await sign_in(client, PH_HEAD)
-    response = await client.post(url(note_id, "/sign"), headers=ifm(confirmed.json()["version"]))
+    response = await client.post(
+        url(note_id, "/sign"), json=SIGN, headers=ifm(confirmed.json()["version"])
+    )
     assert response.status_code == 200
     assert response.json()["signature"]["signed_by"] == str(PH_HEAD)
 
@@ -412,7 +418,7 @@ async def finished_note_rejects_every_change(
     note_id = await make_draft(app, client)
     confirmed = await confirm_flagged(client, note_id)
     version = confirmed.json()["version"]
-    finished = await client.post(url(note_id, f"/{end}"), headers=ifm(version))
+    finished = await client.post(url(note_id, f"/{end}"), json=SIGN, headers=ifm(version))
     assert finished.status_code == 200, finished.text
     assert finished.json()["status"] == ("signed" if end == "sign" else "discarded")
     current = finished.json()["version"]
@@ -420,7 +426,7 @@ async def finished_note_rejects_every_change(
     for header in (ifm(current), V1):
         for method, tail, body in (
             ("PATCH", "/lines/e1-D2", {"action": "remove"}),
-            ("POST", "/sign", None),
+            ("POST", "/sign", SIGN),
             ("POST", "/discard", None),
         ):
             response = await client.request(method, url(note_id, tail), json=body, headers=header)
@@ -463,7 +469,7 @@ async def test_a_note_of_another_facility_is_404(app: FastAPI, client: httpx.Asy
     for method, tail, body in (
         ("GET", "", None),
         ("PATCH", "/lines/e1-D2", {"action": "confirm"}),
-        ("POST", "/sign", None),
+        ("POST", "/sign", SIGN),
         ("POST", "/discard", None),
     ):
         response = await client.request(method, url(note_id, tail), json=body, headers=V1)
@@ -477,7 +483,7 @@ async def test_an_unknown_note_is_404(client: httpx.AsyncClient) -> None:
     await sign_in(client, PH_STAFF)
     missing = UUID("00000000-0000-4000-8000-0000000000ff")
     assert (await client.get(url(missing))).status_code == 404
-    response = await client.post(url(missing, "/sign"), headers=V1)
+    response = await client.post(url(missing, "/sign"), json=SIGN, headers=V1)
     assert response.status_code == 404
 
 
@@ -490,7 +496,7 @@ async def test_the_admin_and_the_signed_out_are_refused(
     requests = (
         ("GET", "", None),
         ("PATCH", "/lines/e1-D2", {"action": "confirm"}),
-        ("POST", "/sign", None),
+        ("POST", "/sign", SIGN),
         ("POST", "/discard", None),
     )
     assert (await client.delete("/api/v1/session")).status_code == 204

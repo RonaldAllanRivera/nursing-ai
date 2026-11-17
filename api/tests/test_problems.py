@@ -6,16 +6,29 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_api.app import create_app
-from nursing_api.problems import NotSignedIn, PreconditionRequired
+from nursing_api.problems import (
+    CsrfFailed,
+    DailyDraftLimit,
+    NotSignedIn,
+    PinAlreadySet,
+    PinWrong,
+    PreconditionRequired,
+    SessionGated,
+)
 from nursing_api.settings import Settings
 from nursing_core.domain.errors import (
+    AlreadyDrafted,
+    DatabaseWaking,
+    EmailTaken,
     Forbidden,
     IdempotencyConflict,
     NoteLocked,
     NotFound,
+    NotRetryable,
     ReviewIncomplete,
     StaleVersion,
 )
+from nursing_core.domain.users import SessionGate
 
 CASES: list[tuple[Callable[[], Exception], int, str]] = [
     (lambda: NotSignedIn(), 401, "not_signed_in"),
@@ -26,7 +39,23 @@ CASES: list[tuple[Callable[[], Exception], int, str]] = [
     (lambda: StaleVersion("zebracanary"), 412, "stale_version"),
     (lambda: IdempotencyConflict("zebracanary"), 422, "idempotency_key_reused"),
     (lambda: PreconditionRequired("If-Match"), 428, "precondition_required"),
+    (lambda: SessionGated(SessionGate.SET_PIN), 423, "set_pin"),
+    (lambda: SessionGated(SessionGate.ENTER_PIN), 423, "enter_pin"),
+    (lambda: SessionGated(SessionGate.IDLE_LOCKED), 423, "idle_locked"),
+    (lambda: SessionGated(SessionGate.PIN_LOCKED), 423, "pin_locked"),
+    (lambda: CsrfFailed(), 403, "csrf_failed"),
+    (lambda: PinWrong(tries_left=3), 403, "pin_wrong"),
+    (lambda: PinAlreadySet(), 409, "pin_already_set"),
+    (lambda: EmailTaken("zebracanary"), 409, "email_taken"),
+    (lambda: AlreadyDrafted("zebracanary"), 409, "already_drafted"),
+    (lambda: NotRetryable("zebracanary"), 409, "not_retryable"),
+    (lambda: DailyDraftLimit(), 429, "daily_draft_limit"),
+    (lambda: DatabaseWaking("zebracanary"), 503, "database_waking"),
 ]
+
+
+def index_of(code: str) -> int:
+    return next(i for i, (_, _, c) in enumerate(CASES) if c == code)
 
 
 def throwaway_app() -> FastAPI:
@@ -49,7 +78,7 @@ def throwaway_app() -> FastAPI:
 @pytest.mark.parametrize(
     ("index", "status", "code"), [(i, s, c) for i, (_, s, c) in enumerate(CASES)]
 )
-async def test_domain_errors_are_problem_documents(index: int, status: int, code: str) -> None:
+async def test_problem_codes_have_their_status(index: int, status: int, code: str) -> None:
     transport = httpx.ASGITransport(app=throwaway_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(f"/throwaway/{index}")
@@ -76,3 +105,32 @@ async def test_an_unexpected_error_is_a_plain_500() -> None:
         response = await client.get("/throwaway/boom")
     assert response.status_code == 500
     assert "zebracanary" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_pin_says_how_many_tries_are_left() -> None:
+    transport = httpx.ASGITransport(app=throwaway_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/throwaway/{index_of('pin_wrong')}")
+    assert response.json()["tries_left"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_waking_database_asks_for_a_retry_in_five_seconds() -> None:
+    transport = httpx.ASGITransport(app=throwaway_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/throwaway/{index_of('database_waking')}")
+    assert response.headers["retry-after"] == "5"
+
+
+def test_an_open_session_is_never_a_gate_problem() -> None:
+    with pytest.raises(ValueError, match="open"):
+        SessionGated(SessionGate.OPEN)
+
+
+@pytest.mark.asyncio
+async def test_only_a_wrong_pin_carries_tries_left() -> None:
+    transport = httpx.ASGITransport(app=throwaway_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/throwaway/{index_of('csrf_failed')}")
+    assert "tries_left" not in response.json()

@@ -18,7 +18,19 @@ from nursing_api.health import router as health_router
 from nursing_api.logging import RequestLogMiddleware, configure_logging
 from nursing_api.problems import install_problems
 from nursing_api.providers import ProviderFor, check_live_settings, provider_factory
-from nursing_api.routes import facility, jobs, notes, patients, rough_notes, session
+from nursing_api.routes import (
+    auth,
+    events,
+    facility,
+    jobs,
+    notes,
+    options,
+    patients,
+    rough_notes,
+    session,
+    test_session,
+    users,
+)
 from nursing_api.settings import Settings
 from nursing_api.worker import DraftWorker, InProcessQueue
 
@@ -75,7 +87,19 @@ def create_app(
         separate_input_output_schemas=False,
     )
     app.include_router(health_router)
-    for module in (facility, session, patients, rough_notes, jobs, notes):
+    for module in (
+        options,
+        auth,
+        facility,
+        session,
+        users,
+        patients,
+        rough_notes,
+        jobs,
+        notes,
+        test_session,
+        events,
+    ):
         app.include_router(module.router)
     install_problems(app)
     app.add_middleware(RequestLogMiddleware)

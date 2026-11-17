@@ -72,6 +72,7 @@ async def test_detail_shows_only_the_sessions_shift(
     )
     assert switched.status_code == 200
     detail = (await client.get(f"/api/v1/patients/{PH_CASE.patient_id}")).json()
+    assert "demo_note" in detail
     assert detail["shift"]["code"] == other.code
     assert detail["notes"] == []
 

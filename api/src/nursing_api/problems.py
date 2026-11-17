@@ -11,13 +11,18 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from nursing_core.domain.errors import (
+    AlreadyDrafted,
+    DatabaseWaking,
+    EmailTaken,
     Forbidden,
     IdempotencyConflict,
     NoteLocked,
     NotFound,
+    NotRetryable,
     ReviewIncomplete,
     StaleVersion,
 )
+from nursing_core.domain.users import SessionGate
 from pydantic import BaseModel
 
 PROBLEM_JSON = "application/problem+json"
@@ -32,7 +37,20 @@ ProblemCode = Literal[
     "precondition_required",
     "idempotency_key_reused",
     "invalid_request",
-    "not_implemented",  # no route answers it now; it stays because openapi.json names it
+    "not_implemented",  # a route the P2 lanes haven't built yet
+    # 423: the session's gate, which names the screen the web app shows instead.
+    "set_pin",
+    "enter_pin",
+    "idle_locked",
+    "pin_locked",
+    "csrf_failed",
+    "pin_wrong",
+    "pin_already_set",
+    "email_taken",
+    "already_drafted",
+    "not_retryable",
+    "daily_draft_limit",
+    "database_waking",
 ]
 
 TITLES: dict[int, str] = {
@@ -42,8 +60,14 @@ TITLES: dict[int, str] = {
     409: "Conflict",
     412: "The note or setting has changed",
     422: "The request isn't valid",
+    423: "Locked: sign in or unlock first",
     428: "A required header is missing",
+    429: "Too many requests",
+    501: "Not built yet",
+    503: "Try again in a few seconds",
 }
+# What a waking database asks the web app to wait before it retries.
+RETRY_AFTER_SECONDS = 5
 
 
 class FieldError(BaseModel):
@@ -59,6 +83,7 @@ class Problem(BaseModel):
     code: ProblemCode
     line_ids: list[str] | None = None
     errors: list[FieldError] | None = None
+    tries_left: int | None = None  # pin_wrong only: how many tries before the PIN locks
 
 
 # Pydantic error types whose messages describe the rule, never the input. Every other type gets
@@ -105,6 +130,36 @@ class ActionRefused(Exception):
     """A line action that breaks a rule (answered 422). The message states the rule, never text."""
 
 
+class SessionGated(Exception):
+    """The session can't reach data at its gate (423). The gate is the problem code."""
+
+    def __init__(self, gate: SessionGate) -> None:
+        if gate is SessionGate.OPEN:
+            raise ValueError("an open session is never refused at its gate")
+        super().__init__(gate.value)
+        self.gate = gate
+
+
+class CsrfFailed(Exception):
+    """An unsafe request without this session's X-CSRF-Token (403)."""
+
+
+class PinWrong(Exception):
+    """A wrong PIN (403). Carries the tries left, never the PIN."""
+
+    def __init__(self, tries_left: int) -> None:
+        super().__init__(f"{tries_left} tries left")
+        self.tries_left = tries_left
+
+
+class PinAlreadySet(Exception):
+    """The session's person already has a PIN: unlock instead (409)."""
+
+
+class DailyDraftLimit(Exception):
+    """The person's live drafts for the last 24 hours are used up (429)."""
+
+
 class HeaderRefused(Exception):
     """A header that breaks a rule (answered 422). `field` names it; the message is fixed."""
 
@@ -120,6 +175,9 @@ def problem_response(
     detail: str | None = None,
     line_ids: list[str] | None = None,
     errors: list[FieldError] | None = None,
+    *,
+    tries_left: int | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body = Problem(
         title=TITLES.get(status, "Error"),
@@ -128,10 +186,20 @@ def problem_response(
         code=code,
         line_ids=line_ids,
         errors=errors,
+        tries_left=tries_left,
     )
     return JSONResponse(
-        body.model_dump(mode="json", exclude_none=True), status_code=status, media_type=PROBLEM_JSON
+        body.model_dump(mode="json", exclude_none=True),
+        status_code=status,
+        media_type=PROBLEM_JSON,
+        headers=headers,
     )
+
+
+def not_built() -> JSONResponse:
+    """What a P2 route answers until its lane builds it. 501 is never declared in openapi.json,
+    so replacing the stub doesn't change the frozen contract."""
+    return problem_response(501, "not_implemented", "not built yet")
 
 
 def problems(*statuses: int) -> dict[int | str, dict[str, Any]]:
@@ -188,6 +256,12 @@ _SIMPLE: dict[type[Exception], tuple[int, ProblemCode]] = {
     StaleVersion: (412, "stale_version"),
     IdempotencyConflict: (422, "idempotency_key_reused"),
     PreconditionRequired: (428, "precondition_required"),
+    CsrfFailed: (403, "csrf_failed"),
+    PinAlreadySet: (409, "pin_already_set"),
+    EmailTaken: (409, "email_taken"),
+    AlreadyDrafted: (409, "already_drafted"),
+    NotRetryable: (409, "not_retryable"),
+    DailyDraftLimit: (429, "daily_draft_limit"),
 }
 
 
@@ -200,6 +274,30 @@ def _simple_handler(
     return handle
 
 
+# Each closed gate and the problem code that names it.
+GATE_CODES: dict[SessionGate, ProblemCode] = {
+    SessionGate.SET_PIN: "set_pin",
+    SessionGate.ENTER_PIN: "enter_pin",
+    SessionGate.IDLE_LOCKED: "idle_locked",
+    SessionGate.PIN_LOCKED: "pin_locked",
+}
+
+
+async def _session_gated(_request: Request, exc: Exception) -> JSONResponse:
+    gate = exc.gate if isinstance(exc, SessionGated) else SessionGate.ENTER_PIN
+    return problem_response(423, GATE_CODES[gate])
+
+
+async def _pin_wrong(_request: Request, exc: Exception) -> JSONResponse:
+    tries = exc.tries_left if isinstance(exc, PinWrong) else None
+    return problem_response(403, "pin_wrong", tries_left=tries)
+
+
+async def _database_waking(_request: Request, _exc: Exception) -> JSONResponse:
+    retry = {"Retry-After": str(RETRY_AFTER_SECONDS)}
+    return problem_response(503, "database_waking", "waking the database", headers=retry)
+
+
 async def _review_incomplete(_request: Request, exc: Exception) -> JSONResponse:
     lines = exc.line_ids if isinstance(exc, ReviewIncomplete) else []
     return problem_response(409, "review_incomplete", line_ids=lines)
@@ -210,6 +308,9 @@ def install_problems(app: FastAPI) -> None:
     for error, (status, code) in _SIMPLE.items():
         app.add_exception_handler(error, _simple_handler(status, code))
     app.add_exception_handler(ReviewIncomplete, _review_incomplete)
+    app.add_exception_handler(SessionGated, _session_gated)
+    app.add_exception_handler(PinWrong, _pin_wrong)
+    app.add_exception_handler(DatabaseWaking, _database_waking)
     app.add_exception_handler(RequestValidationError, _invalid)
     app.add_exception_handler(ActionRefused, _action_refused)
     app.add_exception_handler(HeaderRefused, _header_refused)

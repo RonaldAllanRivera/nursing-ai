@@ -2,6 +2,7 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
 import type { components } from "../api/schema";
+import { INTERIM_PIN } from "../session/interimPin";
 import { noteQuery } from "./note";
 
 type Schemas = components["schemas"];
@@ -70,7 +71,10 @@ export function useFinishNote(noteId: string, how: "sign" | "discard") {
       };
       const answer =
         how === "sign"
-          ? await api.POST("/api/v1/notes/{note_id}/sign", params)
+          ? await api.POST("/api/v1/notes/{note_id}/sign", {
+              ...params,
+              body: { pin: INTERIM_PIN },
+            })
           : await api.POST("/api/v1/notes/{note_id}/discard", params);
       return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
     },

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter
-from nursing_core.domain.jobs import DraftJob
+from nursing_core.domain.jobs import DraftJob, is_retryable
 
 from nursing_api.deps import NotesDep, NurseDep, PatientsDep, ensure_own_facility
 from nursing_api.problems import problems
@@ -18,10 +18,11 @@ def job_out(job: DraftJob) -> DraftJobOut:
         status=job.status,
         failure=job.failure,
         note_id=job.note_id,
+        retryable=is_retryable(job.failure),
     )
 
 
-@router.get("/{job_id}", response_model=DraftJobOut, responses=problems(401, 403, 404, 422))
+@router.get("/{job_id}", response_model=DraftJobOut, responses=problems(401, 403, 404, 422, 423))
 async def get_job(
     job_id: UUID, nurse: NurseDep, notes: NotesDep, patients: PatientsDep
 ) -> DraftJobOut:

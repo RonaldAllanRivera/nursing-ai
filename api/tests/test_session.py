@@ -38,6 +38,22 @@ async def test_session_cookie_secure_only_in_demo_and_prod(
 
 
 @pytest.mark.asyncio
+async def test_session_answer_carries_its_csrf_token_gate_and_limits(
+    client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    started = await client.post(SESSION, json={"persona_id": str(PH_STAFF)})
+    body = started.json()
+    assert (body["kind"], body["idle_lock_seconds"]) == ("persona", 300)
+    # The gate stays open until the lane that builds the PIN computes it.
+    assert body["gate"] == "open"
+    assert len(body["csrf_token"]) >= 43
+    assert body["csrf_token"] not in started.headers["set-cookie"]
+    assert datetime.fromisoformat(body["expires_at"]) == clock.now() + timedelta(hours=12)
+    again = (await client.get(SESSION)).json()
+    assert (again["csrf_token"], again["expires_at"]) == (body["csrf_token"], body["expires_at"])
+
+
+@pytest.mark.asyncio
 async def test_unknown_persona_is_404(client: httpx.AsyncClient) -> None:
     response = await client.post(SESSION, json={"persona_id": str(uuid4())})
     assert response.status_code == 404

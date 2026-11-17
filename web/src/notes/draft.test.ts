@@ -39,7 +39,14 @@ describe("noteStatus", () => {
     rough_note_id: "r",
     written_at: "2026-11-11T14:30:00Z",
     note_status: null,
-    job: { id: "j", rough_note_id: "r", status: "queued", failure: null, note_id: null },
+    job: {
+      id: "j",
+      rough_note_id: "r",
+      status: "queued",
+      failure: null,
+      note_id: null,
+      retryable: false,
+    },
   };
 
   it("says Drafting while the job runs", () => {

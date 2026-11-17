@@ -2,8 +2,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Request, Response, Security
 from nursing_core.demo import DEMO_PERSONAS
-from nursing_core.domain.shifts import ShiftRef, default_shift, shift_choices
-from nursing_core.storage.repositories import SESSION_LIFETIME, StoredUser
+from nursing_core.domain.shifts import default_shift, shift_choices
+from nursing_core.domain.users import SessionGate
+from nursing_core.storage.repositories import SESSION_LIFETIME, StoredSession, StoredUser
 
 from nursing_api.deps import (
     ClockDep,
@@ -13,9 +14,9 @@ from nursing_api.deps import (
     SignedInDep,
     UsersDep,
 )
-from nursing_api.problems import FieldError, problem_response, problems
-from nursing_api.routes import SESSION_COOKIE, SIGNED_IN
-from nursing_api.schemas import PersonaOut, SessionIn, SessionOut, ShiftChoiceIn
+from nursing_api.problems import FieldError, NotSignedIn, not_built, problem_response, problems
+from nursing_api.routes import CSRF, SESSION_COOKIE, SIGNED_IN
+from nursing_api.schemas import PersonaOut, PinIn, SessionIn, SessionOut, ShiftChoiceIn
 from nursing_api.settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
@@ -23,18 +24,25 @@ router = APIRouter(prefix="/api/v1", tags=["session"])
 COOKIE = "sl_session"
 
 
-def session_out(user: StoredUser, shift: ShiftRef | None) -> SessionOut:
+def session_out(user: StoredUser, session: StoredSession, settings: Settings) -> SessionOut:
     return SessionOut(
         user_id=user.id,
         display_name=user.display_name,
         initials=user.initials,
         role=user.role,
         facility_key=user.facility_key,
-        shift=shift,
+        shift=session.shift,
+        # Only personas sign in until Google sign-in is built; the gate stays open until the PIN
+        # is (both in the p2-auth lane).
+        kind="persona",
+        gate=SessionGate.OPEN,
+        csrf_token=session.csrf_token,
+        expires_at=session.expires_at,
+        idle_lock_seconds=settings.idle_lock_minutes * 60,
     )
 
 
-@router.get("/personas", response_model=list[PersonaOut])
+@router.get("/personas", response_model=list[PersonaOut], responses=problems(404))
 async def list_personas(facilities: FacilitiesDep) -> list[PersonaOut]:
     """The demo people a visitor can sign in as, each with their role."""
     names = {f.profile.key: f.profile.name for f in await facilities.list_facilities()}
@@ -69,6 +77,9 @@ async def start_session(
         profile = (await facilities.get_facility(user.facility_key)).profile
         shift = default_shift(now, profile)
     token = await sessions.create(user.id, shift, now)
+    session = await sessions.get(token, now)
+    if session is None:  # just created: only a clock that jumped could lose it
+        raise NotSignedIn
     settings: Settings = request.app.state.settings
     response.set_cookie(
         COOKIE,
@@ -79,15 +90,17 @@ async def start_session(
         samesite="lax",
         secure=settings.app_env in {"demo", "prod"},
     )
-    return session_out(user, shift)
+    return session_out(user, session, settings)
 
 
 @router.get("/session", response_model=SessionOut, responses=problems(401), dependencies=SIGNED_IN)
-async def get_session(signed_in: SignedInDep) -> SessionOut:
-    return session_out(signed_in.user, signed_in.session.shift)
+async def get_session(signed_in: SignedInDep, request: Request) -> SessionOut:
+    return session_out(signed_in.user, signed_in.session, request.app.state.settings)
 
 
-@router.delete("/session", status_code=204, dependencies=SIGNED_IN)
+@router.delete(
+    "/session", status_code=204, responses=problems(403), dependencies=[*SIGNED_IN, *CSRF]
+)
 async def end_session(
     token: Annotated[str | None, Security(SESSION_COOKIE)],
     response: Response,
@@ -100,14 +113,37 @@ async def end_session(
     response.delete_cookie(COOKIE, path="/", httponly=True, samesite="lax")
 
 
+@router.post(
+    "/session/pin",
+    response_model=SessionOut,
+    responses=problems(401, 403, 409, 422),
+    dependencies=[*SIGNED_IN, *CSRF],
+)
+async def set_pin(body: PinIn) -> Response:
+    """After the first Google sign-in: choose a six-digit PIN (409 when one is already set)."""
+    return not_built()
+
+
+@router.post(
+    "/session/unlock",
+    response_model=SessionOut,
+    responses=problems(401, 403, 409, 422, 423),
+    dependencies=[*SIGNED_IN, *CSRF],
+)
+async def unlock(body: PinIn) -> Response:
+    """The PIN after a sign-in or the idle lock. A wrong one is 403 with the tries left."""
+    return not_built()
+
+
 @router.put(
     "/session/shift",
     response_model=SessionOut,
-    responses=problems(401, 403, 422),
-    dependencies=SIGNED_IN,
+    responses=problems(401, 403, 422, 423),
+    dependencies=[*SIGNED_IN, *CSRF],
 )
 async def change_shift(
     body: ShiftChoiceIn,
+    request: Request,
     nurse: NurseDep,
     clock: ClockDep,
     sessions: SessionsDep,
@@ -136,4 +172,7 @@ async def change_shift(
             ],
         )
     await sessions.set_shift(nurse.token, chosen)
-    return session_out(nurse.user, chosen)
+    session = await sessions.get(nurse.token, clock.now())
+    if session is None:
+        raise NotSignedIn
+    return session_out(nurse.user, session, request.app.state.settings)

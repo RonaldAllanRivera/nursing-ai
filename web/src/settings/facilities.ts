@@ -1,9 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api/client";
+import { api, type FacilitySettings } from "../api/client";
 import { unwrap } from "../api/errors";
-import type { components } from "../api/schema";
-
-type Schemas = components["schemas"];
+import { INTERIM_PIN } from "../session/interimPin";
 
 /** Every facility, for the picker (the admin's list). */
 export const facilityListQuery = queryOptions({
@@ -34,16 +32,10 @@ export const facilitySettingsQuery = (key: string) =>
 export function useSaveFacility(key: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      etag,
-      body,
-    }: {
-      etag: string | null;
-      body: Schemas["FacilitySettings"];
-    }) => {
+    mutationFn: async ({ etag, body }: { etag: string | null; body: FacilitySettings }) => {
       const answer = await api.PUT("/api/v1/facilities/{facility_key}", {
         params: { path: { facility_key: key }, header: { "If-Match": etag } },
-        body,
+        body: { ...body, pin: INTERIM_PIN },
       });
       return { facility: unwrap(answer), etag: answer.response.headers.get("ETag") };
     },

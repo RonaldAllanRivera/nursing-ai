@@ -17,15 +17,15 @@ from nursing_api.deps import (
 )
 from nursing_api.line_actions import apply_line_action
 from nursing_api.problems import PreconditionRequired, problems
-from nursing_api.routes import SIGNED_IN, etag_header
-from nursing_api.schemas import LineAction, NoteOut, RoughNoteOut
+from nursing_api.routes import CSRF, SIGNED_IN, etag_header
+from nursing_api.schemas import LineAction, NoteOut, RoughNoteOut, SignNoteIn
 
 router = APIRouter(prefix="/api/v1/notes", tags=["notes"], dependencies=SIGNED_IN)
 
 IfMatch = Annotated[
     str | None, Header(alias="If-Match", description="Required: 428 without it, 412 when stale")
 ]
-CHANGE = {200: {"headers": etag_header()}, **problems(401, 403, 404, 409, 412, 422, 428)}
+CHANGE = {200: {"headers": etag_header()}, **problems(401, 403, 404, 409, 412, 422, 423, 428)}
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ def check_current(note: Note, if_match: str) -> None:
 @router.get(
     "/{note_id}",
     response_model=NoteOut,
-    responses={200: {"headers": etag_header()}, **problems(401, 403, 404, 422)},
+    responses={200: {"headers": etag_header()}, **problems(401, 403, 404, 422, 423)},
 )
 async def get_note(
     note_id: UUID, response: Response, nurse: NurseDep, notes: NotesDep, patients: PatientsDep
@@ -90,7 +90,9 @@ async def get_note(
     return answer(response, found, found.note)
 
 
-@router.patch("/{note_id}/lines/{line_id}", response_model=NoteOut, responses=CHANGE)
+@router.patch(
+    "/{note_id}/lines/{line_id}", response_model=NoteOut, responses=CHANGE, dependencies=CSRF
+)
 async def act_on_line(
     note_id: UUID,
     line_id: str,
@@ -121,9 +123,10 @@ async def act_on_line(
     return answer(response, found, saved)
 
 
-@router.post("/{note_id}/sign", response_model=NoteOut, responses=CHANGE)
+@router.post("/{note_id}/sign", response_model=NoteOut, responses=CHANGE, dependencies=CSRF)
 async def sign_note(
     note_id: UUID,
+    body: SignNoteIn,
     response: Response,
     nurse: NurseDep,
     clock: ClockDep,
@@ -131,7 +134,8 @@ async def sign_note(
     patients: PatientsDep,
     if_match: IfMatch = None,
 ) -> NoteOut:
-    """Signs the draft: 409 review_incomplete lists the lines that still need the nurse."""
+    """Signs the draft with the nurse's PIN: 409 review_incomplete lists the lines that still
+    need her."""
     if not if_match:
         raise PreconditionRequired
     found = await find_note(note_id, nurse, notes, patients)
@@ -142,7 +146,7 @@ async def sign_note(
     return answer(response, found, saved)
 
 
-@router.post("/{note_id}/discard", response_model=NoteOut, responses=CHANGE)
+@router.post("/{note_id}/discard", response_model=NoteOut, responses=CHANGE, dependencies=CSRF)
 async def discard_note(
     note_id: UUID,
     response: Response,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { api } from "../api/client";
+import { api, type FacilitySettings } from "../api/client";
 import type { components } from "../api/schema";
 import { server } from "../test/setup";
 import { demoApi } from "./demo-api";
 import { createHandlers } from "./handlers";
 
-type Settings = components["schemas"]["FacilitySettings"];
+type Settings = FacilitySettings;
 type Shift = components["schemas"]["ShiftDefinition"];
 
 async function signIn(role: string, facility: string | null) {
@@ -32,7 +32,7 @@ function withShift(body: Settings, at: number, change: Partial<Shift>): Settings
 const put = (key: string, body: Settings, ifMatch: string | null = '"f1"') =>
   api.PUT("/api/v1/facilities/{facility_key}", {
     params: { path: { facility_key: key }, header: { "If-Match": ifMatch } },
-    body,
+    body: { ...body, pin: "135790" },
   });
 
 describe("PUT /api/v1/facilities/{facility_key}", () => {

@@ -5,8 +5,8 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from nursing_core.demo import load_demo_cases
-from nursing_core.domain.facility import FacilitySettings
+from nursing_api.schemas import FacilityUpdateIn
+from nursing_core.demo import DEMO_PIN, load_demo_cases
 from nursing_core.storage import tables
 from sqlalchemy import select, update
 from sqlalchemy.exc import DBAPIError
@@ -31,7 +31,11 @@ async def settings_of(client: httpx.AsyncClient, path: str = PH) -> dict[str, An
     """The facility's current settings as a PUT body: its profile without the key."""
     profile: dict[str, Any] = (await client.get(path)).json()["profile"]
     profile.pop("key")
-    return profile
+    return profile | {"pin": DEMO_PIN}
+
+
+def without_pin(body: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in body.items() if k != "pin"}
 
 
 def moved_shifts(body: dict[str, Any]) -> dict[str, Any]:
@@ -183,7 +187,9 @@ async def test_admin_cannot_write_or_sign_notes_403(
             json={"action": "confirm"},
             headers=match(1) | {"If-Match": '"v1"'},
         ),
-        await client.post(f"/api/v1/notes/{note_id}/sign", headers={"If-Match": '"v1"'}),
+        await client.post(
+            f"/api/v1/notes/{note_id}/sign", json={"pin": DEMO_PIN}, headers={"If-Match": '"v1"'}
+        ),
         await client.post(f"/api/v1/notes/{note_id}/discard", headers={"If-Match": '"v1"'}),
     ]
     assert [r.status_code for r in refused] == [403, 403, 403, 403]
@@ -214,7 +220,7 @@ async def test_a_race_for_the_same_version_is_412_for_the_loser(
     body = await settings_of(client)
     # Someone saves between this admin's check and save: the repository's own version check.
     await app.state.facilities.update_facility(
-        "ph-demo", FacilitySettings.model_validate(body), 1, ADMIN
+        "ph-demo", FacilityUpdateIn.model_validate(body).settings(), 1, ADMIN
     )
     response = await client.put(PH, json=body, headers=match(1))
     assert response.status_code == 412
@@ -283,9 +289,11 @@ async def test_every_save_is_kept_in_facility_change(
     assert [row.version for row in rows] == [1, 2, 3]
     assert rows[0].changed_by is None
     assert [row.changed_by for row in rows[1:]] == [ADMIN, ADMIN]
-    assert rows[1].settings == second
-    assert rows[2].settings == third
-    assert rows[0].settings == first
+    assert rows[1].settings == without_pin(second)
+    assert rows[2].settings == without_pin(third)
+    assert rows[0].settings == without_pin(first)
+    # The PIN proves who saved; it is never part of the facility's history.
+    assert all("pin" not in row.settings for row in rows)
     assert len(await history(app, "us-demo")) == 1
     # The database refuses to rewrite the kept history, even for the app's own connection.
     async with app.state.engine.begin() as conn:

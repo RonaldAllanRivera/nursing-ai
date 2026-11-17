@@ -1,6 +1,7 @@
 import { http, HttpResponse, type HttpHandler } from "msw";
 import type { components } from "../api/schema";
 import { demoApi } from "./demo-api";
+import type { FacilitySettings } from "../api/client";
 import type { DemoApi } from "./types";
 
 type Schemas = components["schemas"];
@@ -25,7 +26,14 @@ const FIXED_HASH = "9f2c7a41d83be5106a7c4de2f0b19853c6e7a2d4b8f01c93e5a6d7084b2c
 // The server's rules for a facility's settings (core's `FacilitySettings`), copied here and not
 // imported from the screen, so a disagreement between the screen and the server shows in a test.
 
-type Settings = Schemas["FacilitySettings"];
+type Settings = FacilitySettings;
+
+/** The settings in a save, without the PIN that proves who saved: the PIN is never stored. */
+function settingsOf(sent: Schemas["FacilityUpdateIn"]): Settings {
+  const settings: Partial<Schemas["FacilityUpdateIn"]> = { ...sent };
+  delete settings.pin;
+  return settings as Settings;
+}
 
 /** "HH:MM" or "HH:MM:00" as minutes since midnight, or null (not a whole-minute local time). */
 function localMinutes(value: unknown): number | null {
@@ -295,7 +303,7 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       const ifMatch = request.headers.get("If-Match");
       if (!ifMatch) return problem(428, "precondition_required");
       if (ifMatch !== `"f${String(found.version)}"`) return problem(412, "stale_version");
-      const body = (await request.json()) as Settings;
+      const body = settingsOf((await request.json()) as Schemas["FacilityUpdateIn"]);
       const errors = settingsErrors(body);
       if (errors.length > 0) return problem(422, "invalid_request", errors);
       const shifts = body.shifts.map((s) => ({

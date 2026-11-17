@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from nursing_api.app import create_app
 from nursing_api.logging import ALLOWED_KEYS, LIBRARY_EVENT, QUIET_LOGGERS, configure_logging
 from nursing_core.db import create_engine, ping
-from nursing_core.demo import DemoCase, load_demo_cases
+from nursing_core.demo import DEMO_PIN, DemoCase, load_demo_cases
 
 from .helpers import (
     PH_STAFF,
@@ -141,7 +141,9 @@ async def review_and_sign(client: httpx.AsyncClient, note_id: str, text: str) ->
             )
             assert confirmed.status_code == 200
             version = confirmed.json()["version"]
-    signed = await client.post(f"{path}/sign", headers={"If-Match": f'"v{version}"'})
+    signed = await client.post(
+        f"{path}/sign", json={"pin": DEMO_PIN}, headers={"If-Match": f'"v{version}"'}
+    )
     assert signed.status_code == 200, signed.text
 
 

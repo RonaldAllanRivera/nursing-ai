@@ -259,6 +259,7 @@ describe("writes to a note: line actions, sign and discard", () => {
   const sign = (ifMatch: string | null = '"v1"', noteId = NOTE) =>
     api.POST("/api/v1/notes/{note_id}/sign", {
       params: { path: { note_id: noteId }, header: { "If-Match": ifMatch } },
+      body: { pin: "135790" },
     });
   const discard = (ifMatch: string | null = '"v1"') =>
     api.POST("/api/v1/notes/{note_id}/discard", {

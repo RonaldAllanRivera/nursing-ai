@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FacilitySettings } from "../api/client";
 import type { components } from "../api/schema";
 
 type Schemas = components["schemas"];
@@ -107,7 +108,7 @@ export function toFormValues(facility: Schemas["FacilityOut"]): FormValues {
 }
 
 /** The form's values as the body of the PUT. FDAR is the only format built so far. */
-export function toSettings(values: FormValues): Schemas["FacilitySettings"] {
+export function toSettings(values: FormValues): FacilitySettings {
   return {
     name: values.name.trim(),
     timezone: values.timezone.trim(),

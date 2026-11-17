@@ -63,3 +63,20 @@ def test_each_facilitys_nurses_and_cases_share_one_shift() -> None:
         assert all(session.shift == case.rough_note.shift for session in nurses)
         assert data.patient_details[str(case.patient_id)].shift == case.rough_note.shift
         assert case.rough_note.shift in data.facilities[case.facility_key].shift_choices
+
+
+def test_each_demo_patient_offers_its_demo_note() -> None:
+    # Replay knows only the demo notes, so the mock offers "Use the demo note" for each.
+    details = build().patient_details
+    for case in load_demo_cases():
+        assert details[str(case.patient_id)].demo_note == case.rough_note.text
+
+
+def test_mock_sessions_are_open_persona_sessions_with_a_csrf_token() -> None:
+    for session in build().sessions.values():
+        assert (session.kind, session.gate, session.idle_lock_seconds) == ("persona", "open", 300)
+        assert session.csrf_token
+
+
+def test_mock_jobs_say_whether_they_can_be_tried_again() -> None:
+    assert all(job.retryable is False for job in build().jobs.values())

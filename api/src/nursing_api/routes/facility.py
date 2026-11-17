@@ -8,9 +8,9 @@ from nursing_core.domain.users import can_see_facility
 from nursing_core.ports import Clock
 
 from nursing_api.deps import AdminDep, ClockDep, FacilitiesDep, SignedInDep
-from nursing_api.problems import PreconditionRequired, problems
-from nursing_api.routes import SIGNED_IN, etag_header
-from nursing_api.schemas import FacilityOut, FacilitySettingsIn
+from nursing_api.problems import PreconditionRequired, not_built, problems
+from nursing_api.routes import CSRF, SIGNED_IN, etag_header
+from nursing_api.schemas import FacilityOut, FacilityUpdateIn, PinIn
 
 router = APIRouter(prefix="/api/v1/facilities", tags=["facilities"], dependencies=SIGNED_IN)
 
@@ -27,7 +27,7 @@ def facility_out(stored: StoredFacility, clock: Clock) -> FacilityOut:
     )
 
 
-@router.get("", response_model=list[FacilityOut], responses=problems(401))
+@router.get("", response_model=list[FacilityOut], responses=problems(401, 423))
 async def list_facilities(
     signed_in: SignedInDep, clock: ClockDep, facilities: FacilitiesDep
 ) -> list[FacilityOut]:
@@ -43,7 +43,7 @@ async def list_facilities(
 @router.get(
     "/{facility_key}",
     response_model=FacilityOut,
-    responses={200: {"headers": etag_header()}, **problems(401, 403, 404, 422)},
+    responses={200: {"headers": etag_header()}, **problems(401, 403, 404, 422, 423)},
 )
 async def get_facility(
     facility_key: str,
@@ -61,23 +61,22 @@ async def get_facility(
     return facility_out(stored, clock)
 
 
-@router.put(
-    "/{facility_key}",
-    response_model=FacilityOut,
-    responses={200: {"headers": etag_header()}, **problems(401, 403, 404, 412, 422, 428)},
-)
+IfMatch = Annotated[str | None, Header(alias="If-Match", description="Required: 428 without it")]
+SAVE = {200: {"headers": etag_header()}, **problems(401, 403, 404, 412, 422, 423, 428)}
+
+
+@router.put("/{facility_key}", response_model=FacilityOut, responses=SAVE, dependencies=CSRF)
 async def update_facility(
     facility_key: str,
-    settings: FacilitySettingsIn,
+    body: FacilityUpdateIn,
     response: Response,
     admin: AdminDep,
     clock: ClockDep,
     facilities: FacilitiesDep,
-    if_match: Annotated[
-        str | None, Header(alias="If-Match", description="Required: 428 without it")
-    ] = None,
+    if_match: IfMatch = None,
 ) -> FacilityOut:
-    """The admin edits a facility's settings. Notes already written keep their shift."""
+    """The admin edits a facility's settings, with their PIN. Notes already written keep their
+    shift."""
     # Order: 401, 403 (the admin dependency), body 422 (the framework), 428, 404, 412, save.
     if not if_match:
         raise PreconditionRequired
@@ -86,7 +85,13 @@ async def update_facility(
         # Only the exact current ETag passes; a race is caught by the repository's own check.
         raise StaleVersion("the facility has changed")
     saved = await facilities.update_facility(
-        facility_key, settings, current.version, changed_by=admin.id
+        facility_key, body.settings(), current.version, changed_by=admin.id
     )
     response.headers["ETag"] = etag(saved.version)
     return facility_out(saved, clock)
+
+
+@router.post("/{facility_key}/reset", response_model=FacilityOut, responses=SAVE, dependencies=CSRF)
+async def reset_facility(facility_key: str, body: PinIn, if_match: IfMatch = None) -> Response:
+    """The demo's admin persona puts a facility back to its preset at once."""
+    return not_built()
