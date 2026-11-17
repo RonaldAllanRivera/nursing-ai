@@ -6,7 +6,6 @@ through `PgUserRepository.pin_hash` by the one caller that checks a PIN. Methods
 time take it from the caller; nothing here reads the clock.
 """
 
-import asyncio
 import hashlib
 import secrets
 from datetime import datetime, timedelta
@@ -18,7 +17,7 @@ from sqlalchemy import Select, case, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from nursing_core.auth.pins import MAX_PIN_TRIES, hash_pin
+from nursing_core.auth.pins import MAX_PIN_TRIES
 from nursing_core.domain import DomainModel
 from nursing_core.domain.errors import EmailTaken, IdentityMismatch, NotFound
 from nursing_core.domain.shifts import ShiftRef
@@ -259,14 +258,16 @@ class PgUserRepository:
         async with self._engine.begin() as conn:
             return await conn.scalar(select(_USER.c.pin_hash).where(_USER.c.id == user_id))
 
-    async def set_pin(self, user_id: UUID, pin: str) -> None:
-        """Stores the PIN's Argon2id hash. The caller has checked the PIN and that none is set."""
-        hashed = await asyncio.to_thread(hash_pin, pin)
+    async def set_pin(self, user_id: UUID, pin_hash: str) -> None:
+        """Stores a PIN hash the caller made (hashing is slow: it runs off the event loop).
+
+        The caller has checked the PIN and that none is set.
+        """
         async with self._engine.begin() as conn:
             await conn.execute(
                 update(_USER)
                 .where(_USER.c.id == user_id)
-                .values(pin_hash=hashed, pin_failures=0, pin_locked_at=None)
+                .values(pin_hash=pin_hash, pin_failures=0, pin_locked_at=None)
             )
 
     async def record_pin_failure(self, user_id: UUID, now: datetime) -> int:

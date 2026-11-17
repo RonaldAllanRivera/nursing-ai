@@ -5,7 +5,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from nursing_core.auth.pins import MAX_PIN_TRIES, verify_pin
+from nursing_core.auth.pins import MAX_PIN_TRIES, hash_pin, verify_pin
 from nursing_core.clock import FixedClock
 from nursing_core.demo import DEMO_PERSONAS, DEMO_PIN
 from nursing_core.domain.errors import EmailTaken, IdentityMismatch, NotFound
@@ -303,7 +303,7 @@ async def test_bootstrap_admin_only_while_no_active_admin(engine: AsyncEngine) -
 async def test_fifth_wrong_pin_locks_the_account(engine: AsyncEngine) -> None:
     users = PgUserRepository(engine)
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
-    await users.set_pin(user.id, "246813")
+    await users.set_pin(user.id, hash_pin("246813"))
     assert (await users.get_user(user.id)).has_pin
 
     left = [await users.record_pin_failure(user.id, NOW) for _ in range(MAX_PIN_TRIES - 1)]
@@ -340,7 +340,7 @@ async def test_the_pin_hash_is_read_apart_and_never_in_a_repr(engine: AsyncEngin
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
     assert await users.pin_hash(user.id) is None
 
-    await users.set_pin(user.id, "246813")
+    await users.set_pin(user.id, hash_pin("246813"))
 
     stored = await users.pin_hash(user.id)
     assert stored is not None
@@ -354,7 +354,7 @@ async def test_the_pin_hash_is_read_apart_and_never_in_a_repr(engine: AsyncEngin
 async def test_reset_pin_clears_the_lock_and_ends_the_sessions(engine: AsyncEngine) -> None:
     users, sessions = PgUserRepository(engine), PgSessionRepository(engine)
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
-    await users.set_pin(user.id, "246813")
+    await users.set_pin(user.id, hash_pin("246813"))
     for _ in range(MAX_PIN_TRIES):
         await users.record_pin_failure(user.id, NOW)
     session = await sessions.create(user.id, None, NOW, 12)
