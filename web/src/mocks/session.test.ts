@@ -1,0 +1,373 @@
+import { describe, expect, it } from "vitest";
+import { adoptSession, raw, signInAs } from "../test/mockSession";
+import { server } from "../test/setup";
+import { demoApi } from "./demo-api";
+import { createHandlers } from "./handlers";
+import type { MockOptions } from "./options";
+import { MOCK_EMAILS, MOCK_PIN } from "./staff";
+
+const DEMO_PIN = "135790";
+const NOTE = Object.keys(demoApi.notes)[0] ?? "";
+const PATIENT = demoApi.patients["ph-demo"][0]?.id ?? "";
+const ID = "00000000-0000-4000-8000-0000000000aa";
+
+const start = (options?: MockOptions) => {
+  server.use(...createHandlers(demoApi, options));
+};
+const head = (gate: "open" | "set_pin" | "enter_pin" | "pin_locked"): MockOptions => ({
+  account: { user: MOCK_EMAILS.phHead, gate },
+});
+const nurse = (gate: "open" | "set_pin" | "enter_pin" | "pin_locked"): MockOptions => ({
+  account: { user: MOCK_EMAILS.phStaff, gate },
+});
+const unlock = (pin: string) => raw("POST", "/api/v1/session/unlock", { body: { pin } });
+
+const DATA_ROUTES: [string, string, unknown?][] = [
+  ["GET", "/api/v1/facilities"],
+  ["GET", "/api/v1/facilities/ph-demo"],
+  ["PUT", "/api/v1/facilities/ph-demo", {}],
+  ["POST", "/api/v1/facilities/ph-demo/reset", { pin: DEMO_PIN }],
+  ["PUT", "/api/v1/session/shift", { starts_at: "2026-11-11T14:00:00Z" }],
+  ["GET", "/api/v1/patients"],
+  ["GET", `/api/v1/patients/${PATIENT}`],
+  ["POST", `/api/v1/patients/${PATIENT}/rough-notes`, { text: "x" }],
+  ["GET", `/api/v1/draft-jobs/${ID}`],
+  ["GET", `/api/v1/notes/${NOTE}`],
+  ["PATCH", `/api/v1/notes/${NOTE}/lines/e1-F`, { action: "confirm" }],
+  ["POST", `/api/v1/notes/${NOTE}/sign`, { pin: DEMO_PIN }],
+  ["POST", `/api/v1/notes/${NOTE}/discard`],
+  ["GET", "/api/v1/users"],
+  ["POST", "/api/v1/users", {}],
+  ["POST", `/api/v1/users/${ID}/revoke`, { pin: DEMO_PIN }],
+  ["POST", `/api/v1/users/${ID}/pin-reset`, { pin: DEMO_PIN }],
+  ["POST", `/api/v1/rough-notes/${ID}/draft-jobs`],
+];
+
+describe("the session gates", () => {
+  describe.each(["set_pin", "enter_pin", "pin_locked"] as const)("at %s", (gate) => {
+    it.each(DATA_ROUTES)("%s %s answers 423 with the gate", async (method, path, body) => {
+      start(head(gate));
+      await adoptSession();
+      const answer = await raw(method, path, { body });
+      expect(answer.status).toBe(423);
+      expect(answer.body.code).toBe(gate);
+    });
+
+    it("still answers GET and DELETE /session", async () => {
+      start(head(gate));
+      const session = await adoptSession();
+      expect(session.gate).toBe(gate);
+      expect(session.kind).toBe("google");
+      expect((await raw("DELETE", "/api/v1/session")).status).toBe(204);
+      expect((await raw("GET", "/api/v1/session")).status).toBe(401);
+    });
+  });
+
+  it("locks a persona session at enter_pin when the option says so", async () => {
+    start({ personaGate: "enter_pin" });
+    const session = await signInAs("staff_nurse", "ph-demo");
+    expect(session.gate).toBe("enter_pin");
+    expect((await raw("GET", "/api/v1/patients")).body.code).toBe("enter_pin");
+  });
+
+  it("starts personas open by default", async () => {
+    start();
+    expect((await signInAs("staff_nurse", "ph-demo")).gate).toBe("open");
+  });
+
+  it("answers 401 before CSRF and CSRF before the gate", async () => {
+    start();
+    expect((await raw("POST", `/api/v1/notes/${NOTE}/discard`, { token: null })).status).toBe(401);
+    start(head("enter_pin"));
+    await adoptSession();
+    const refused = await raw("POST", `/api/v1/notes/${NOTE}/discard`, { token: null });
+    expect([refused.status, refused.body.code]).toEqual([403, "csrf_failed"]);
+  });
+});
+
+describe("CSRF", () => {
+  it("refuses an unsafe request with no token or the wrong one", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    for (const token of [null, "mock-csrf-wrong"]) {
+      const answer = await raw("POST", `/api/v1/notes/${NOTE}/discard`, { token });
+      expect([answer.status, answer.body.code]).toEqual([403, "csrf_failed"]);
+    }
+  });
+
+  it("refuses another session's token", async () => {
+    start();
+    const first = await signInAs("staff_nurse", "ph-demo");
+    const second = await signInAs("staff_nurse", "ph-demo");
+    expect(second.csrf_token).not.toBe(first.csrf_token);
+    expect(first.csrf_token).toMatch(/^mock-csrf-\d+$/);
+    const answer = await raw("PUT", "/api/v1/session/shift", {
+      body: { starts_at: "2026-11-11T14:00:00Z" },
+      token: first.csrf_token,
+    });
+    expect(answer.body.code).toBe("csrf_failed");
+  });
+
+  it("needs none for a GET, and none to start a session", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    expect((await raw("GET", "/api/v1/patients", { token: null })).status).toBe(200);
+    const again = await raw("POST", "/api/v1/session", {
+      body: { persona_id: demoApi.personas[0]?.id },
+      token: null,
+    });
+    expect(again.status).toBe(201);
+  });
+
+  it("holds DELETE /session and the PIN routes to it too", async () => {
+    start(nurse("set_pin"));
+    await adoptSession();
+    const pin = await raw("POST", "/api/v1/session/pin", { body: { pin: MOCK_PIN }, token: null });
+    expect(pin.body.code).toBe("csrf_failed");
+    const unlocked = await raw("POST", "/api/v1/session/unlock", {
+      body: { pin: MOCK_PIN },
+      token: null,
+    });
+    expect(unlocked.body.code).toBe("csrf_failed");
+    const out = await raw("DELETE", "/api/v1/session", { token: null });
+    expect(out.body.code).toBe("csrf_failed");
+    expect((await raw("DELETE", "/api/v1/session")).status).toBe(204);
+  });
+});
+
+describe("sign-in options and sessions", () => {
+  it("follow the options", async () => {
+    start();
+    const plain = await raw("GET", "/api/v1/sign-in-options");
+    expect(plain.body).toEqual({
+      google: false,
+      personas: true,
+      demo: true,
+      demo_pin: DEMO_PIN,
+    });
+    start({ google: true, demo: false });
+    const other = await raw("GET", "/api/v1/sign-in-options");
+    expect(other.body).toEqual({ google: true, personas: true, demo: false, demo_pin: null });
+  });
+
+  it("gives a persona session the facility's length and its own token", async () => {
+    start();
+    const hours = async (role: string, facility: string | null) => {
+      const session = await signInAs(role, facility);
+      return [session, (Date.parse(session.expires_at) - Date.now()) / 3_600_000] as const;
+    };
+    const [ph, phHours] = await hours("staff_nurse", "ph-demo");
+    const [us, usHours] = await hours("head_nurse", "us-demo");
+    const [admin, adminHours] = await hours("admin", null);
+    expect([phHours, usHours, adminHours].map((h) => Math.round(h))).toEqual([12, 14, 12]);
+    expect(new Set([ph.csrf_token, us.csrf_token, admin.csrf_token]).size).toBe(3);
+    expect([ph.kind, ph.idle_lock_seconds]).toEqual(["persona", 300]);
+  });
+});
+
+describe("POST /session/pin", () => {
+  const set = (pin: string) => raw("POST", "/api/v1/session/pin", { body: { pin } });
+
+  it("refuses a malformed or weak PIN with a field error on body.pin", async () => {
+    start(nurse("set_pin"));
+    await adoptSession();
+    for (const pin of ["12345", "1234567", "12345a", "١٢٣٤٥٦", ""]) {
+      const answer = await set(pin);
+      expect([answer.status, answer.body.errors?.[0]?.field]).toEqual([422, "body.pin"]);
+    }
+    for (const pin of ["000000", "111111", "123456", "345678", "654321", "987654"]) {
+      const answer = await set(pin);
+      expect([answer.status, answer.body.errors?.[0]?.field]).toEqual([422, "body.pin"]);
+    }
+  });
+
+  it("stores a good PIN, opens the session, and refuses a second one", async () => {
+    start(nurse("set_pin"));
+    await adoptSession();
+    const done = await set(MOCK_PIN);
+    expect(done.status).toBe(200);
+    expect(done.body["gate"]).toBe("open");
+    expect((await raw("GET", "/api/v1/patients")).status).toBe(200);
+    const twice = await set("246810");
+    expect([twice.status, twice.body.code]).toEqual([409, "pin_already_set"]);
+  });
+
+  it("takes the demo PIN as a new PIN", async () => {
+    start(nurse("set_pin"));
+    await adoptSession();
+    expect((await set(DEMO_PIN)).status).toBe(200);
+  });
+
+  it("answers 409 when the gate is not set_pin", async () => {
+    start(nurse("enter_pin"));
+    await adoptSession();
+    expect((await set(MOCK_PIN)).body.code).toBe("pin_already_set");
+  });
+});
+
+describe("POST /session/unlock", () => {
+  it("opens a Google session on the right PIN", async () => {
+    start(nurse("enter_pin"));
+    await adoptSession();
+    const answer = await unlock(MOCK_PIN);
+    expect([answer.status, answer.body["gate"]]).toEqual([200, "open"]);
+  });
+
+  it("counts a Google user's wrong tries down, then locks the PIN and keeps it locked", async () => {
+    start(nurse("enter_pin"));
+    await adoptSession();
+    const left: unknown[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const answer = await unlock("999999");
+      expect(answer.status).toBe(403);
+      expect(answer.body.code).toBe("pin_wrong");
+      left.push(answer.body.tries_left);
+    }
+    expect(left).toEqual([4, 3, 2, 1]);
+    const fifth = await unlock("999999");
+    expect([fifth.status, fifth.body.code]).toEqual([423, "pin_locked"]);
+    expect((await raw("GET", "/api/v1/session")).body["gate"]).toBe("pin_locked");
+    const right = await unlock(MOCK_PIN);
+    expect([right.status, right.body.code]).toEqual([423, "pin_locked"]);
+  });
+
+  it("does not count a malformed PIN", async () => {
+    start(nurse("enter_pin"));
+    await adoptSession();
+    expect((await unlock("12")).status).toBe(422);
+    expect((await unlock("999999")).body.tries_left).toBe(4);
+  });
+
+  it("clears the failures on a right PIN", async () => {
+    start(nurse("enter_pin"));
+    await adoptSession();
+    await unlock("999999");
+    await unlock("999999");
+    expect((await unlock(MOCK_PIN)).status).toBe(200);
+  });
+
+  it("answers 409 at gate open or set_pin", async () => {
+    start(nurse("open"));
+    await adoptSession();
+    expect((await unlock(MOCK_PIN)).status).toBe(409);
+    start(nurse("set_pin"));
+    await adoptSession();
+    expect((await unlock(MOCK_PIN)).status).toBe(409);
+  });
+
+  it("ends only a persona's session on the fifth wrong try", async () => {
+    start({ personaGate: "enter_pin" });
+    await signInAs("staff_nurse", "ph-demo");
+    const left: unknown[] = [];
+    for (let i = 0; i < 4; i += 1) left.push((await unlock("999999")).body.tries_left);
+    expect(left).toEqual([4, 3, 2, 1]);
+    const fifth = await unlock("999999");
+    expect([fifth.status, fifth.body.code]).toEqual([401, "not_signed_in"]);
+    expect((await raw("GET", "/api/v1/session")).status).toBe(401);
+    const again = await signInAs("staff_nurse", "ph-demo");
+    expect((await unlock(DEMO_PIN)).status).toBe(200);
+    expect(again.gate).toBe("enter_pin");
+  });
+});
+
+describe("a PIN in a write", () => {
+  const sign = (pin: string, ifMatch = '"v1"') =>
+    raw("POST", `/api/v1/notes/${NOTE}/sign`, { body: { pin }, headers: { "If-Match": ifMatch } });
+
+  it("is checked after If-Match and before the review check", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    expect((await sign("999999", '"v9"')).status).toBe(412);
+    const wrong = await sign("999999");
+    expect([wrong.status, wrong.body.code, wrong.body.tries_left]).toEqual([403, "pin_wrong", 4]);
+    const right = await sign(DEMO_PIN);
+    expect([right.status, right.body.code]).toEqual([409, "review_incomplete"]);
+    expect((await sign("12")).status).toBe(422);
+  });
+
+  it("counts toward the lock: a persona's fifth ends the session", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    for (let i = 0; i < 4; i += 1) await sign("999999");
+    const fifth = await sign("999999");
+    expect([fifth.status, fifth.body.code]).toEqual([401, "not_signed_in"]);
+  });
+
+  it("counts toward the lock: a Google user's fifth locks the PIN", async () => {
+    start(nurse("open"));
+    await adoptSession();
+    for (let i = 0; i < 4; i += 1) await sign("999999");
+    const fifth = await sign("999999");
+    expect([fifth.status, fifth.body.code]).toEqual([423, "pin_locked"]);
+    expect((await raw("GET", "/api/v1/patients")).body.code).toBe("pin_locked");
+  });
+
+  it("is checked on a settings save after 412 and before validation", async () => {
+    start();
+    await signInAs("admin", null);
+    const save = (pin: string, ifMatch = '"f1"') =>
+      raw("PUT", "/api/v1/facilities/ph-demo", {
+        body: { name: "", pin },
+        headers: { "If-Match": ifMatch },
+      });
+    expect((await save("999999", '"f9"')).status).toBe(412);
+    const wrong = await save("999999");
+    expect([wrong.status, wrong.body.code, wrong.body.tries_left]).toEqual([403, "pin_wrong", 4]);
+    expect((await save(DEMO_PIN)).status).toBe(422);
+  });
+});
+
+describe("POST /facilities/{key}/reset", () => {
+  const reset = (ifMatch: string | null, pin = DEMO_PIN) =>
+    raw("POST", "/api/v1/facilities/ph-demo/reset", {
+      body: { pin },
+      headers: ifMatch === null ? {} : { "If-Match": ifMatch },
+    });
+  const original = demoApi.facilities["ph-demo"];
+
+  it("puts the demo's own settings back, one version on, with the new ETag", async () => {
+    start();
+    await signInAs("admin", null);
+    const profile = { ...original?.profile, name: "Renamed", pin: DEMO_PIN };
+    delete (profile as { key?: string }).key;
+    const saved = await raw("PUT", "/api/v1/facilities/ph-demo", {
+      body: profile,
+      headers: { "If-Match": '"f1"' },
+    });
+    expect(saved.status).toBe(200);
+    const back = await reset('"f2"');
+    expect(back.status).toBe(200);
+    expect(back.headers.get("ETag")).toBe('"f3"');
+    expect(back.body["version"]).toBe(3);
+    expect((back.body["profile"] as { name: string }).name).toBe(original?.profile.name);
+  });
+
+  it("asks for If-Match, refuses a stale one and a wrong PIN", async () => {
+    start();
+    await signInAs("admin", null);
+    expect((await reset(null)).status).toBe(428);
+    expect((await reset('"f7"')).status).toBe(412);
+    expect((await reset('"f1"', "999999")).body.code).toBe("pin_wrong");
+    expect((await reset('"f1"', "12")).status).toBe(422);
+    expect((await reset('"f1"')).status).toBe(200);
+  });
+
+  it("is for the admin persona only, and only in the demo", async () => {
+    start();
+    await signInAs("head_nurse", "ph-demo");
+    expect((await reset('"f1"')).status).toBe(403);
+    start({ demo: false });
+    await signInAs("admin", null);
+    expect((await reset('"f1"')).status).toBe(403);
+  });
+
+  it("answers 404 for a facility that is not there", async () => {
+    start();
+    await signInAs("admin", null);
+    const answer = await raw("POST", "/api/v1/facilities/nowhere/reset", {
+      body: { pin: DEMO_PIN },
+      headers: { "If-Match": '"f1"' },
+    });
+    expect(answer.status).toBe(404);
+  });
+});

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { api, type FacilitySettings } from "../api/client";
 import type { components } from "../api/schema";
+import { signInAs } from "../test/mockSession";
 import { server } from "../test/setup";
 import { demoApi } from "./demo-api";
 import { createHandlers } from "./handlers";
@@ -8,11 +9,7 @@ import { createHandlers } from "./handlers";
 type Settings = FacilitySettings;
 type Shift = components["schemas"]["ShiftDefinition"];
 
-async function signIn(role: string, facility: string | null) {
-  const found = demoApi.personas.find((p) => p.role === role && p.facility_key === facility);
-  if (!found) throw new Error(`no ${role} persona`);
-  return api.POST("/api/v1/session", { body: { persona_id: found.id } });
-}
+const signIn = signInAs;
 
 /** The saved settings of a facility, as the form would send them. */
 function settingsOf(key: string): Settings {
@@ -131,8 +128,8 @@ describe("PUT /api/v1/facilities/{facility_key}", () => {
     expect((await put("ph-demo", body)).response.status).toBe(200);
     await api.DELETE("/api/v1/session");
     const nurse = await signIn("staff_nurse", "ph-demo");
-    expect(nurse.data?.shift?.code).toBe("10-6");
-    expect(nurse.data?.shift?.label).toBe("Night");
+    expect(nurse.shift?.code).toBe("10-6");
+    expect(nurse.shift?.label).toBe("Night");
     const facility = await api.GET("/api/v1/facilities/{facility_key}", {
       params: { path: { facility_key: "ph-demo" } },
     });

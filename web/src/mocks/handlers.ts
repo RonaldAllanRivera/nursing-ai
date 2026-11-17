@@ -2,10 +2,16 @@ import { http, HttpResponse, type HttpHandler } from "msw";
 import type { components } from "../api/schema";
 import { demoApi } from "./demo-api";
 import type { FacilitySettings } from "../api/client";
+import { createDrafts, dressed, draftAgainRoute, queuedView } from "./draftJobs";
+import type { MockOptions } from "./options";
+import { problem } from "./problems";
+import { createSession } from "./session";
+import { sessionRoutes } from "./sessionRoutes";
+import { createStaff } from "./staff";
+import { staffRoutes } from "./staffRoutes";
 import type { DemoApi } from "./types";
 
 type Schemas = components["schemas"];
-type ProblemCode = Schemas["Problem"]["code"];
 type Line = Schemas["DraftLine"];
 
 // The mock keeps its own copies of the server's rules, so the web's code can't agree with itself.
@@ -129,69 +135,28 @@ function settingsErrors(body: Settings): Schemas["FieldError"][] {
   return [];
 }
 
-const TITLES: Record<number, string> = {
-  401: "Not signed in",
-  403: "Not allowed",
-  404: "Not found",
-  422: "The request isn't valid",
-  409: "The note can't take this change",
-  412: "The note changed",
-  428: "A required header is missing",
-};
-
-function problem(
-  status: number,
-  code: ProblemCode,
-  errors?: Schemas["FieldError"][],
-  lineIds?: string[],
-) {
-  const body: Schemas["Problem"] = {
-    type: "about:blank",
-    title: TITLES[status] ?? "Error",
-    status,
-    code,
-    ...(errors ? { errors } : {}),
-    ...(lineIds ? { line_ids: lineIds } : {}),
-  };
-  return HttpResponse.json(body, {
-    status,
-    headers: { "Content-Type": "application/problem+json" },
-  });
-}
-
 /**
  * The P1 endpoints answered from the demo cases, with the state a session needs (who is signed
  * in, how often a job was polled). The web lane adds the write behaviours.
  */
-export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
+export function createHandlers(
+  source: DemoApi = demoApi,
+  options: MockOptions = {},
+): HttpHandler[] {
   // Writes change this copy, so every call (every test, every page load) starts clean.
   const data = structuredClone(source);
-  let personaId: string | null = null;
-  let shiftOverride: Schemas["ShiftRef"] | null = null;
+  const staff = createStaff();
+  const state = createSession(data, options, staff);
+  const drafts = createDrafts(data, source, options);
+  const { guard, session } = state;
   const polls = new Map<string, number>();
   const sent = new Map<string, { text: string; jobId: string }>();
 
-  /** A nurse's shift is found by its code in her facility's current shifts: a rename shows at once. */
-  const relabelled = (
-    facilityKey: string | null,
-    shift: Schemas["ShiftRef"],
-  ): Schemas["ShiftRef"] => {
-    const now = facilityKey === null ? undefined : data.facilities[facilityKey];
-    const label = now?.profile.shifts.find((s) => s.code === shift.code)?.label;
-    return label === undefined ? shift : { ...shift, label };
-  };
-
-  const session = () => {
-    const found = personaId === null ? undefined : data.sessions[personaId];
-    if (!found) return undefined;
-    const shift = shiftOverride ?? found.shift;
-    return shift ? { ...found, shift: relabelled(found.facility_key, shift) } : found;
-  };
-
   /**
-   * The checks every write to a note makes, in the API's order: signed in (401), a nurse (403),
-   * If-Match sent (428), the note (404), then locked (409) before stale (412), so a note signed
-   * somewhere else answers "locked" whatever version the screen holds.
+   * The checks every write to a note makes, in the API's order: signed in (401), the CSRF token
+   * (403), the gate (423), a nurse (403), If-Match sent (428), the note (404), then locked (409)
+   * before stale (412), so a note signed somewhere else answers "locked" whatever version the
+   * screen holds.
    */
   function writeGate(
     noteId: string,
@@ -199,8 +164,9 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
   ):
     | { refusal: Response; note?: never; user?: never }
     | { refusal?: never; note: Schemas["NoteOut"]; user: string } {
-    const current = session();
-    if (!current) return { refusal: problem(401, "not_signed_in") };
+    const gated = guard(request);
+    if (gated.refusal) return { refusal: gated.refusal };
+    const current = gated.session;
     if (current.facility_key === null) return { refusal: problem(403, "forbidden") };
     const ifMatch = request.headers.get("If-Match");
     if (!ifMatch) return { refusal: problem(428, "precondition_required") };
@@ -237,13 +203,15 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
 
     http.get("*/api/v1/personas", () => HttpResponse.json(data.personas)),
 
+    ...sessionRoutes(state, options),
+    ...staffRoutes(state, data, staff),
+    draftAgainRoute(state, data, drafts),
+
     http.post("*/api/v1/session", async ({ request }) => {
       const body = (await request.json()) as Schemas["SessionIn"];
       const found = data.sessions[body.persona_id];
       if (!found) return problem(404, "not_found");
-      personaId = body.persona_id;
-      shiftOverride = null;
-      return HttpResponse.json(session(), { status: 201 });
+      return HttpResponse.json(state.startPersona(body.persona_id), { status: 201 });
     }),
 
     http.get("*/api/v1/session", () => {
@@ -252,8 +220,9 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
     }),
 
     http.put("*/api/v1/session/shift", async ({ request }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const body = (await request.json()) as Schemas["ShiftChoiceIn"];
       const wanted = Date.parse(body.starts_at);
@@ -265,27 +234,32 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
           { field: "body.starts_at", message: "That is not one of this facility's shifts." },
         ]);
       }
-      shiftOverride = choice;
+      state.setShift(choice);
       return HttpResponse.json({ ...current, shift: choice });
     }),
 
-    http.delete("*/api/v1/session", () => {
-      personaId = null;
-      shiftOverride = null;
+    http.delete("*/api/v1/session", ({ request }) => {
+      if (session()) {
+        const checked = state.guardSession(request);
+        if (checked.refusal) return checked.refusal;
+      }
+      state.end();
       return new HttpResponse(null, { status: 204 });
     }),
 
-    http.get("*/api/v1/facilities", () => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+    http.get("*/api/v1/facilities", ({ request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       const all = Object.values(data.facilities);
       const key = current.facility_key;
       return HttpResponse.json(key === null ? all : all.filter((f) => f.profile.key === key));
     }),
 
-    http.get<{ key: string }>("*/api/v1/facilities/:key", ({ params }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+    http.get<{ key: string }>("*/api/v1/facilities/:key", ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       const found = data.facilities[params.key];
       if (!found) return problem(404, "not_found");
       if (current.facility_key !== null && current.facility_key !== params.key) {
@@ -295,15 +269,19 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
     }),
 
     http.put<{ key: string }>("*/api/v1/facilities/:key", async ({ params, request }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key !== null) return problem(403, "forbidden");
       const found = data.facilities[params.key];
       if (!found) return problem(404, "not_found");
       const ifMatch = request.headers.get("If-Match");
       if (!ifMatch) return problem(428, "precondition_required");
       if (ifMatch !== `"f${String(found.version)}"`) return problem(412, "stale_version");
-      const body = settingsOf((await request.json()) as Schemas["FacilityUpdateIn"]);
+      const sentBody = (await request.json()) as Schemas["FacilityUpdateIn"];
+      const wrongPin = state.checkPin(sentBody.pin);
+      if (wrongPin) return wrongPin;
+      const body = settingsOf(sentBody);
       const errors = settingsErrors(body);
       if (errors.length > 0) return problem(422, "invalid_request", errors);
       const shifts = body.shifts.map((s) => ({
@@ -329,27 +307,51 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       return HttpResponse.json(found, { headers: { ETag: `"f${String(found.version)}"` } });
     }),
 
-    http.get("*/api/v1/patients", () => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+    http.post<{ key: string }>("*/api/v1/facilities/:key/reset", async ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const { kind, role } = gated.session;
+      if (!(options.demo ?? true) || kind !== "persona" || role !== "admin") {
+        return problem(403, "forbidden");
+      }
+      const found = data.facilities[params.key];
+      const demoCopy = source.facilities[params.key];
+      if (!found || !demoCopy) return problem(404, "not_found");
+      const ifMatch = request.headers.get("If-Match");
+      if (!ifMatch) return problem(428, "precondition_required");
+      if (ifMatch !== `"f${String(found.version)}"`) return problem(412, "stale_version");
+      const wrongPin = state.checkPin(((await request.json()) as Schemas["PinIn"]).pin);
+      if (wrongPin) return wrongPin;
+      found.profile = structuredClone(demoCopy.profile);
+      found.shift_choices = structuredClone(demoCopy.shift_choices);
+      found.version += 1;
+      return HttpResponse.json(found, { headers: { ETag: `"f${String(found.version)}"` } });
+    }),
+
+    http.get("*/api/v1/patients", ({ request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const key = current.facility_key as keyof DemoApi["patients"];
       return HttpResponse.json(data.patients[key]);
     }),
 
-    http.get<{ id: string }>("*/api/v1/patients/:id", ({ params }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+    http.get<{ id: string }>("*/api/v1/patients/:id", ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const found = data.patientDetails[params.id];
       if (!found) return problem(404, "not_found");
       // The page shows the shift the nurse picked in the header.
-      return HttpResponse.json(shiftOverride ? { ...found, shift: shiftOverride } : found);
+      return HttpResponse.json(state.shift() ? { ...found, shift: state.shift() } : found);
     }),
 
     http.post<{ id: string }>("*/api/v1/patients/:id/rough-notes", async ({ params, request }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const key = request.headers.get("Idempotency-Key");
       if (!key) return problem(428, "precondition_required");
@@ -366,11 +368,16 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       // The frozen demo data has one job per patient, so a second save (new key) replays a job
       // that is already finished. The real API makes a new job each time.
       const jobId = earlier?.jobId ?? data.jobForPatient[params.id];
-      const job = jobId === undefined ? undefined : data.jobs[jobId];
+      let job = jobId === undefined ? undefined : data.jobs[jobId];
       if (!job) return problem(404, "not_found");
-      const queued: Schemas["DraftJobOut"] = { ...job, status: "queued", note_id: null };
       if (!earlier) {
+        // The `failDraft` option swaps this one save's job for a failed one.
+        job = drafts.jobFor(job);
+        drafts.authors.set(job.rough_note_id, current.user_id);
         sent.set(key, { text: body.text, jobId: job.id });
+      }
+      const queued = queuedView(job);
+      if (!earlier) {
         detail.notes.push({
           rough_note_id: job.rough_note_id,
           written_at: new Date().toISOString(),
@@ -384,8 +391,9 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       });
     }),
 
-    http.get<{ id: string }>("*/api/v1/draft-jobs/:id", ({ params }) => {
-      if (!session()) return problem(401, "not_signed_in");
+    http.get<{ id: string }>("*/api/v1/draft-jobs/:id", ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
       const job = data.jobs[params.id];
       if (!job) return problem(404, "not_found");
       const seen = (polls.get(job.id) ?? 0) + 1;
@@ -401,13 +409,12 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
         }
       }
       // The first poll still finds the job queued; after that the draft is ready.
-      const answer: Schemas["DraftJobOut"] =
-        seen === 1 ? { ...job, status: "queued", note_id: null } : job;
-      return HttpResponse.json(answer);
+      return HttpResponse.json(seen === 1 ? queuedView(job) : dressed(job));
     }),
 
-    http.get<{ id: string }>("*/api/v1/notes/:id", ({ params }) => {
-      if (!session()) return problem(401, "not_signed_in");
+    http.get<{ id: string }>("*/api/v1/notes/:id", ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
       const note = data.notes[params.id];
       if (!note) return problem(404, "not_found");
       return HttpResponse.json(note, { headers: { ETag: `"v${String(note.version)}"` } });
@@ -492,10 +499,12 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       },
     ),
 
-    http.post<{ id: string }>("*/api/v1/notes/:id/sign", ({ params, request }) => {
+    http.post<{ id: string }>("*/api/v1/notes/:id/sign", async ({ params, request }) => {
       const gate = writeGate(params.id, request);
       if (gate.refusal) return gate.refusal;
       const { note, user } = gate;
+      const wrongPin = state.checkPin(((await request.json()) as Schemas["SignNoteIn"]).pin);
+      if (wrongPin) return wrongPin;
       const open = linesInOrder(note.draft).filter(needsReview);
       if (open.length > 0) {
         return problem(
