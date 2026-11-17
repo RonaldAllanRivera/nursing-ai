@@ -9,6 +9,52 @@ The model writes, code checks, the nurse signs.**
 > are checked off as they ship, and evaluation results will be published here when they exist.
 > All patient data in this repository is synthetic.
 
+![A nurse writes a rough note, the draft appears, a tap on a line shows its source words, the flagged lines are resolved, and the note is signed and locked](docs/media/ph-flow.gif)
+
+*The Philippine flow on the synthetic demo patient, recorded from the real stack in replay mode:
+write a rough note, get the traced draft, tap a line to see the words it came from, check the
+flagged lines, sign. The screen's "Documentation aid" line says what it is: the nurse reviews and
+signs every note.*
+
+---
+
+## What works today
+
+Everything below runs on this PC with synthetic demo data and costs nothing.
+
+- **Try it with `make dev`** (mock mode, the default). Sign in as a demo persona, pick a patient,
+  type a rough note and get an FDAR draft (DAR on a US unit). For each demo patient, mock mode gives
+  the same canned demo draft whatever you type. A patient who is not one of the demo cases gets no
+  recorded draft: the note is saved and no draft appears.
+- **Recorded real drafts with `make dev AI_MODE=replay`** (it starts the stack, then the web app).
+  Type a demo case's rough note exactly and you get the draft the live model wrote for it, replayed
+  from a recording. There is no model call and no cost. Any other note has no recording, so it gets
+  no draft.
+- **The traced draft.** Every line shows its check: source found, AI wording to check, number
+  differs, or not in your note. Tap a line and the words it came from light up in your note. A
+  missing-items list, made by plain code, shows what the patient's chart expects that the note
+  does not mention.
+- **Review, edit, sign.** Confirm or fix each flagged line, edit any line, remove one. Signing is
+  blocked until every line is checked. A signed note is locked and shows a short hash.
+- **A US facility.** The US demo unit writes DAR notes (no Focus section), with its own shifts and
+  times in Pacific time.
+- **Admin settings.** An admin edits a facility's name, timezone, shifts, units, clock and wording.
+- **Live drafting** with the real model runs only through `make record-replays`, which records the
+  replays, costs real money and stops at the monthly cap. Only that command calls the live model:
+  the app in Compose never does.
+
+The same journeys run as browser tests against the real stack (`make e2e` in replay mode).
+
+![The trace view on a tablet: a tapped line and its source words lit in the note](docs/media/trace-view-tablet.png)
+
+![A signed note: locked, with the signer, the time and the short hash](docs/media/signed-note.png)
+
+![A US DAR draft in the US unit, with times in Pacific time](docs/media/us-dar-draft.png)
+
+![The admin's Settings screen for a facility](docs/media/admin-settings.png)
+
+*Screenshots are made by `make readme-media` from the real stack in replay mode.*
+
 ---
 
 ## The problem
@@ -225,7 +271,9 @@ make dev      # Postgres (migrated, with the synthetic demo data) + API + web on
 make down     # stop Postgres and the API (Ctrl+C in make dev stops only the web app)
 make spend    # the AI mode, the monthly cap and this month's AI spend
 make check    # lint, type-check and test everything
-make e2e      # Playwright end-to-end tests against the real stack
+make e2e      # Playwright end-to-end tests against the real stack (`make e2e AI_MODE=replay` runs it on recorded drafts at $0)
+make readme-media  # rewrite the README's GIF and screenshots (first: make up AI_MODE=replay)
+make record-replays  # LIVE: calls the real model, costs money, needs AI_MODE=live and AI_MONTHLY_CAP_USD
 make e2e-mock # the browser journeys against the mock API, no Docker needed
 ```
 
@@ -235,9 +283,10 @@ On a fresh Ubuntu or WSL machine, install the test browser's system libraries on
 If a port is already taken, add `PORT_OFFSET=1` to the command (every port moves up by 10), for
 example `make dev PORT_OFFSET=1`. `make help` lists every target.
 
-**Mock mode.** The real API and database are built, and `make up` migrates and seeds them; running
-the web app against them end to end comes next. To click through the screens without Docker, run
-the web app alone with a mock API in the browser that answers from the synthetic demo cases:
+**Mock mode.** The real API and database are built, `make up` migrates and seeds them, and the web
+app runs against them end to end (`make dev`, tested by `make e2e`). To click through the screens
+without Docker, run the web app alone with a mock API in the browser that answers from the
+synthetic demo cases (it drafts the canned demo output whatever you type):
 
 ```bash
 pnpm -C web dev:mock   # open http://localhost:5173; sign in as a demo persona, write a note, check it, sign
