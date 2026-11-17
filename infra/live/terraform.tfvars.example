@@ -9,3 +9,11 @@ aws_profile = "nursing-ai"
 
 ai_mode            = "mock"
 ai_monthly_cap_usd = 10
+
+# Optional custom domain: a subdomain of your own domain, with DNS kept elsewhere.
+# Do not write the real name in a file; export TF_VAR_domain_name instead. Two
+# applies: set the name and apply, add the two records of the dns_records output
+# in your DNS provider as DNS only, then set TF_VAR_domain_validated=true and
+# apply again.
+# domain_name      = "sourceline.example.com"
+# domain_validated = false

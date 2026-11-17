@@ -72,6 +72,29 @@ variable "ai_daily_spend_alarm_usd" {
   default     = 1
 }
 
+variable "domain_name" {
+  description = "Custom host name for the site, a subdomain of your own domain whose DNS stays elsewhere (for example sourceline.example.com). Set it with TF_VAR_domain_name so the name is never committed. Null keeps the cloudfront.net address. Setting it requests a certificate and fills the dns_records output; add those two records, then set domain_validated. The site-url parameter changes with domain_validated, and the functions read it at cold start, so the new address takes effect after the next deploy."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.domain_name == null ? true : can(regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]([a-z0-9-]*[a-z0-9])?$", var.domain_name))
+    error_message = "domain_name must be a lowercase host name with at least one dot: no scheme, no path and no trailing dot."
+  }
+}
+
+variable "domain_validated" {
+  description = "Set to true (TF_VAR_domain_validated=true) in a second apply, after the two dns_records are in DNS. It makes the apply wait for the certificate, adds the CloudFront alias and certificate, and points site-url at the custom domain. Leave false before that, or the apply would wait for records that are not there."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.domain_validated || var.domain_name != null
+    error_message = "domain_validated needs a domain_name."
+  }
+}
+
 variable "database_password_version" {
   description = "Version of the generated database password. Raise it by one to rotate the password, or after an apply that stopped between creating the cluster and writing the database URL parameter."
   type        = number

@@ -213,9 +213,26 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  # The default cloudfront.net certificate's minimum TLS version is set by AWS;
-  # a custom domain brings an ACM certificate with TLSv1.2_2021.
-  viewer_certificate {
-    cloudfront_default_certificate = true
+  aliases = var.custom_domain == null ? [] : [var.custom_domain]
+
+  # The default cloudfront.net certificate's minimum TLS version is set by AWS.
+  # A custom domain uses the ACM certificate over SNI (a dedicated IP costs $600
+  # a month), with TLS 1.2 or newer.
+  dynamic "viewer_certificate" {
+    for_each = var.custom_domain == null ? [1] : []
+
+    content {
+      cloudfront_default_certificate = true
+    }
+  }
+
+  dynamic "viewer_certificate" {
+    for_each = var.custom_domain == null ? [] : [1]
+
+    content {
+      acm_certificate_arn      = var.certificate_arn
+      ssl_support_method       = "sni-only"
+      minimum_protocol_version = "TLSv1.2_2021"
+    }
   }
 }

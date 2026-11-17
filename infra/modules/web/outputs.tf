@@ -23,6 +23,11 @@ output "domain_name" {
   description = "The cloudfront.net host name the site is served from."
 }
 
+output "aliases" {
+  value       = sort(tolist(aws_cloudfront_distribution.site.aliases))
+  description = "Host names the distribution answers to besides its cloudfront.net name."
+}
+
 output "api_origin_domain" {
   value       = one([for o in aws_cloudfront_distribution.site.origin : o.domain_name if o.origin_id == local.api_origin_id])
   description = "Host name of the HTTP API origin the distribution really has, or null when the /api/* route is off."

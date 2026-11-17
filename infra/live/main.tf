@@ -8,6 +8,48 @@ locals {
   api_function_name    = "${local.name}-api"
   worker_function_name = "${local.name}-worker"
   ops_function_name    = "${local.name}-ops"
+
+  # The custom domain goes live in the second apply (domain_validated): the first
+  # only requests the certificate, because DNS is outside AWS and its record can't
+  # exist yet.
+  custom_domain_on = var.domain_name != null && var.domain_validated
+
+  # The site's address: the custom domain once it is live, the CloudFront name
+  # until then. The functions read the site-url parameter at cold start, so a
+  # change takes effect at the next deploy (which restarts them).
+  site_url = "https://${local.custom_domain_on ? var.domain_name : module.web.domain_name}"
+}
+
+# ---------------------------------------------------------------------------
+# Custom domain (optional). DNS stays on Cloudflare, so there is no Route 53
+# zone: Terraform outputs the two records to add by hand, in two applies.
+# The certificate lives here, not in the web module: CloudFront reads
+# certificates from us-east-1 only, and a module needing a second provider
+# could not be validated on its own.
+# ---------------------------------------------------------------------------
+
+# ACM public certificates are free.
+resource "aws_acm_certificate" "site" {
+  provider = aws.us_east_1
+  count    = var.domain_name == null ? 0 : 1
+
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  # A replacement certificate must exist before the old one is released.
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Waits until ACM sees the validation record in DNS. It exists only in the second
+# apply, after the record is added, so no apply waits for a record that isn't
+# there yet.
+resource "aws_acm_certificate_validation" "site" {
+  provider = aws.us_east_1
+  count    = local.custom_domain_on ? 1 : 0
+
+  certificate_arn = aws_acm_certificate.site[0].arn
 }
 
 module "network" {
@@ -40,7 +82,7 @@ module "ops" {
   api_function_name        = local.api_function_name
   worker_function_name     = local.worker_function_name
   ops_function_name        = local.ops_function_name
-  site_url                 = "https://${module.web.domain_name}"
+  site_url                 = local.site_url
   http_api_id              = module.compute.http_api_id
   dlq_name                 = module.compute.dlq_name
   ai_daily_spend_alarm_usd = var.ai_daily_spend_alarm_usd
@@ -82,6 +124,10 @@ module "web" {
   source = "../modules/web"
 
   name = local.name
+
+  custom_domain   = local.custom_domain_on ? var.domain_name : null
+  certificate_arn = local.custom_domain_on ? aws_acm_certificate_validation.site[0].certificate_arn : null
+
   # Compute's endpoint starts with https://; the web module wants the bare host.
   api_origin_domain = trimprefix(module.compute.api_endpoint, "https://")
 }

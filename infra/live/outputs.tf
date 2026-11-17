@@ -1,6 +1,22 @@
 output "site_url" {
-  description = "Address of the web site."
-  value       = "https://${module.web.domain_name}"
+  description = "Address of the web site: the custom domain once domain_validated is true, the cloudfront.net name before."
+  value       = local.site_url
+}
+
+output "dns_records" {
+  description = "The two CNAME records to add in the DNS provider as DNS only (not proxied): certificate_validation and site. Empty when domain_name is null."
+  value = var.domain_name == null ? {} : {
+    certificate_validation = {
+      name  = trimsuffix(one(aws_acm_certificate.site[0].domain_validation_options).resource_record_name, ".")
+      type  = one(aws_acm_certificate.site[0].domain_validation_options).resource_record_type
+      value = trimsuffix(one(aws_acm_certificate.site[0].domain_validation_options).resource_record_value, ".")
+    }
+    site = {
+      name  = var.domain_name
+      type  = "CNAME"
+      value = module.web.domain_name
+    }
+  }
 }
 
 output "api_endpoint" {
