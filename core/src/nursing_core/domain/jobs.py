@@ -25,6 +25,16 @@ class JobFailure(StrEnum):
     REPLAY_MISSING = "replay_missing"
 
 
+# The failures a new attempt can fix. A refusal, a missing recording or a spent budget would fail
+# the same way again, so retrying them would only spend money.
+RETRYABLE_FAILURES = frozenset({JobFailure.PROVIDER_ERROR, JobFailure.INVALID_OUTPUT})
+
+
+def is_retryable(failure: JobFailure | None) -> bool:
+    """True when "Try drafting again" can help: the job failed in a way a new attempt can fix."""
+    return failure in RETRYABLE_FAILURES
+
+
 class DraftJob(DomainModel):
     id: UUID
     rough_note_id: UUID

@@ -3,7 +3,14 @@
 import re
 import unicodedata
 
-from nursing_core.demo import DEMO_FACILITIES, DEMO_PERSONAS, DemoCase, load_demo_cases
+from nursing_core.demo import (
+    DEMO_FACILITIES,
+    DEMO_FACILITY_NAMES,
+    DEMO_PERSONAS,
+    DEMO_PIN,
+    DemoCase,
+    load_demo_cases,
+)
 from nursing_core.domain.facility import FacilityProfile
 from nursing_core.domain.notes import LineReview, LineStatus, MismatchKind
 from nursing_core.domain.shifts import shift_containing
@@ -136,3 +143,16 @@ def test_each_case_is_written_by_a_staff_nurse_of_its_facility() -> None:
         author = next(p for p in DEMO_PERSONAS if p.id == case.rough_note.author_id)
         assert author.role is Role.STAFF_NURSE
         assert author.facility_key == case.facility_key
+
+
+def test_demo_facility_names_match_the_seed() -> None:
+    # The personas list shows these names without opening the database (a paused one stays
+    # paused), so they must be the names the seed writes.
+    assert {p.key: p.name for p in DEMO_FACILITIES} == DEMO_FACILITY_NAMES
+    persona_keys = {p.facility_key for p in DEMO_PERSONAS if p.facility_key is not None}
+    assert persona_keys <= DEMO_FACILITY_NAMES.keys()
+    assert all(name.startswith("SYNTHETIC ") for name in DEMO_FACILITY_NAMES.values())
+
+
+def test_demo_pin_is_six_digits() -> None:
+    assert DEMO_PIN == "135790"

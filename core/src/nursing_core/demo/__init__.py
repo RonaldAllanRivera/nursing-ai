@@ -50,6 +50,11 @@ DEMO_FACILITIES: list[FacilityProfile] = [
     preset("PH", "ph-demo", "SYNTHETIC Demo Hospital (PH)"),
     preset("US", "us-demo", "SYNTHETIC Demo Hospital (US)"),
 ]
+# The names the personas list shows without opening the database, so a visitor's first page never
+# wakes a paused one. The seed writes these same names.
+DEMO_FACILITY_NAMES: dict[str, str] = {f.key: f.name for f in DEMO_FACILITIES}
+# Every persona's PIN, shown on the demo's sign-in screen: visitors see the lock without a secret.
+DEMO_PIN = "135790"
 
 
 def _persona(n: int, name: str, initials: str, role: Role, key: str | None) -> DemoPersona:
