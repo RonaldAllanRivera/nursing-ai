@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from nursing_core.storage import tables
 from sqlalchemy import select
 
-from .helpers import ADMIN, NOW, PH_STAFF, US_STAFF, sign_in
+from .helpers import ADMIN, NOW, PH_STAFF, US_STAFF, MutableClock, keep_open, sign_in
 
 
 @pytest.mark.asyncio
@@ -54,3 +54,23 @@ async def test_signing_in_again_replaces_the_cookie_and_the_csrf_token(
     assert second.json()["role"] == "admin"
     assert client.headers["X-CSRF-Token"] == second.json()["csrf_token"]
     assert second.json()["csrf_token"] != first.json()["csrf_token"]
+
+
+@pytest.mark.asyncio
+async def test_keep_open_moves_the_last_activity_but_never_the_expiry(
+    app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    answer = await sign_in(client, PH_STAFF)
+    clock.advance(timedelta(hours=1))
+    await keep_open(client)
+    token = client.cookies["sl_session"]
+    async with app.state.engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(tables.session).where(
+                    tables.session.c.token_hash == hashlib.sha256(token.encode()).hexdigest()
+                )
+            )
+        ).one()
+    assert row.last_active_at == NOW + timedelta(hours=1)
+    assert row.expires_at == datetime.fromisoformat(answer.json()["expires_at"])

@@ -1153,7 +1153,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description To the app, or to /sign-in?error=no_access, /sign-in?error=expired or /sign-in?error=cancelled (SignInError in schemas.py) */
             302: {
                 headers: {
                     /** @description The app, or the sign-in page with ?error= */

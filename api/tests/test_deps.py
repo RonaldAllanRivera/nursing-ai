@@ -29,6 +29,7 @@ def a_user() -> StoredUser:
         initials="DN",
         role=Role.STAFF_NURSE,
         facility_key="ph-demo",
+        persona=True,
     )
 
 

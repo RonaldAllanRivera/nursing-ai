@@ -15,7 +15,9 @@ SESSION_COOKIE = APIKeyCookie(
     auto_error=False,
 )
 # The CSRF token from the session's answer (`SessionOut.csrf_token`), required on every POST, PUT,
-# PATCH and DELETE that has a session. Read it through this object, as with the cookie.
+# PATCH and DELETE that has a session. Only routes that change something declare it (the CSRF
+# list below); the check itself reads `request.headers["X-CSRF-Token"]` inside the session
+# dependency, because declaring this object there would add it to every signed-in GET as well.
 CSRF_HEADER = APIKeyHeader(
     name="X-CSRF-Token",
     scheme_name="csrf",

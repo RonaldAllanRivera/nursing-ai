@@ -42,23 +42,24 @@ async def status_of(app: FastAPI, method: str, path: str) -> int:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("role", "status"), [("api", 404), ("worker", 501), ("ops", 501)])
+@pytest.mark.parametrize(("role", "present"), [("api", False), ("worker", True), ("ops", True)])
 async def test_events_route_absent_for_the_api_role(
-    role: Literal["api", "worker", "ops"], status: int
+    role: Literal["api", "worker", "ops"], present: bool
 ) -> None:
     app = create_app(Settings(database_url=UNUSED, app_role=role))
-    assert await status_of(app, "POST", "/events") == status
+    assert (await status_of(app, "POST", "/events") != 404) is present
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("app_env", "status"), [("dev", 404), ("demo", 404), ("prod", 404), ("test", 501)]
+    ("app_env", "present"), [("dev", False), ("demo", False), ("prod", False), ("test", True)]
 )
 async def test_the_test_sign_in_exists_only_in_test(
-    app_env: Literal["dev", "test", "demo", "prod"], status: int
+    app_env: Literal["dev", "test", "demo", "prod"], present: bool
 ) -> None:
+    # Whatever the route answers once the auth lane builds it, elsewhere it is a 404.
     app = create_app(Settings(database_url=UNUSED, app_env=app_env))
-    assert await status_of(app, "POST", "/api/v1/test/session") == status
+    assert (await status_of(app, "POST", "/api/v1/test/session") != 404) is present
 
 
 class StandInGoogle:

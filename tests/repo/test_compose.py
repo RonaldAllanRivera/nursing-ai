@@ -59,10 +59,11 @@ def test_api_container_listens_on_8080() -> None:
     # The Lambda Web Adapter forwards to 8080, so the image listens there everywhere, Compose too.
     dockerfile = (ROOT / "api" / "Dockerfile").read_text()
     assert "EXPOSE 8080\n" in dockerfile
-    assert dockerfile.rstrip().endswith(
+    # The cloud lane adds the Lambda Web Adapter; whatever else it adds, uvicorn serves 8080.
+    assert (
         'CMD ["uvicorn", "--factory", "nursing_api.app:create_app", '
-        '"--host", "0.0.0.0", "--port", "8080"]'
-    )
+        '"--host", "0.0.0.0", "--port", "8080"]\n'
+    ) in dockerfile
     api = services()["api"]
     assert api["ports"] == ["127.0.0.1:${API_PORT:-8000}:8080"]
     assert "http://127.0.0.1:8080/api/v1/health" in " ".join(api["healthcheck"]["test"])

@@ -24,6 +24,7 @@ def reset(
     *,
     herself: bool = False,
     target_persona: bool = False,
+    actor_persona: bool = False,
 ) -> bool:
     actor_id = uuid4()
     target_id: UUID = actor_id if herself else uuid4()
@@ -31,6 +32,7 @@ def reset(
         actor_role=actor_role,
         actor_facility=actor_facility,
         actor_id=actor_id,
+        actor_persona=actor_persona,
         target_role=target_role,
         target_facility=target_facility,
         target_id=target_id,
@@ -60,8 +62,20 @@ def test_gates_and_statuses_use_the_contracts_words() -> None:
 def test_only_the_admin_manages_staff_and_head_nurses_also_list_it(
     role: Role, manages: bool, lists: bool
 ) -> None:
-    assert can_manage_staff(role) is manages
-    assert can_list_staff(role) is lists
+    assert can_manage_staff(role, persona=False) is manages
+    assert can_list_staff(role, persona=False) is lists
+
+
+@pytest.mark.parametrize("role", list(Role))
+def test_a_demo_persona_never_manages_or_lists_staff(role: Role) -> None:
+    # The demo's personas are public: their PIN is on the sign-in page. Real staff stay hidden.
+    assert can_manage_staff(role, persona=True) is False
+    assert can_list_staff(role, persona=True) is False
+
+
+def test_a_demo_persona_resets_nobody() -> None:
+    assert reset(Role.ADMIN, None, Role.STAFF_NURSE, PH, actor_persona=True) is False
+    assert reset(Role.HEAD_NURSE, PH, Role.STAFF_NURSE, PH, actor_persona=True) is False
 
 
 def test_head_nurse_resets_only_her_facilitys_nurses() -> None:

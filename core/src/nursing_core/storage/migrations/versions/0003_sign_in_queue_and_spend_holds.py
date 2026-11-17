@@ -90,6 +90,8 @@ def upgrade() -> None:
         op.f("ck_app_user_pin_failures_not_negative"), "app_user", "pin_failures >= 0"
     )
 
+    # A running API could add a session between the wipe and the new NOT NULL columns.
+    op.execute("LOCK TABLE session IN ACCESS EXCLUSIVE MODE")
     op.execute("DELETE FROM session")
     op.add_column("session", sa.Column("csrf_token", sa.Text(), nullable=False))
     op.add_column("session", _instant("pin_verified_at"))

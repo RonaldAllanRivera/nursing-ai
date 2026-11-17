@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.shifts import ShiftRef
 
-from .helpers import ADMIN, PH_STAFF, US_STAFF, MutableClock, post_note, sign_in
+from .helpers import ADMIN, PH_STAFF, US_STAFF, MutableClock, keep_open, post_note, sign_in
 
 PH_CASES = [case for case in load_demo_cases() if case.facility_key == "ph-demo"]
 US_CASES = [case for case in load_demo_cases() if case.facility_key == "us-demo"]
@@ -42,6 +42,7 @@ async def test_note_takes_the_sessions_shift_not_the_clocks(
     session_shift = ShiftRef.model_validate(signed_in.json()["shift"])
     assert session_shift.code == "6-2"
     clock.advance(timedelta(hours=1, minutes=10))
+    await keep_open(client)  # she charts late, but she has been at the keyboard all along
     response = await post_note(client, PH_CASE.patient_id, "late entry, pt comfortable")
     assert response.status_code == 202
     rough = await app.state.notes.get_rough_note(UUID(response.json()["rough_note_id"]))

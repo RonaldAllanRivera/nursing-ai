@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Request, Response, Security
 from nursing_core.demo import DEMO_PERSONAS
+from nursing_core.domain.errors import NotFound
 from nursing_core.domain.shifts import default_shift, shift_choices
 from nursing_core.domain.users import SessionGate
 from nursing_core.storage.repositories import SESSION_LIFETIME, StoredSession, StoredUser
@@ -71,6 +72,10 @@ async def start_session(
 ) -> SessionOut:
     """Signs in as a demo persona and sets the session cookie."""
     user = await users.get_user(body.persona_id)
+    if not user.persona:
+        # An invited person signs in with Google only: their id opens nothing here, and looks
+        # like an unknown one.
+        raise NotFound("no such persona")
     now = clock.now()
     shift = None
     if user.facility_key is not None:

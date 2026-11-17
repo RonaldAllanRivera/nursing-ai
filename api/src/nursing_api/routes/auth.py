@@ -24,7 +24,15 @@ async def google_start() -> Response:
     "/callback",
     status_code=302,
     response_class=RedirectResponse,
-    responses={302: {"headers": location_header("The app, or the sign-in page with ?error=")}},
+    responses={
+        302: {
+            "description": (
+                "To the app, or to /sign-in?error=no_access, /sign-in?error=expired or "
+                "/sign-in?error=cancelled (SignInError in schemas.py)"
+            ),
+            "headers": location_header("The app, or the sign-in page with ?error="),
+        }
+    },
 )
 async def google_callback() -> Response:
     """Google's redirect back: an invited person gets a session; anyone else, a reason."""

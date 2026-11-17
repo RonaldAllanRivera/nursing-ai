@@ -200,6 +200,8 @@ def test_site_url_is_an_origin(clean_env: pytest.MonkeyPatch, url: str) -> None:
         "ftp://demo.example.com",
         "localhost:5183",
         "https://",
+        "http://localhost:abc",
+        "http://localhost:99999",
     ],
 )
 def test_site_url_that_is_not_an_origin_is_refused(clean_env: pytest.MonkeyPatch, url: str) -> None:
@@ -267,3 +269,8 @@ def test_google_secret_never_in_repr(clean_env: pytest.MonkeyPatch) -> None:
     assert settings.google_client_secret.get_secret_value() == CANARY_GOOGLE_SECRET
     assert CANARY_GOOGLE_SECRET not in repr(settings)
     assert CANARY_GOOGLE_SECRET not in str(settings.model_dump())
+
+
+def test_bootstrap_admin_email_never_in_repr(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("BOOTSTRAP_ADMIN_EMAIL", "ward.admin@example.com")
+    assert "ward.admin@example.com" not in repr(Settings())  # pyright: ignore[reportCallIssue]

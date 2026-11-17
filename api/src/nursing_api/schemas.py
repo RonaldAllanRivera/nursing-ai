@@ -64,6 +64,13 @@ class PersonaOut(BaseModel):
     facility_name: str | None
 
 
+# What GET /api/v1/auth/google/callback sends the browser to /sign-in?error= with:
+# no_access: not invited, revoked, an unverified email, or another Google account for this email;
+# expired: this browser's sign-in attempt is gone or isn't its own (the state didn't match);
+# cancelled: Google answered with an error, such as the person backing out.
+SignInError = Literal["no_access", "expired", "cancelled"]
+
+
 class SignInOptionsOut(BaseModel):
     """What the sign-in page offers. Answered without the database, so a visitor (or a crawler)
     never wakes a paused one."""

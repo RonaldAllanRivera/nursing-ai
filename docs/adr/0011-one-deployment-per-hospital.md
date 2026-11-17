@@ -36,7 +36,7 @@ the worst kind of bug for this app: one hospital's patient notes shown to anothe
 
 **One deployment and one database per hospital.** There is no tenant id and no row-level
 multi-tenancy. A hospital with several sites or units has several `facility` rows in its own
-database; facilities share that hospital's staff list, its one admin account and its AI budget.
+database; facilities share that hospital's staff list, its admins and its AI budget.
 
 - The live Terraform root takes the environment's name (`environment`), which names every
   resource and secret path, so a second hospital is a second set of variables and state, not new

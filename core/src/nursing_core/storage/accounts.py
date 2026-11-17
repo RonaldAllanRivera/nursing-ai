@@ -26,6 +26,7 @@ class StoredUser(DomainModel):
     initials: str
     role: Role
     facility_key: str | None  # None for the admin
+    persona: bool  # a demo persona (no Google account, the published demo PIN)
 
 
 class StoredSession(DomainModel):
@@ -52,6 +53,7 @@ class PgUserRepository:
                         tables.app_user.c.display_name,
                         tables.app_user.c.initials,
                         tables.app_user.c.role,
+                        tables.app_user.c.persona,
                         tables.facility.c.key.label("facility_key"),
                     )
                     .select_from(
@@ -70,6 +72,7 @@ class PgUserRepository:
             initials=row.initials,
             role=Role(row.role),
             facility_key=row.facility_key,
+            persona=row.persona,
         )
 
 

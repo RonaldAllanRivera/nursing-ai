@@ -10,6 +10,7 @@ from uuid import UUID
 import httpx
 from fastapi import FastAPI
 from nursing_api.app import create_app
+from nursing_api.auth.oidc import GoogleOidc
 from nursing_api.routes import SESSION_COOKIE
 from nursing_api.settings import Settings
 from nursing_core.demo import DemoCase
@@ -18,7 +19,7 @@ from nursing_core.domain.shifts import default_shift
 from nursing_core.ports import LlmProvider
 from nursing_core.storage import tables
 from nursing_core.storage.rows import shift_columns
-from sqlalchemy import insert
+from sqlalchemy import insert, update
 
 # The demo night: 08:00 in Manila (the 6-2 shift) and 16:00 the day before in Los Angeles (7a-7p).
 NOW = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
@@ -55,17 +56,18 @@ async def running_app(
     app_env: str = "test",
     *,
     provider_for: Callable[[PatientRecord], LlmProvider] | None = None,
+    google: GoogleOidc | None = None,
     **settings_values: object,
 ) -> AsyncGenerator[FastAPI]:
     """The app with its lifespan running, on the given database and clock.
 
-    `provider_for` replaces the AI provider (tests never reach the network); extra keyword
-    arguments are more settings, such as `ai_mode="live"`.
+    `provider_for` replaces the AI provider and `google` the Google client (tests never reach the
+    network); extra keyword arguments are more settings, such as `ai_mode="live"`.
     """
     settings = Settings.model_validate(
         {"database_url": database_url, "app_env": app_env, **settings_values}
     )
-    app = create_app(settings, clock=clock, provider_for=provider_for)
+    app = create_app(settings, clock=clock, provider_for=provider_for, google=google)
     async with app.router.lifespan_context(app):
         yield app
 
@@ -120,6 +122,20 @@ async def sign_in(client: httpx.AsyncClient, persona_id: UUID) -> httpx.Response
     response = await client.get("/api/v1/session")
     assert response.status_code == 200, response.text
     return response
+
+
+async def keep_open(client: httpx.AsyncClient) -> None:
+    """Marks the signed-in session active now, for a test that moves the clock on purpose: past
+    the idle lock it would answer 423. It never moves the session's expiry."""
+    assert isinstance(client, AppClient), "use a client from client_for(app)"
+    state = client.app.state
+    token = client.cookies[SESSION_COOKIE.model.name]
+    async with state.engine.begin() as conn:
+        await conn.execute(
+            update(tables.session)
+            .where(tables.session.c.token_hash == hashlib.sha256(token.encode()).hexdigest())
+            .values(last_active_at=state.clock.now())
+        )
 
 
 async def post_note(

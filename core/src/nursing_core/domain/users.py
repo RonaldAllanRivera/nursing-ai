@@ -47,14 +47,18 @@ def can_see_facility(role: Role, own_facility_key: str | None, facility_key: str
     return own_facility_key is not None and own_facility_key == facility_key
 
 
-def can_manage_staff(role: Role) -> bool:
-    """Only the admin invites and revokes people."""
-    return role is Role.ADMIN
+# A demo persona's PIN is printed on the demo's sign-in page, so anyone can be one. None of the
+# staff rules below ever let a persona see, invite, revoke or unlock a real person.
 
 
-def can_list_staff(role: Role) -> bool:
-    """The admin sees everyone; a head nurse sees her facility's staff."""
-    return role in {Role.ADMIN, Role.HEAD_NURSE}
+def can_manage_staff(role: Role, *, persona: bool) -> bool:
+    """Only the admin invites and revokes people, and never the demo's admin persona."""
+    return role is Role.ADMIN and not persona
+
+
+def can_list_staff(role: Role, *, persona: bool) -> bool:
+    """The admin sees everyone; a head nurse sees her facility's staff. Personas see no one."""
+    return role in {Role.ADMIN, Role.HEAD_NURSE} and not persona
 
 
 def can_reset_pin(
@@ -62,6 +66,7 @@ def can_reset_pin(
     actor_role: Role,
     actor_facility: str | None,
     actor_id: UUID,
+    actor_persona: bool,
     target_role: Role,
     target_facility: str | None,
     target_id: UUID,
@@ -70,9 +75,10 @@ def can_reset_pin(
     """Who may reset whose locked PIN, in person.
 
     Nobody resets a persona (a visitor's wrong tries end only that visitor's session) or their
-    own PIN. The admin resets anyone else; a head nurse resets a nurse of her own facility.
+    own PIN, and a persona resets no one. The admin resets anyone else; a head nurse resets a
+    nurse of her own facility.
     """
-    if target_persona or target_id == actor_id:
+    if actor_persona or target_persona or target_id == actor_id:
         return False
     if actor_role is Role.ADMIN:
         return True

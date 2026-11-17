@@ -1,14 +1,14 @@
 """The P1 and P2 endpoints: declared and frozen in openapi.json."""
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, get_args
 
 import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from nursing_api.app import create_app
-from nursing_api.schemas import FacilityUpdateIn, InviteIn
+from nursing_api.schemas import FacilityUpdateIn, InviteIn, PinIn, SignInError
 from nursing_api.settings import Settings
 from nursing_core.demo import DEMO_PIN
 from nursing_core.domain.facility import FacilitySettings, preset
@@ -289,8 +289,11 @@ async def test_new_routes_answer_501_until_built(
     client: httpx.AsyncClient, method: str, path: str, body: Any, headers: dict[str, str]
 ) -> None:
     response = await client.request(method, path, json=body, headers=headers)
-    assert response.status_code == 501, response.text
-    assert response.json()["code"] == "not_implemented"
+    # Registered: never a 404 or 405. A stub answers 501; a built route answers anything else,
+    # so this stays true while the lanes build them.
+    assert response.status_code not in (404, 405), response.text
+    if response.status_code == 501:
+        assert response.json()["code"] == "not_implemented"
 
 
 def test_hidden_routes_are_not_in_openapi() -> None:
@@ -320,15 +323,16 @@ def test_contract_schemas_carry_the_p2_fields() -> None:
         assert code in schemas["Problem"]["properties"]["code"]["enum"]
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "pin", ["12345", "1234567", "12a456", "\uff11\uff12\uff13\uff14\uff15\uff16"]
 )
-async def test_a_pin_is_six_ascii_digits_at_the_door(client: httpx.AsyncClient, pin: str) -> None:
-    response = await client.post("/api/v1/session/pin", json={"pin": pin})
-    assert response.status_code == 422
-    assert response.json()["errors"][0]["field"] == "body.pin"
-    assert pin not in response.text
+def test_a_pin_is_six_ascii_digits_at_the_door(pin: str) -> None:
+    # The schema every PIN body uses (the routes check the session first, so test it here).
+    with pytest.raises(ValidationError) as refused:
+        PinIn.model_validate({"pin": pin})
+    assert refused.value.errors()[0]["loc"] == ("pin",)
+    assert pin not in str(refused.value)
+    assert PinIn.model_validate({"pin": DEMO_PIN}).pin == DEMO_PIN
 
 
 def test_saving_settings_never_keeps_the_pin() -> None:
@@ -363,3 +367,12 @@ async def test_unknown_field_is_never_echoed(client: httpx.AsyncClient) -> None:
     assert response.status_code == 422
     assert "Qorvex" not in response.text
     assert response.json()["errors"] == [{"field": "body", "message": "unknown field"}]
+
+
+def test_the_callbacks_sign_in_errors_are_frozen() -> None:
+    # The auth lane redirects with these and the web lane shows a message for each.
+    assert set(get_args(SignInError)) == {"no_access", "expired", "cancelled"}
+    paths = app().openapi()["paths"]
+    redirect = paths["/api/v1/auth/google/callback"]["get"]["responses"]["302"]
+    for value in get_args(SignInError):
+        assert f"error={value}" in redirect["description"]

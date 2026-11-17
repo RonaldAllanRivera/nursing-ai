@@ -382,3 +382,8 @@ async def test_a_formatter_error_never_prints_the_records_arguments(
     captured = capfd.readouterr()
     assert "Zorblat-canary-word" not in captured.out + captured.err
     assert "Traceback" not in captured.err
+
+
+def test_the_cloud_lanes_keys_are_allowed() -> None:
+    # The ops task, a job's claim count and the dependency a smoke check names: ids and words only.
+    assert {"task", "attempts", "dependency"} <= ALLOWED_KEYS

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     site_url: str | None = None
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
-    bootstrap_admin_email: str | None = None
+    bootstrap_admin_email: str | None = Field(default=None, repr=False)
     idle_lock_minutes: int = Field(default=5, ge=1, le=30)
     draft_queue_url: str | None = None
 
@@ -42,6 +42,10 @@ class Settings(BaseSettings):
         if value is None:
             return None
         parts = urlsplit(value)
+        try:
+            parts.port  # noqa: B018  # raises for a port that isn't a number from 0 to 65535
+        except ValueError:
+            raise ValueError("SITE_URL has a port that isn't a number") from None
         if (
             parts.scheme not in ("http", "https")
             or not parts.hostname

@@ -7,6 +7,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_core.demo import DEMO_PERSONAS
+from nursing_core.storage import tables
+from sqlalchemy import insert, select
 
 from .helpers import ADMIN, NOW, PH_STAFF, US_STAFF, MutableClock, client_for, running_app, sign_in
 
@@ -65,6 +67,34 @@ async def test_unknown_persona_is_404(client: httpx.AsyncClient) -> None:
     response = await client.post(SESSION, json={"persona_id": str(uuid4())})
     assert response.status_code == 404
     assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["code"] == "not_found"
+    assert "set-cookie" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_persona_sign_in_refuses_an_invited_user(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    # Only Google signs in an invited person: their id must not open a session here.
+    invited = uuid4()
+    async with app.state.engine.begin() as conn:
+        facility = (
+            await conn.execute(
+                select(tables.facility.c.id).where(tables.facility.c.key == "ph-demo")
+            )
+        ).scalar_one()
+        await conn.execute(
+            insert(tables.app_user).values(
+                id=invited,
+                display_name="nurse.b@example.com",
+                initials="NB",
+                role="staff_nurse",
+                facility_id=facility,
+                email="nurse.b@example.com",
+            )
+        )
+    response = await client.post(SESSION, json={"persona_id": str(invited)})
+    assert response.status_code == 404
     assert response.json()["code"] == "not_found"
     assert "set-cookie" not in response.headers
 

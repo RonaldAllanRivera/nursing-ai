@@ -30,6 +30,10 @@ ALLOWED_KEYS = frozenset(
         "note_id",
         "error_class",
         "ai_mode",
+        # The cloud lane's: an ops task's name, a job's claim count, a smoke check's dependency.
+        "task",
+        "attempts",
+        "dependency",
     }
 )
 # The Anthropic SDK logs whole requests at DEBUG, and SQLAlchemy logs statement parameters.

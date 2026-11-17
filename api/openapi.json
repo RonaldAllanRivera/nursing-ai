@@ -1651,7 +1651,7 @@
         "operationId": "google_callback_api_v1_auth_google_callback_get",
         "responses": {
           "302": {
-            "description": "Successful Response",
+            "description": "To the app, or to /sign-in?error=no_access, /sign-in?error=expired or /sign-in?error=cancelled (SignInError in schemas.py)",
             "headers": {
               "Location": {
                 "description": "The app, or the sign-in page with ?error=",
