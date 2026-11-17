@@ -105,8 +105,11 @@ if [ ${#tf_files[@]} -gt 0 ]; then
       # Strings and ${ } interpolations nest, and an interpolation may run over
       # several lines, so the state lives in a stack (stk, sp) kept across lines:
       # "S" is a string, "I" an interpolation (cnt[sp] counts its own braces).
-      # Inside a string, $${ and %%{ are literal, not an interpolation.
-      function scan(line,    i, n, c, c2, top, rest) {
+      # Inside a string only the three characters $${ and %%{ are literal (so
+      # "$$${" is a literal $ and then an interpolation). Comments and heredocs
+      # are recognised wherever the top of the stack is not a string, so also
+      # inside ${ }, where their quotes and braces must not move the stack.
+      function scan(line,    i, n, c, c2, c3, top, rest) {
         keep = ""; blank = ""
         n = length(line)
         for (i = 1; i <= n; i++) {
@@ -118,25 +121,27 @@ if [ ${#tf_files[@]} -gt 0 ]; then
           top = (sp > 0) ? stk[sp] : "C"
           if (top == "S") {                                # inside "..."
             if (c == "\\") { keep = keep c substr(line, i + 1, 1); i++; continue }
-            if (c2 == "$$" || c2 == "%%") { keep = keep c2; i++; continue }
+            c3 = substr(line, i, 3)                        # only the three characters $${ and %%{ are literal
+            if (c3 == "$${" || c3 == "%%{") { keep = keep c3; i += 2; continue }
             if (c2 == "${" || c2 == "%{") { sp++; stk[sp] = "I"; cnt[sp] = 0; keep = keep c2; i++; continue }
             keep = keep c
             if (c == "\"") { sp--; if (sp == 0) blank = blank c }
             continue
           }
-          if (sp == 0) {                                   # plain code, outside any string
+          {                                                # code: the top level or inside ${ }
             if (c == "#" || c2 == "//") break              # trailing comment
             if (c2 == "/*") { in_block = 1; i++; continue }
             if (c2 == "<<") {                              # heredoc: body starts next line
               rest = substr(line, i + 2)
               if (match(rest, /^-?[A-Za-z_][A-Za-z0-9_-]*/)) {
                 heredoc = substr(rest, 1, RLENGTH); sub(/^-/, "", heredoc)
-                keep = keep c2; blank = blank c2
+                keep = keep c2; if (sp == 0) blank = blank c2
                 i += 1 + RLENGTH
                 continue
               }
             }
-          } else {                                         # inside ${ }: code, braces counted
+          }
+          if (sp > 0) {                                    # inside ${ }: its own braces are counted
             if (c == "{") cnt[sp]++
             if (c == "}") { if (cnt[sp] == 0) { sp--; keep = keep c; continue } else cnt[sp]-- }
           }
@@ -144,9 +149,10 @@ if [ ${#tf_files[@]} -gt 0 ]; then
           keep = keep c
           if (sp == 0) blank = blank c
         }
-        # No HCL string spans lines: drop a string left open at the line end
-        # (an interpolation, which may span lines, is kept).
-        while (sp > 0 && stk[sp] == "S") sp--
+        # No valid HCL string spans lines (an interpolation may): a string still
+        # open at the line end means the scan lost track, so it is reported at
+        # the end, then dropped so one bad line does not hide the rest.
+        while (sp > 0 && stk[sp] == "S") { lost = 1; sp-- }
       }
       {
         sub(/\r$/, "")                                     # CRLF files
@@ -177,7 +183,7 @@ if [ ${#tf_files[@]} -gt 0 ]; then
       # Fail closed: a heredoc, comment, string, interpolation or resource still
       # open at the end, or braces that do not balance, means the scan lost track.
       END {
-        if (heredoc != "" || in_block || sp > 0 || inside || gdepth != 0) {
+        if (lost || heredoc != "" || in_block || sp > 0 || inside || gdepth != 0) {
           print file ": could not parse to the end (open heredoc, comment, string or resource, or unbalanced braces)"
           found = 1
         }
