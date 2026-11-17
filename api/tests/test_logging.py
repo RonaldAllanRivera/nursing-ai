@@ -13,7 +13,13 @@ import pytest
 import structlog
 from fastapi import FastAPI
 from nursing_api.app import create_app
-from nursing_api.logging import ALLOWED_KEYS, LIBRARY_EVENT, QUIET_LOGGERS, configure_logging
+from nursing_api.logging import (
+    ALLOWED_KEYS,
+    LIBRARY_EVENT,
+    QUIET_LOGGERS,
+    _only_allowed,  # pyright: ignore[reportPrivateUsage]
+    configure_logging,
+)
 from nursing_core.db import create_engine, ping
 from nursing_core.demo import DEMO_PIN, DemoCase, load_demo_cases
 
@@ -387,3 +393,16 @@ async def test_a_formatter_error_never_prints_the_records_arguments(
 def test_the_cloud_lanes_keys_are_allowed() -> None:
     # The ops task, a job's claim count and the dependency a smoke check names: ids and words only.
     assert {"task", "attempts", "dependency"} <= ALLOWED_KEYS
+
+
+def test_every_security_event_keeps_its_keys_through_the_filter() -> None:
+    events = {
+        "security.pin_failed": {"user_id": "u", "tries_left": 3},
+        "security.pin_locked": {"user_id": "u"},
+        "security.pin_reset": {"user_id": "u", "by_user_id": "v"},
+        "security.csrf_failed": {"user_id": "u"},
+        "security.sign_in_refused": {"reason": "token_invalid"},
+    }
+    for name, keys in events.items():
+        kept = _only_allowed(None, "warning", {"event": name, **keys})
+        assert kept == {"event": name, **keys}, name

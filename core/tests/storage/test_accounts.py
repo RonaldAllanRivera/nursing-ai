@@ -315,8 +315,8 @@ async def test_claims_run_out_after_five_and_the_lock_keeps_its_first_time(
 
     assert claims == [4, 3, 2, 1, 0, None]  # the sixth claim is refused: no sixth verify
     assert not (await users.get_user(user.id)).pin_locked  # a claim alone doesn't lock
-    await users.lock_pin(user.id, NOW)
-    await users.lock_pin(user.id, NOW + timedelta(hours=1))
+    assert await users.lock_pin(user.id, NOW)
+    assert not await users.lock_pin(user.id, NOW + timedelta(hours=1))  # already locked
     assert (await users.get_user(user.id)).pin_locked
     assert await users.claim_pin_try(user.id) is None
     async with engine.connect() as conn:
@@ -340,8 +340,28 @@ async def test_a_right_pin_clears_the_claims_but_never_on_a_locked_account(
     assert await users.clear_pin_failures(user.id)
 
     assert await users.claim_pin_try(user.id) == MAX_PIN_TRIES - 1
-    await users.lock_pin(user.id, NOW)
+    for _ in range(MAX_PIN_TRIES - 1):
+        await users.claim_pin_try(user.id)
+    assert await users.lock_pin(user.id, NOW)
     assert not await users.clear_pin_failures(user.id)  # a right guess racing the lock loses
+
+
+@pytest.mark.asyncio
+async def test_lock_pin_locks_only_when_the_tries_are_used_up(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    for _ in range(MAX_PIN_TRIES - 2):
+        await users.claim_pin_try(user.id)
+    assert not await users.lock_pin(user.id, NOW)  # three tries claimed: not locked
+    await users.claim_pin_try(user.id)
+    await users.claim_pin_try(user.id)
+    assert await users.clear_pin_failures(user.id)  # a right guess in between
+    assert not await users.lock_pin(user.id, NOW)  # a cleared counter is not locked
+    assert not (await users.get_user(user.id)).pin_locked
+    for _ in range(MAX_PIN_TRIES):
+        await users.claim_pin_try(user.id)
+    assert await users.lock_pin(user.id, NOW)
+    assert not await users.lock_pin(user.id, NOW)  # the second call reports False
 
 
 @pytest.mark.asyncio

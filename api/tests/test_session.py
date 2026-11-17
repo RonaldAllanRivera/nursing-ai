@@ -464,6 +464,7 @@ async def test_parallel_wrong_pins_never_verify_more_than_five(
     app: FastAPI,
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     user_id = await google_admin(app, client, pin=GOOGLE_PIN)
     verifies: list[str] = []
@@ -482,6 +483,7 @@ async def test_parallel_wrong_pins_never_verify_more_than_five(
     assert {a.status_code for a in answers} <= {403, 423}
     assert sum(a.json()["code"] == "pin_wrong" for a in answers) == MAX_PIN_TRIES - 1
     assert (await user_row(app, user_id)).pin_locked_at is not None
+    assert len(events(capfd.readouterr().out, "security.pin_locked")) == 1
     # A right guess after the lock still verifies nothing.
     before = len(verifies)
     assert (await client.post(UNLOCK, json={"pin": GOOGLE_PIN})).status_code == 423
@@ -513,3 +515,39 @@ async def test_pin_and_its_hash_never_in_logs_or_responses(
             assert secret not in answer.text
         if not answer.is_success:  # only a session answer issues the CSRF token
             assert csrf not in answer.text
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_counter_heals_into_a_real_lock(
+    app: FastAPI, client: httpx.AsyncClient, capfd: pytest.CaptureFixture[str]
+) -> None:
+    # The request that claimed the fifth try died before it could lock the account.
+    user_id = await google_admin(app, client, pin=GOOGLE_PIN)
+    async with app.state.engine.begin() as conn:
+        await conn.execute(
+            update(tables.app_user)
+            .where(tables.app_user.c.id == user_id)
+            .values(pin_failures=MAX_PIN_TRIES)
+        )
+
+    refused = await client.post(UNLOCK, json={"pin": GOOGLE_PIN})
+
+    assert (refused.status_code, refused.json()["code"]) == (423, "pin_locked")
+    assert (await user_row(app, user_id)).pin_locked_at is not None
+    assert (await client.get(SESSION)).json()["gate"] == "pin_locked"
+    assert len(events(capfd.readouterr().out, "security.pin_locked")) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_right_pin_between_wrong_ones_never_locks_early(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    user_id = await google_admin(app, client, pin=GOOGLE_PIN)
+    for _ in range(3):
+        await client.post(UNLOCK, json={"pin": WRONG})
+    assert (await client.post(UNLOCK, json={"pin": GOOGLE_PIN})).status_code == 200
+
+    wrong = await client.post(UNLOCK, json={"pin": WRONG})
+
+    assert (wrong.status_code, wrong.json()["tries_left"]) == (403, 4)
+    assert (await user_row(app, user_id)).pin_locked_at is None

@@ -59,6 +59,10 @@ async def prove_pin(
         if user.persona:
             await sessions.delete(signed_in.token)
             raise SessionEnded
+        # The tries are used up: make sure the lock is real (a request that claimed the fifth
+        # try may have died before it locked), and log it only if this call locked it.
+        if await users.lock_pin(user.id, clock.now()):
+            log.warning("security.pin_locked", user_id=str(user.id))
         raise SessionGated(SessionGate.PIN_LOCKED)
 
     stored = await users.pin_hash(user.id)
@@ -78,8 +82,8 @@ async def prove_pin(
         if user.persona:
             await sessions.delete(signed_in.token)  # her row never changes: this session ends
             raise SessionEnded
-        await users.lock_pin(user.id, clock.now())
-        log.warning("security.pin_locked", user_id=str(user.id))
+        if await users.lock_pin(user.id, clock.now()):
+            log.warning("security.pin_locked", user_id=str(user.id))
         raise SessionGated(SessionGate.PIN_LOCKED)
     log.warning("security.pin_failed", user_id=str(user.id), tries_left=left)
     raise PinWrong(left)

@@ -294,14 +294,25 @@ class PgUserRepository:
             )
         return None if failures is None else _tries_left(failures)
 
-    async def lock_pin(self, user_id: UUID, now: datetime) -> None:
-        """The fifth wrong PIN: locks the PIN at `now`, keeping the first lock's time."""
+    async def lock_pin(self, user_id: UUID, now: datetime) -> bool:
+        """Locks the PIN at `now` once its five tries are used up; says whether it locked.
+
+        Only the call that actually locks reports True (and logs the event): a PIN already
+        locked, or with tries left because a right guess cleared the counter, is not touched.
+        """
         async with self._engine.begin() as conn:
-            await conn.execute(
+            locked = await conn.scalar(
                 update(_USER)
-                .where(_USER.c.id == user_id, _USER.c.persona.is_(False))
-                .values(pin_locked_at=func.coalesce(_USER.c.pin_locked_at, now))
+                .where(
+                    _USER.c.id == user_id,
+                    _USER.c.persona.is_(False),
+                    _USER.c.pin_locked_at.is_(None),
+                    _USER.c.pin_failures >= MAX_PIN_TRIES,
+                )
+                .values(pin_locked_at=now)
+                .returning(_USER.c.id)
             )
+        return locked is not None
 
     async def clear_pin_failures(self, user_id: UUID) -> bool:
         """A right PIN: the tries start again, unless the PIN is locked (a right guess racing

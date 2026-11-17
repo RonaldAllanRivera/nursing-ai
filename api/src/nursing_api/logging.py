@@ -29,6 +29,9 @@ ALLOWED_KEYS = frozenset(
         "job_id",
         "user_id",
         "tries_left",
+        # Security events: a fixed reason word, and the id of who acted (never an email or PIN).
+        "reason",
+        "by_user_id",
         "note_id",
         "error_class",
         "ai_mode",
