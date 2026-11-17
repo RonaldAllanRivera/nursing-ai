@@ -33,11 +33,27 @@ export const personasQuery = queryOptions({
 });
 
 /**
+ * What the sign-in page offers. It never touches the database, so it is safe to ask on every
+ * screen (the demo banner reads it too). No retries: when it fails the screen falls back at once.
+ */
+export const signInOptionsQuery = queryOptions({
+  queryKey: ["sign-in-options"],
+  queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/sign-in-options", { signal })),
+  retry: false,
+  staleTime: 5 * 60_000,
+});
+
+/**
  * Nothing the last person saw may show for the next one: drop everything but who is signed in (and
- * the sign-in list), and every finished, pending or failed write (it holds her typed text).
+ * the sign-in list and options, which are not about a person), and every finished, pending or
+ * failed write (it holds her typed text).
  */
 export function clearPersonData(queryClient: QueryClient) {
-  const keep = new Set<unknown>([sessionKey[0], personasQuery.queryKey[0]]);
+  const keep = new Set<unknown>([
+    sessionKey[0],
+    personasQuery.queryKey[0],
+    signInOptionsQuery.queryKey[0],
+  ]);
   queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
   queryClient.getMutationCache().clear();
 }

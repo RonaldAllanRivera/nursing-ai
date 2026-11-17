@@ -16,7 +16,10 @@ export interface MockOptions {
   demo?: boolean;
   /** The gate a persona session starts at. Default "open" until the PIN screen exists. */
   personaGate?: "open" | "enter_pin";
-  /** Start signed in as this mock staff member (by id or email), at this gate (default open). */
+  /**
+   * Start signed in as this mock staff member (by id or email). The gate is derived from the user
+   * when omitted (PIN locked, no PIN yet, or enter PIN); `"open"` works for an active user with a PIN.
+   */
   account?: { user: string; gate?: AccountGate };
   /** The next rough note saved drafts to a failed job with this failure. */
   failDraft?: Schemas["JobFailure"];

@@ -13,6 +13,8 @@ import { PatientList } from "../patients/PatientList";
 import { PatientPage } from "../patients/PatientPage";
 import { SignIn } from "../session/SignIn";
 import { sessionQuery } from "../session/session";
+import { signInErrorFrom, type SignInError } from "../session/signInOptions";
+import { DemoBanner } from "./DemoBanner";
 import { ErrorScreen, NotFoundScreen, PendingScreen } from "./RouteScreens";
 import { Shell } from "./Shell";
 import { WakingNotice } from "./WakingNotice";
@@ -25,6 +27,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: () => (
     <>
       <WakingNotice />
+      <DemoBanner />
       <Outlet />
     </>
   ),
@@ -52,6 +55,11 @@ const indexRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sign-in",
+  // `error` is why Google sent her back; anything but the three known reasons is dropped.
+  validateSearch: (search: Record<string, unknown>): { error?: SignInError } => {
+    const error = signInErrorFrom(search);
+    return error ? { error } : {};
+  },
   component: SignIn,
 });
 

@@ -20,7 +20,9 @@ if (import.meta.env.MODE === "mock") {
   try {
     const { worker } = await import("./mocks/browser");
     await worker.start({ onUnhandledFrame: "bypass" });
-  } catch {
+  } catch (error) {
+    // Says why (a bad mock option, say) to whoever opens the console; it never holds a PIN or token.
+    console.error("Mock mode could not start.", error);
     mockFailed = true;
   }
 }

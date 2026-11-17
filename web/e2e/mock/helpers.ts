@@ -3,6 +3,19 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page } from "@playwright/test";
 
+// The page global the mock reads (MOCK_OPTIONS_GLOBAL in src/mocks/options.ts; the e2e project
+// does not import app code).
+const MOCK_OPTIONS_GLOBAL = "__SOURCELINE_MOCK__";
+
+/** The fields of the app's `MockOptions` a spec sets. */
+export interface MockOptions {
+  google?: boolean;
+  demo?: boolean;
+  personaGate?: "open" | "enter_pin";
+  account?: { user: string; gate?: "open" | "set_pin" | "enter_pin" | "pin_locked" };
+  failDraft?: string;
+}
+
 export const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 export const SARAH = "Staff nurse · Sarah Navarro, RN";
 export const EMILY = "Staff nurse · Emily Carter, RN";
@@ -105,6 +118,18 @@ export async function tabTo(page: Page, target: Locator, limit = 80) {
   }
   await expect(target).toBeFocused();
 }
+
+/** Sets the mock API's options for this page, before the app loads (call it before `page.goto`). */
+export async function setMockOptions(page: Page, options: MockOptions) {
+  await page.addInitScript(
+    ([name, value]) => {
+      (globalThis as Record<string, unknown>)[name as string] = value;
+    },
+    [MOCK_OPTIONS_GLOBAL, options] as const,
+  );
+}
+
+export const DEMO_BANNER_TEXT = "Synthetic patients only. Never type real patient details.";
 
 export async function signInAs(page: Page, persona: string, landing: string) {
   await page.goto("/sign-in");
