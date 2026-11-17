@@ -96,6 +96,7 @@ async def test_unsafe_request_without_csrf_header_is_403(client: httpx.AsyncClie
     del client.headers["X-CSRF-Token"]
     for response in (
         await client.put(f"{SESSION}/shift", json=SHIFT_BODY),
+        await client.patch(f"/api/v1/notes/{uuid4()}/lines/x", json={}),
         await client.delete(SESSION),
     ):
         assert response.status_code == 403

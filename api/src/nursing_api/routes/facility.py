@@ -117,7 +117,8 @@ async def update_facility(
 ) -> FacilityOut | Response:
     """The admin edits a facility's settings, with their PIN. Notes already written keep their
     shift."""
-    # Order: 401, 403 (the admin dependency), body 422 (the framework), 428, 404, 412, save.
+    # Order: 401, 403 (the admin dependency), body 422 (the framework), 428, 404, 412, then the
+    # PIN (403 pin_wrong, 423 pin_locked, or 401 when a persona's session ends), then the save.
     try:
         current = await checked_save(
             facility_key, if_match, body.pin, signed_in, facilities, users, sessions, clock

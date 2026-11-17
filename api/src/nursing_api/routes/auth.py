@@ -19,6 +19,7 @@ from nursing_core.storage.repositories import (
 from nursing_api.auth import oauth_cookie
 from nursing_api.auth.oauth_cookie import OAuthAttempt
 from nursing_api.auth.oidc import GoogleIdentity, GoogleOidc
+from nursing_api.auth.session_cookie import secure_cookies
 from nursing_api.deps import ClockDep, FacilitiesDep, SessionsDep, UsersDep
 from nursing_api.problems import problems
 from nursing_api.routes import location_header
@@ -44,10 +45,6 @@ def _challenge(verifier: str) -> str:
     """RFC 7636's S256: base64url(sha256(verifier)) without padding."""
     digest = hashlib.sha256(verifier.encode()).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-
-
-def _secure(settings: Settings) -> bool:
-    return settings.app_env in {"demo", "prod"}
 
 
 def _google(request: Request) -> tuple[GoogleOidc, Settings]:
@@ -98,7 +95,7 @@ def _finish(settings: Settings, location: str) -> RedirectResponse:
         path=oauth_cookie.PATH,
         httponly=True,
         samesite="lax",
-        secure=_secure(settings),
+        secure=secure_cookies(settings),
     )
     return response
 
@@ -134,7 +131,7 @@ async def google_start(request: Request, clock: ClockDep) -> Response:
         path=oauth_cookie.PATH,
         httponly=True,
         samesite="lax",
-        secure=_secure(settings),
+        secure=secure_cookies(settings),
     )
     return response
 

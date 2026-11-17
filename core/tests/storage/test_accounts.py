@@ -304,7 +304,7 @@ async def claim_all(users: PgUserRepository, user_id: UUID) -> list[int | None]:
 
 
 @pytest.mark.asyncio
-async def test_claims_run_out_after_five_and_the_lock_keeps_its_first_time(
+async def test_fifth_wrong_pin_locks_the_account(
     engine: AsyncEngine,
 ) -> None:
     users = PgUserRepository(engine)

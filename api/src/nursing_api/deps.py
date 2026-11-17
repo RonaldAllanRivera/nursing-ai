@@ -38,7 +38,8 @@ log = structlog.get_logger("nursing_api.deps")
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # The web polls this route while a draft is written; a poll is not the nurse being at the screen,
-# so it never counts as activity. Spotted by route template: jobs.py is not ours to change.
+# so it never counts as activity. The session dependency spots it by its route template, so the
+# poll's own route needs no flag and stays unaware of activity tracking.
 DRAFT_JOB_POLL = ("GET", "/api/v1/draft-jobs/{job_id}")
 
 

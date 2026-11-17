@@ -16,7 +16,7 @@ from nursing_core.storage.repositories import (
 from starlette.concurrency import run_in_threadpool
 
 from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
-from nursing_api.auth.session_cookie import set_session_cookie
+from nursing_api.auth.session_cookie import clear_session_cookie, set_session_cookie
 from nursing_api.deps import (
     ClockDep,
     FacilitiesDep,
@@ -37,12 +37,11 @@ from nursing_api.problems import (
     problems,
 )
 from nursing_api.routes import CSRF, SIGNED_IN
+from nursing_api.routes.options import personas_offered
 from nursing_api.schemas import PersonaOut, PinIn, SessionIn, SessionOut, ShiftChoiceIn
 from nursing_api.settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
-
-COOKIE = "sl_session"
 
 
 def session_out(
@@ -92,9 +91,8 @@ async def begin_session(
 
 
 def ensure_personas_offered(request: Request) -> None:
-    """The demo personas exist everywhere but `prod`, where they answer 404 like unknown ones."""
-    settings: Settings = request.app.state.settings
-    if settings.app_env == "prod":
+    """Where the demo personas are not offered (`prod`), they answer 404 like unknown ones."""
+    if not personas_offered(request.app.state.settings):
         raise NotFound("no such persona")
 
 
@@ -168,7 +166,7 @@ async def end_session(
     # Signing out is 204 with or without a session, and the cookie is cleared either way.
     if signed_in is not None:
         await sessions.delete(signed_in.token)
-    response.delete_cookie(COOKIE, path="/", httponly=True, samesite="lax")
+    clear_session_cookie(response)
 
 
 async def open_answer(

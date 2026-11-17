@@ -1,5 +1,6 @@
 """Reading a draft note, reviewing its lines, signing it into the record, or discarding it."""
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -11,9 +12,11 @@ from nursing_core.domain.facility import FacilitySettings
 from nursing_core.domain.hashing import SignedContent, content_hash, signed_content
 from nursing_core.domain.notes import NoteStatus, unresolved_line_ids
 from nursing_core.domain.units import Ucum
+from nursing_core.domain.users import Role
 from nursing_core.storage import tables
 from sqlalchemy import func, select
 
+from .fake_google import add_google_user
 from .helpers import (
     ADMIN,
     PH_HEAD,
@@ -590,3 +593,76 @@ async def test_wrong_pin_on_sign_counts_toward_the_lock(
         await sign_in(other, PH_STAFF)
         signed = await other.post(url(note_id, "/sign"), json=SIGN, headers=ifm(version))
         assert signed.status_code == 200, signed.text
+
+
+GOOGLE_PIN = "246813"
+UNLOCK = "/api/v1/session/unlock"
+
+
+async def google_nurse(app: FastAPI, client: httpx.AsyncClient) -> UUID:
+    """An invited Google-kind staff nurse of the PH demo facility, with her own PIN and an open
+    session on `client` (her row written through the table)."""
+    user_id = await add_google_user(
+        app, "pat.nurse@example.com", Role.STAFF_NURSE, "ph-demo", pin=GOOGLE_PIN, sub="sub-pat"
+    )
+    await sign_in(client, user_id)
+    return user_id
+
+
+async def pin_locked_at(app: FastAPI, user_id: UUID) -> object:
+    async with app.state.engine.connect() as conn:
+        return await conn.scalar(
+            select(tables.app_user.c.pin_locked_at).where(tables.app_user.c.id == user_id)
+        )
+
+
+def locked_events(out: str) -> list[dict[str, Any]]:
+    lines = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    return [line for line in lines if line.get("event") == "security.pin_locked"]
+
+
+@pytest.mark.asyncio
+async def test_a_google_nurses_fifth_wrong_pin_on_sign_locks_her_pin(
+    app: FastAPI, client: httpx.AsyncClient, capfd: pytest.CaptureFixture[str]
+) -> None:
+    user_id = await google_nurse(app, client)
+    note_id = await make_draft(app, client)
+    version = (await confirm_flagged(client, note_id)).json()["version"]
+
+    answers = [
+        await client.post(url(note_id, "/sign"), json=WRONG_PIN, headers=ifm(version))
+        for _ in range(5)
+    ]
+
+    assert [a.status_code for a in answers] == [403, 403, 403, 403, 423]
+    assert [a.json().get("tries_left") for a in answers[:4]] == [4, 3, 2, 1]
+    assert answers[4].json()["code"] == "pin_locked"
+    assert await pin_locked_at(app, user_id) == app.state.clock.now()
+    assert [e["user_id"] for e in locked_events(capfd.readouterr().out)] == [str(user_id)]
+    # Locked, unlike a persona's ended session: even her right PIN signs nothing now.
+    right = await client.post(url(note_id, "/sign"), json={"pin": GOOGLE_PIN}, headers=ifm(version))
+    assert (right.status_code, right.json()["code"]) == (423, "pin_locked")
+    async with client_for(app) as other:
+        await sign_in(other, PH_STAFF)
+        assert (await other.get(url(note_id))).json()["status"] == "draft"
+
+
+@pytest.mark.asyncio
+async def test_wrong_pins_on_unlock_and_on_sign_add_up_to_one_lock(
+    app: FastAPI, client: httpx.AsyncClient, capfd: pytest.CaptureFixture[str]
+) -> None:
+    user_id = await google_nurse(app, client)
+    note_id = await make_draft(app, client)
+    version = (await confirm_flagged(client, note_id)).json()["version"]
+
+    unlocks = [await client.post(UNLOCK, json=WRONG_PIN) for _ in range(2)]
+    signs = [
+        await client.post(url(note_id, "/sign"), json=WRONG_PIN, headers=ifm(version))
+        for _ in range(3)
+    ]
+
+    assert [(a.status_code, a.json()["tries_left"]) for a in unlocks] == [(403, 4), (403, 3)]
+    assert [(a.status_code, a.json()["tries_left"]) for a in signs[:2]] == [(403, 2), (403, 1)]
+    assert (signs[2].status_code, signs[2].json()["code"]) == (423, "pin_locked")
+    assert await pin_locked_at(app, user_id) is not None
+    assert [e["user_id"] for e in locked_events(capfd.readouterr().out)] == [str(user_id)]

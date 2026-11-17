@@ -14,9 +14,9 @@ from nursing_core.ports import Clock
 from nursing_core.storage.repositories import PgSessionRepository, PgUserRepository
 from starlette.concurrency import run_in_threadpool
 
+from nursing_api.auth.session_cookie import clear_session_cookie
 from nursing_api.deps import SignedIn
 from nursing_api.problems import NotSignedIn, PinWrong, SessionGated, problem_response
-from nursing_api.routes import SESSION_COOKIE
 
 log = structlog.get_logger("nursing_api.auth.pin_check")
 
@@ -29,7 +29,7 @@ class SessionEnded(NotSignedIn):
 def session_ended_response() -> Response:
     """401 `not_signed_in` with the session cookie cleared."""
     response = problem_response(401, "not_signed_in")
-    response.delete_cookie(SESSION_COOKIE.model.name, path="/", httponly=True, samesite="lax")
+    clear_session_cookie(response)
     return response
 
 
