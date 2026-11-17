@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from nursing_api.app import create_app
 from nursing_api.ops import OpsResult
+from nursing_api.routes import events
 from nursing_api.settings import Settings
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import DatabaseWaking
@@ -172,3 +173,23 @@ async def test_ops_answer_is_the_task_ok_and_failed_names_with_500_when_not_ok()
         500,
         {"task": "smoke", "ok": False, "failed": ["sqs"]},
     )
+
+
+@pytest.mark.asyncio
+async def test_events_route_is_closed_for_any_role_but_worker_and_ops() -> None:
+    """Even if the router were registered on an API app, nothing runs a job or a task."""
+    settings = Settings(database_url=UNUSED, app_role="api")
+    app = create_app(settings)
+    app.include_router(events.router)
+    app.state.settings = settings
+    app.state.worker = AsyncMock()
+    app.state.ops = AsyncMock()
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        answers = [
+            await client.post("/events", json=records(message(uuid4()))),
+            await client.post("/events", json={"task": "migrate"}),
+        ]
+    assert [a.status_code for a in answers] == [501, 501]
+    app.state.worker.run.assert_not_called()
+    app.state.ops.run.assert_not_called()

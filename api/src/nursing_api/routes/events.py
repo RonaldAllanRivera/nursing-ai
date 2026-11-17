@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from nursing_api.ops import TASKS, Ops
+from nursing_api.problems import not_built
 from nursing_api.worker import DraftWorker
 
 log = structlog.get_logger("nursing_api.events")
@@ -52,10 +53,7 @@ async def _ops_answer(request: Request) -> Response:
     )
 
 
-@router.post("/events")
-async def handle_events(request: Request) -> Response:
-    if request.app.state.settings.app_role == "ops":
-        return await _ops_answer(request)
+async def _worker_answer(request: Request) -> Response:
     try:
         payload: object = await request.json()
     except ValueError as error:
@@ -67,3 +65,15 @@ async def handle_events(request: Request) -> Response:
         # worker's attempts) answers 5xx, so SQS delivers the message again later.
         await worker.run(job_id)
     return Response(status_code=200)
+
+
+@router.post("/events")
+async def handle_events(request: Request) -> Response:
+    # Each role is routed by name; any other answers 501 and runs nothing.
+    match request.app.state.settings.app_role:
+        case "ops":
+            return await _ops_answer(request)
+        case "worker":
+            return await _worker_answer(request)
+        case _:
+            return not_built()

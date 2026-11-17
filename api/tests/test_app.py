@@ -173,3 +173,38 @@ def test_app_imports_without_the_type_stubs() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True
     )
     assert done.returncode == 0, done.stderr[-500:]
+
+
+LIVE = {"ai_mode": "live", "ai_monthly_cap_usd": "5"}
+QUEUE_URL = "https://sqs.example.com/123456789012/jobs"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("role", "queue_url"), [("api", QUEUE_URL), ("ops", None)])
+async def test_roles_that_never_draft_start_in_live_mode_without_a_key(
+    database_url: str, role: Literal["api", "ops"], queue_url: str | None
+) -> None:
+    settings = Settings.model_validate(
+        {"database_url": database_url, "app_role": role, "draft_queue_url": queue_url, **LIVE}
+    )
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        assert not hasattr(app.state, "worker")
+
+
+@pytest.mark.parametrize(
+    ("role", "queue_url"), [("worker", None), ("worker", QUEUE_URL), ("api", None)]
+)
+def test_roles_that_draft_still_refuse_live_mode_without_a_key(
+    role: str, queue_url: str | None
+) -> None:
+    settings = Settings.model_validate(
+        {
+            "database_url": "postgresql+asyncpg://u@localhost/x",
+            "app_role": role,
+            "draft_queue_url": queue_url,
+            **LIVE,
+        }
+    )
+    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+        create_app(settings)

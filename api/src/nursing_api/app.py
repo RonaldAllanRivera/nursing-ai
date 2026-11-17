@@ -1,6 +1,7 @@
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from fastapi import FastAPI
 from nursing_core.clock import SystemClock
@@ -42,6 +43,11 @@ from nursing_api.settings import Settings
 from nursing_api.worker import DraftWorker
 
 
+async def _never_drafts(job_id: UUID) -> None:
+    """The queue's `run` for a role that enqueues or idles but never drafts here."""
+    raise RuntimeError("this role does not draft")
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -63,8 +69,14 @@ def create_app(
     resolved = settings
     the_clock: Clock = clock if clock is not None else SystemClock()
     configure_logging()
-    # Fails here, before serving, when live mode has no cap or key.
-    check_live_settings(resolved)
+    # Only a role that drafts here (the worker, or an API on the in-process queue) calls the
+    # model: the others never need the key, so live mode must not stop them starting.
+    drafts = resolved.app_role == "worker" or (
+        resolved.app_role == "api" and not resolved.draft_queue_url
+    )
+    if drafts:
+        # Fails here, before serving, when live mode has no cap or key.
+        check_live_settings(resolved)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -82,17 +94,20 @@ def create_app(
         app.state.facilities = PgFacilityRepository(engine, the_clock)
         app.state.patients = PgPatientRepository(engine, the_clock)
         app.state.notes = PgNoteRepository(engine, the_clock)
-        worker = DraftWorker(
-            app.state.notes,
-            app.state.patients,
-            app.state.usage,
-            the_clock,
-            provider_factory(resolved, app.state.usage, the_clock, provider_for),
-            emit_ai_spend if resolved.app_role == "worker" else None,
-        )
-        app.state.worker = worker
+        run: Callable[[UUID], Awaitable[None]] = _never_drafts
+        if drafts:
+            worker = DraftWorker(
+                app.state.notes,
+                app.state.patients,
+                app.state.usage,
+                the_clock,
+                provider_factory(resolved, app.state.usage, the_clock, provider_for),
+                emit_ai_spend if resolved.app_role == "worker" else None,
+            )
+            app.state.worker = worker
+            run = worker.run
         app.state.ops = Ops(resolved, engine, the_clock)
-        queue = build_queue(resolved, worker.run, app.state.notes)
+        queue = build_queue(resolved, run, app.state.notes)
         app.state.queue = queue
         try:
             await queue.start(resolved.db_ping_timeout_s)

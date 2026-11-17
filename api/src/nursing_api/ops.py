@@ -25,7 +25,6 @@ from nursing_core.ports import Clock
 from nursing_core.storage.migrate import upgrade
 from nursing_core.storage.seed import seed
 from sqlalchemy import text
-from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from nursing_api.aws.clients import dual_stack_client
@@ -188,10 +187,7 @@ class Ops:
         return OpsResult("smoke", ok=not failed, failed=failed)
 
     async def _ping_database(self) -> None:
-        host = make_url(self._settings.database_url).host
-        if not host:
-            raise ValueError("the database URL has no host")
-        await asyncio.to_thread(self._network.resolve_ipv6, host)
+        # Aurora sits inside the VPC and is IPv4: only the outbound dependencies need IPv6.
         async with self._engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
 

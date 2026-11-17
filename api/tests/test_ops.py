@@ -164,3 +164,25 @@ async def test_seed_demo_refused_outside_demo(app_env: str) -> None:
     result = await ops.run("seed-demo")
     assert (result.ok, result.failed, result.refused) == (False, ["seed-demo"], True)
     seed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_database_check_needs_no_ipv6_and_names_the_database_when_the_engine_fails(
+    database_url: str,
+) -> None:
+    """Aurora is inside the VPC and IPv4: only the outbound dependencies must have IPv6."""
+    network = FakeNetwork(no_ipv6={"localhost", "127.0.0.1", "db.example.com"})
+    settings = Settings.model_validate(
+        {"database_url": database_url, "app_role": "ops", "draft_queue_url": QUEUE_URL}
+    )
+    environ = {"SITE_URL_SSM_PARAMETER": SITE_PARAMETER}
+    answers: dict[str, list[str]] = {}
+    for name, url in (("up", database_url), ("down", "postgresql+asyncpg://u@127.0.0.1:1/x")):
+        engine = create_async_engine(url, connect_args={"timeout": 2})
+        ssm, sqs, _, _ = stubbed_clients()
+        ops = Ops(
+            settings, engine, FixedClock(NOW), network=network, ssm=ssm, sqs=sqs, environ=environ
+        )
+        answers[name] = (await ops.run("smoke")).failed
+        await engine.dispose()
+    assert answers == {"up": [], "down": ["database"]}
