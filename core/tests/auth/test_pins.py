@@ -52,3 +52,5 @@ def test_verify_pin_right_wrong_and_garbage_hash() -> None:
     assert verify_pin(pin_hash, "135791") is False
     assert verify_pin("not-a-hash", DEMO_PIN) is False
     assert verify_pin("", DEMO_PIN) is False
+    assert verify_pin("\u00e9" + pin_hash, DEMO_PIN) is False
+    assert verify_pin(pin_hash, "\ud800") is False

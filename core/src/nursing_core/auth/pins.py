@@ -49,5 +49,5 @@ def verify_pin(pin_hash: str, pin: str) -> bool:
     """True only when `pin` matches `pin_hash`; a wrong PIN or a malformed hash is False."""
     try:
         return _HASHER.verify(pin_hash, pin)
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
+    except (VerifyMismatchError, VerificationError, InvalidHashError, UnicodeError):
         return False
