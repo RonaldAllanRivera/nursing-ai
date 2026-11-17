@@ -11,7 +11,7 @@ any check raises: nothing here is "mostly valid".
 """
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import aclosing
 from typing import Any, Protocol, cast
 from urllib.parse import urlencode
@@ -29,6 +29,8 @@ ISSUERS = ["https://accounts.google.com", "accounts.google.com"]
 SCOPE = "openid email profile"
 SIGNING_ALGORITHMS = ["RS256"]
 KEY_REFRESH_SECONDS = 60
+# Our clock and Google's may differ a little: `iat` and `exp` are judged within this much.
+CLOCK_DRIFT_SECONDS = 60
 HTTP_TIMEOUT_SECONDS = 10.0
 
 
@@ -55,11 +57,17 @@ class AuthlibGoogleOidc:
     """The `GoogleOidc` port against the real Google (or, in a test, a stand-in transport)."""
 
     def __init__(
-        self, client_id: str, client_secret: str, *, transport: object | None = None
+        self,
+        client_id: str,
+        client_secret: str,
+        *,
+        transport: object | None = None,
+        now: Callable[[], int] | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._transport = transport
+        self._now = now  # seconds since the epoch; None is the real time
         self._endpoints: tuple[str, str] | None = None  # (token_endpoint, jwks_uri)
         self._keys: KeySet | None = None
         self._keys_fetched_at = 0.0
@@ -138,6 +146,8 @@ class AuthlibGoogleOidc:
             token = _decode(id_token, await self._key_set(refresh=True))
         claims = token.claims
         registry = jwt.JWTClaimsRegistry(
+            now=self._now,
+            leeway=CLOCK_DRIFT_SECONDS,
             iss={"essential": True, "values": ISSUERS},
             aud={"essential": True, "value": self._client_id},
             exp={"essential": True},
@@ -145,10 +155,7 @@ class AuthlibGoogleOidc:
             email={"essential": True},
             nonce={"essential": True, "value": nonce},
         )
-        try:
-            registry.validate(claims)
-        except JoseError as error:
-            raise InvalidIdToken("the ID token's claims are not ours") from error
+        registry.validate(claims)  # raises joserfc's own error naming the claim that failed
         name = claims.get("name")
         return GoogleIdentity(
             sub=str(claims["sub"]),

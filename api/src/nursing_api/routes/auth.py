@@ -72,15 +72,21 @@ def _initials(name: str) -> str:
 
 
 def _refuse(
-    settings: Settings, error: SignInError, reason: Reason | None, user_id: object | None = None
+    settings: Settings,
+    error: SignInError,
+    reason: Reason | None,
+    user_id: object | None = None,
+    error_class: str | None = None,
 ) -> Response:
     """Back to the sign-in page with a reason, no session, and the attempt's cookie gone.
 
     The log line holds a fixed reason word and, when we know her, the user's id: never an email,
-    a `sub`, a code, a state or a token.
+    a `sub`, a code, a state or a token. `error_class` is the failure's class name only.
     """
     if reason is not None:
         details = {} if user_id is None else {"user_id": str(user_id)}
+        if error_class is not None:
+            details["error_class"] = error_class
         log.warning("security.sign_in_refused", reason=reason, **details)
     return _finish(settings, f"{settings.site_url}/sign-in?error={error}")
 
@@ -166,7 +172,11 @@ async def google_callback(
         request.cookies.get(oauth_cookie.NAME), secret=_secret(settings), now=now
     )
     state = query.get("state")
-    if attempt is None or state is None or not hmac.compare_digest(attempt.state, state):
+    if (
+        attempt is None
+        or state is None
+        or not hmac.compare_digest(attempt.state.encode(), state.encode())
+    ):
         return _refuse(settings, "expired", "state_mismatch")
     code = query.get("code")
     if not code:
@@ -178,8 +188,9 @@ async def google_callback(
             redirect_uri=f"{settings.site_url}{CALLBACK_PATH}",
         )
         identity = await google.verify_id_token(id_token, nonce=attempt.nonce)
-    except Exception:  # a refused code, a bad token or an unreachable Google: she tries again
-        return _refuse(settings, "expired", "token_invalid")
+    except Exception as error:  # a refused code, a bad token or an unreachable Google
+        # She tries again; the log says what kind of failure it was (never its message).
+        return _refuse(settings, "expired", "token_invalid", error_class=type(error).__name__)
     if not identity.email_verified:
         return _refuse(settings, "no_access", "email_unverified")
     return await _sign_in(identity, settings, now, users, sessions, facilities)

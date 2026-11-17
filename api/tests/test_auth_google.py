@@ -1,7 +1,10 @@
 """Signing in with Google: the start and callback routes, run against the real verifier and a
 local fake Google (no test reaches the network)."""
 
+import base64
+import hashlib
 import json
+import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -12,6 +15,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from joserfc.errors import JoseError
 from nursing_api.auth.google import AuthlibGoogleOidc
 from nursing_api.logging import ALLOWED_KEYS
 from nursing_core.domain.users import Role
@@ -195,9 +199,12 @@ async def test_callback_with_another_browsers_state_is_refused(
     missing = await gclient.get(CALLBACK, params={"code": code})
     assert_refused(missing, "expired")
 
-    out = capfd.readouterr().out
-    logged = events(out)
-    assert [e["reason"] for e in logged] == ["state_mismatch"] * 3
+    await gclient.get(START)  # each refusal ended the attempt: begin another
+    odd = await gclient.get(CALLBACK, params={"code": code, "state": "é"})
+    assert_refused(odd, "expired")  # a state that isn't ASCII is a mismatch, never a crash
+
+    logged = events(capfd.readouterr().out)
+    assert [e["reason"] for e in logged] == ["state_mismatch"] * 4
     assert all(set(e) <= ALLOWED_KEYS for e in logged)
     # The code was never exchanged.
     assert [r for r in fake.requests if r[1].endswith("/token")] == []
@@ -559,3 +566,102 @@ async def test_sign_in_logs_carry_no_email_code_state_nonce_or_token(
     for secret in ("sam.nurse", "stranger", code, query["state"], query["nonce"], "sub-sam"):
         assert secret not in out
     assert [e["reason"] for e in events(out)] == ["token_invalid", "no_access"]
+
+
+async def verified(
+    fake: FakeGoogle, nonce: str = "n", *, expected_nonce: str = "n", **grant: Any
+) -> Any:
+    """Runs the real exchange and verifier against the fake, with no app or database."""
+    google = AuthlibGoogleOidc(CLIENT_ID, CLIENT_SECRET, transport=fake.transport)
+    verifier = "v" * 64
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+    code = fake.grant(
+        nonce=nonce,
+        code_challenge=challenge.rstrip(b"=").decode(),
+        sub="sub-1",
+        email="a@example.com",
+        **grant,
+    )
+    token = await google.exchange(code=code, code_verifier=verifier, redirect_uri="http://x/cb")
+    return await google.verify_id_token(token, nonce=expected_nonce)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("grant", "expected_nonce", "error"),
+    [
+        ({"iss": "https://evil.example.com"}, "n", "InvalidClaimError"),
+        ({"aud": "someone-else.example.com"}, "n", "InvalidClaimError"),
+        ({"expires_in": -600}, "n", "ExpiredTokenError"),
+        ({}, "another-nonce", "InvalidClaimError"),
+        ({"extra": {"email": None}}, "n", "MissingClaimError"),
+        ({"sign_with": "foreign"}, "n", "InvalidKeyIdError"),
+    ],
+    ids=["issuer", "audience", "expired", "nonce", "no_email", "signature"],
+)
+async def test_the_verifier_names_what_was_wrong_with_the_token(
+    fake: FakeGoogle, grant: dict[str, Any], expected_nonce: str, error: str
+) -> None:
+    grant = {k: (fake.foreign_key() if v == "foreign" else v) for k, v in grant.items()}
+    with pytest.raises(JoseError) as caught:
+        await verified(fake, expected_nonce=expected_nonce, **grant)
+    assert type(caught.value).__name__ == error
+
+
+@pytest.mark.asyncio
+async def test_a_minute_of_clock_drift_is_tolerated_but_not_more(fake: FakeGoogle) -> None:
+    now = int(time.time())
+    identity = await verified(fake, extra={"iat": now + 30})
+    assert identity.email == "a@example.com"
+    with pytest.raises(JoseError) as caught:
+        await verified(fake, extra={"iat": now + 90})
+    assert type(caught.value).__name__ == "InvalidClaimError"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_token_logs_the_error_class(
+    gclient: httpx.AsyncClient, fake: FakeGoogle, capfd: pytest.CaptureFixture[str]
+) -> None:
+    capfd.readouterr()
+    await google_sign_in(gclient, fake, email="a@example.com", aud="other.example.com")
+    logged = events(capfd.readouterr().out)
+    assert [(e["reason"], e["error_class"]) for e in logged] == [
+        ("token_invalid", "InvalidClaimError")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_successful_sign_in_logs_no_session_csrf_email_sub_code_or_state(
+    gapp: FastAPI,
+    gclient: httpx.AsyncClient,
+    fake: FakeGoogle,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    await add_google_user(gapp, "sam.nurse@example.com", Role.STAFF_NURSE, "us-demo")
+    started = await gclient.get(START)
+    query = query_of(started.headers["location"])
+    code = fake.grant(
+        nonce=query["nonce"],
+        code_challenge=query["code_challenge"],
+        sub="sub-sam-secret",
+        email="sam.nurse@example.com",
+    )
+    capfd.readouterr()
+
+    done = await gclient.get(CALLBACK, params={"code": code, "state": query["state"]})
+    assert done.headers["location"] == f"{SITE_URL}/"
+    session = (await gclient.get(SESSION)).json()
+
+    out = capfd.readouterr().out
+    secrets_ = [
+        gclient.cookies["sl_session"],
+        session["csrf_token"],
+        "sam.nurse",
+        "sub-sam-secret",
+        code,
+        query["state"],
+        query["nonce"],
+    ]
+    for secret in secrets_:
+        assert secret not in out
+    assert events(out, "security.sign_in_refused") == []
