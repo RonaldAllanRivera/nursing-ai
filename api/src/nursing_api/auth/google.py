@@ -3,7 +3,8 @@
 `authorization_url` is plain string work and uses Google's documented endpoint. `exchange` and
 `verify_id_token` use the discovery document's `token_endpoint` and `jwks_uri`, fetched the first
 time they are needed and kept on the instance, with the keys. Google rotates its keys, so a token
-that names a key we don't hold fetches the key set again (at most once a minute).
+whose signature check fails for any reason (a key we don't hold, or a bad signature alike) fetches
+the key set again (at most once a minute) and is checked once more.
 
 Authlib's httpx integration runs on `httpx2` here, so this module never imports `httpx`; a test
 hands in an HTTP transport of that library instead of reaching Google. An ID token that fails

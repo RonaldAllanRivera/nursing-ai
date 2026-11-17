@@ -44,22 +44,29 @@ token.
   hole has no Google token to steal.
 - **The session is a cookie.** It is httpOnly (scripts cannot read it) and `SameSite=Lax`, and
   Secure in the demo and in production. Each session also has its own random CSRF token, returned
-  when the session is read. Every POST, PUT, PATCH and DELETE must send it back in a header, which
-  is compared in constant time; a missing or wrong one is a 403 and a security event. The session
-  lasts the facility's configured number of hours from sign-in, and an unlock never extends it.
+  when the session is read. Every POST, PUT, PATCH and DELETE made with a session must send it
+  back in a header, which is compared in constant time; a missing or wrong one is a 403 and a
+  security event. Starting a session is exempt: a demo persona's `POST /api/v1/session` has no
+  session yet whose token it could send (Google's callback is a GET). The session lasts the
+  facility's configured number of hours from sign-in, and an unlock never extends it.
 - **The start route reads no database.** The auto-pausing database stays asleep when a crawler or
   a stray visitor opens the sign-in link. Every absolute URL, the callback included, comes from the
   configured site address, never from the `Host` header.
 - **PKCE, state and nonce travel in one short cookie.** The start route makes a random state, nonce
   and PKCE verifier and puts them in `sl_oauth`: httpOnly, `SameSite=Lax`, limited to the callback's
   path, valid for ten minutes and signed with a key derived from the Google client secret, so a
-  page on another site cannot plant an attempt of its own. The callback opens it, deletes it in the
-  same answer, so it works once, and refuses a state that does not match. Google is asked with the
-  S256 challenge and `prompt=select_account`.
+  page on another site cannot plant an attempt of its own. The callback opens it, refuses a state
+  that does not match, and tells the browser to delete it in the same answer. Only the browser
+  forgets it: the sealed value itself stays valid until its ten minutes are up, and a sign-in that
+  ends in an unexpected server error (a 500) does not delete it at all. Google's authorization
+  code, which works once and only with the PKCE verifier, is what keeps an attempt from being
+  used twice. Google is asked with the S256 challenge and `prompt=select_account`.
 - **The ID token is checked in full.** The signature against Google's published keys (fetched on
-  first use and again, at most once a minute, when a token names a key we do not hold), then the
-  issuer, the audience (our client), the expiry with a minute of allowed clock drift, the nonce, and
-  that the email is verified. A token that fails any check is refused; nothing is "mostly valid".
+  first use and kept; a token whose signature check fails for any reason, a key we do not hold or
+  a bad signature alike, makes us fetch the keys again, at most once a minute, and check it once
+  more), then the issuer, the audience (our client), the expiry with a minute of allowed clock
+  drift, the nonce, and that the email is verified. A token that fails any check is refused;
+  nothing is "mostly valid".
 - **Access is by invitation only.** An invite is a user row with an email, a role and a facility.
   The email is matched in lower case. A visitor who is not invited, was revoked, or has an
   unverified email gets a generic "no access" page and no session. At the first sign-in the row
@@ -67,8 +74,9 @@ token.
   differs is refused. This stops a recycled or transferred email address from inheriting a nurse's
   account. A revoked row ends its sessions but is **kept**, because signed notes point at their
   author. Rows are never deleted. A bootstrap admin email becomes the admin at its first sign-in,
-  and only while no active admin exists. Only the admin invites and revokes, and cannot revoke
-  themselves. Demo personas never list, invite, revoke or reset anyone.
+  and only while no active Google admin exists (the demo's admin persona does not count). Only the
+  admin invites and revokes, and cannot revoke themselves. Demo personas never list, invite,
+  revoke or reset anyone.
 
 ### The PIN, and why Google cannot force a fresh sign-in
 
@@ -126,6 +134,16 @@ walked-away ward PC would never lock.
 - **A shared ward PC is safer, not safe.** The idle lock and the PIN limit how long a walked-away
   screen can be used, and a signature always needs a fresh PIN. They do not stop a nurse who tells
   someone her PIN.
+- **The first PIN is trusted on first use.** A nurse who has no PIN yet, and whose Google account
+  is still signed in on a shared PC, can be signed in as by the next person at that PC, who then
+  chooses the PIN and acts as her. To narrow that window, a session waiting for its first PIN
+  ends once the idle lock has passed since the sign-in: choosing the PIN then answers 401, the
+  cookie is cleared, and she signs in again. The window is those few minutes, not the whole
+  session. Passkeys or a badge tap could close it later.
+- **Proving the PIN gives the session a new token.** Setting the PIN and unlocking both move the
+  session to a new random token and set the cookie again; its expiry and its CSRF token stay. A
+  cookie copied while the session waited for its PIN opens nothing afterwards. A request already
+  in flight with the old cookie at that moment gets a 401.
 - **A sole admin who locks their own PIN has no way back.** A head nurse cannot reset an admin, and
   there is no email reset. Invite a second admin before relying on the app.
 - **The live Google client is separate work.** The code is built and tested against the fake.
