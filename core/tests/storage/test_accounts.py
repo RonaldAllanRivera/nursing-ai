@@ -2,7 +2,7 @@
 
 import hashlib
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from nursing_core.auth.pins import MAX_PIN_TRIES, hash_pin, verify_pin
@@ -299,20 +299,26 @@ async def test_bootstrap_admin_only_while_no_active_admin(engine: AsyncEngine) -
     assert made.role is Role.ADMIN
 
 
+async def claim_all(users: PgUserRepository, user_id: UUID) -> list[int | None]:
+    return [await users.claim_pin_try(user_id) for _ in range(MAX_PIN_TRIES + 1)]
+
+
 @pytest.mark.asyncio
-async def test_fifth_wrong_pin_locks_the_account(engine: AsyncEngine) -> None:
+async def test_claims_run_out_after_five_and_the_lock_keeps_its_first_time(
+    engine: AsyncEngine,
+) -> None:
     users = PgUserRepository(engine)
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
-    await users.set_pin(user.id, hash_pin("246813"))
-    assert (await users.get_user(user.id)).has_pin
+    assert await users.set_pin(user.id, hash_pin("246813"))
 
-    left = [await users.record_pin_failure(user.id, NOW) for _ in range(MAX_PIN_TRIES - 1)]
+    claims = await claim_all(users, user.id)
 
-    assert left == [4, 3, 2, 1]
-    assert not (await users.get_user(user.id)).pin_locked
-    assert await users.record_pin_failure(user.id, NOW) == 0
+    assert claims == [4, 3, 2, 1, 0, None]  # the sixth claim is refused: no sixth verify
+    assert not (await users.get_user(user.id)).pin_locked  # a claim alone doesn't lock
+    await users.lock_pin(user.id, NOW)
+    await users.lock_pin(user.id, NOW + timedelta(hours=1))
     assert (await users.get_user(user.id)).pin_locked
-    assert await users.record_pin_failure(user.id, NOW + timedelta(hours=1)) == 0  # not below 0
+    assert await users.claim_pin_try(user.id) is None
     async with engine.connect() as conn:
         locked_at = (
             await conn.execute(
@@ -323,15 +329,43 @@ async def test_fifth_wrong_pin_locks_the_account(engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_pin_failures_zeroes_the_counter(engine: AsyncEngine) -> None:
+async def test_a_right_pin_clears_the_claims_but_never_on_a_locked_account(
+    engine: AsyncEngine,
+) -> None:
     users = PgUserRepository(engine)
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
-    await users.record_pin_failure(user.id, NOW)
-    await users.record_pin_failure(user.id, NOW)
+    await users.claim_pin_try(user.id)
+    await users.claim_pin_try(user.id)
 
-    await users.clear_pin_failures(user.id)
+    assert await users.clear_pin_failures(user.id)
 
-    assert await users.record_pin_failure(user.id, NOW) == MAX_PIN_TRIES - 1
+    assert await users.claim_pin_try(user.id) == MAX_PIN_TRIES - 1
+    await users.lock_pin(user.id, NOW)
+    assert not await users.clear_pin_failures(user.id)  # a right guess racing the lock loses
+
+
+@pytest.mark.asyncio
+async def test_a_persona_never_uses_the_user_level_counter(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    await seed(engine, CLOCK)
+    persona = DEMO_PERSONAS[0]
+
+    assert await users.claim_pin_try(persona.id) is None
+    assert not await users.clear_pin_failures(persona.id)
+    await users.lock_pin(persona.id, NOW)
+    assert not (await users.get_user(persona.id)).pin_locked
+
+
+@pytest.mark.asyncio
+async def test_set_pin_writes_only_while_none_is_set(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    first, second = hash_pin("246813"), hash_pin("135790")
+
+    assert await users.set_pin(user.id, first)
+    assert not await users.set_pin(user.id, second)
+
+    assert await users.pin_hash(user.id) == first
 
 
 @pytest.mark.asyncio
@@ -340,7 +374,7 @@ async def test_the_pin_hash_is_read_apart_and_never_in_a_repr(engine: AsyncEngin
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
     assert await users.pin_hash(user.id) is None
 
-    await users.set_pin(user.id, hash_pin("246813"))
+    assert await users.set_pin(user.id, hash_pin("246813"))
 
     stored = await users.pin_hash(user.id)
     assert stored is not None
@@ -356,7 +390,8 @@ async def test_reset_pin_clears_the_lock_and_ends_the_sessions(engine: AsyncEngi
     user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
     await users.set_pin(user.id, hash_pin("246813"))
     for _ in range(MAX_PIN_TRIES):
-        await users.record_pin_failure(user.id, NOW)
+        await users.claim_pin_try(user.id)
+    await users.lock_pin(user.id, NOW)
     session = await sessions.create(user.id, None, NOW, 12)
 
     reset = await users.reset_pin(user.id)
@@ -364,7 +399,7 @@ async def test_reset_pin_clears_the_lock_and_ends_the_sessions(engine: AsyncEngi
     assert (reset.has_pin, reset.pin_locked) == (False, False)
     assert await users.pin_hash(user.id) is None
     assert await sessions.get(session.token, NOW) is None
-    assert await users.record_pin_failure(user.id, NOW) == MAX_PIN_TRIES - 1
+    assert await users.claim_pin_try(user.id) == MAX_PIN_TRIES - 1
 
 
 @pytest.mark.asyncio
@@ -445,13 +480,28 @@ async def test_touch_verify_and_session_pin_failures(engine: AsyncEngine) -> Non
     assert verified is not None
     assert verified.pin_verified_at == later
     assert verified.expires_at == NOW + timedelta(hours=12)  # an unlock never extends it
-    left = [await repo.record_session_pin_failure(new.token) for _ in range(MAX_PIN_TRIES)]
-    assert left == [4, 3, 2, 1, 0]
-    assert await repo.record_session_pin_failure(new.token) == 0
-    assert await repo.record_session_pin_failure("not-a-token") == 0
-    failed = await repo.get(new.token, later)
+
+
+@pytest.mark.asyncio
+async def test_session_claims_run_out_after_five_and_a_right_pin_clears_them(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    new = await repo.create(world.nurse_id, None, NOW, 12)
+
+    assert [await repo.claim_session_pin_try(new.token) for _ in range(2)] == [4, 3]
+    assert await repo.clear_session_pin_failures(new.token)
+    cleared = await repo.get(new.token, NOW)
+    assert cleared is not None
+    assert cleared.pin_failures == 0
+    left = [await repo.claim_session_pin_try(new.token) for _ in range(MAX_PIN_TRIES + 1)]
+    assert left == [4, 3, 2, 1, 0, None]
+    assert await repo.claim_session_pin_try("not-a-token") is None
+    assert not await repo.clear_session_pin_failures("not-a-token")
+    failed = await repo.get(new.token, NOW)
     assert failed is not None
-    assert failed.pin_failures == MAX_PIN_TRIES + 1
+    assert failed.pin_failures == MAX_PIN_TRIES  # the refused sixth claim changed nothing
 
 
 @pytest.mark.asyncio

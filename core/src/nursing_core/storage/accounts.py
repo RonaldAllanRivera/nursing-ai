@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, Field
-from sqlalchemy import Select, case, delete, func, insert, select, update
+from sqlalchemy import Select, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -258,44 +258,66 @@ class PgUserRepository:
         async with self._engine.begin() as conn:
             return await conn.scalar(select(_USER.c.pin_hash).where(_USER.c.id == user_id))
 
-    async def set_pin(self, user_id: UUID, pin_hash: str) -> None:
+    async def set_pin(self, user_id: UUID, pin_hash: str) -> bool:
         """Stores a PIN hash the caller made (hashing is slow: it runs off the event loop).
 
-        The caller has checked the PIN and that none is set.
+        Writes only while no PIN is set, and says whether it wrote: two requests racing to set
+        the first PIN can't both win. The caller has checked the PIN's format.
         """
         async with self._engine.begin() as conn:
-            await conn.execute(
+            written = await conn.scalar(
                 update(_USER)
-                .where(_USER.c.id == user_id)
+                .where(_USER.c.id == user_id, _USER.c.pin_hash.is_(None))
                 .values(pin_hash=pin_hash, pin_failures=0, pin_locked_at=None)
+                .returning(_USER.c.id)
             )
+        return written is not None
 
-    async def record_pin_failure(self, user_id: UUID, now: datetime) -> int:
-        """Counts one wrong PIN and returns the tries left; the fifth locks the PIN at `now`."""
+    async def claim_pin_try(self, user_id: UUID) -> int | None:
+        """Takes one of the user's five tries before the PIN is verified; returns the tries left
+        if this guess is wrong, or None when no try is left (the PIN is locked, or the user is
+        a persona, whose tries count on the session).
+
+        Claiming first is what bounds parallel guessing: only five requests can ever verify.
+        """
         async with self._engine.begin() as conn:
             failures = await conn.scalar(
                 update(_USER)
-                .where(_USER.c.id == user_id)
-                .values(
-                    pin_failures=_USER.c.pin_failures + 1,
-                    pin_locked_at=case(
-                        (
-                            _USER.c.pin_failures + 1 >= MAX_PIN_TRIES,
-                            func.coalesce(_USER.c.pin_locked_at, now),
-                        ),
-                        else_=_USER.c.pin_locked_at,
-                    ),
+                .where(
+                    _USER.c.id == user_id,
+                    _USER.c.persona.is_(False),
+                    _USER.c.pin_locked_at.is_(None),
+                    _USER.c.pin_failures < MAX_PIN_TRIES,
                 )
+                .values(pin_failures=_USER.c.pin_failures + 1)
                 .returning(_USER.c.pin_failures)
             )
-        if failures is None:
-            raise NotFound("no such user")
-        return _tries_left(failures)
+        return None if failures is None else _tries_left(failures)
 
-    async def clear_pin_failures(self, user_id: UUID) -> None:
-        """A right PIN: the wrong-try counter starts again."""
+    async def lock_pin(self, user_id: UUID, now: datetime) -> None:
+        """The fifth wrong PIN: locks the PIN at `now`, keeping the first lock's time."""
         async with self._engine.begin() as conn:
-            await conn.execute(update(_USER).where(_USER.c.id == user_id).values(pin_failures=0))
+            await conn.execute(
+                update(_USER)
+                .where(_USER.c.id == user_id, _USER.c.persona.is_(False))
+                .values(pin_locked_at=func.coalesce(_USER.c.pin_locked_at, now))
+            )
+
+    async def clear_pin_failures(self, user_id: UUID) -> bool:
+        """A right PIN: the tries start again, unless the PIN is locked (a right guess racing
+        the fifth wrong one must not unlock it). Says whether it cleared."""
+        async with self._engine.begin() as conn:
+            cleared = await conn.scalar(
+                update(_USER)
+                .where(
+                    _USER.c.id == user_id,
+                    _USER.c.persona.is_(False),
+                    _USER.c.pin_locked_at.is_(None),
+                )
+                .values(pin_failures=0)
+                .returning(_USER.c.id)
+            )
+        return cleared is not None
 
     async def reset_pin(self, user_id: UUID) -> StoredUser:
         """Clears the PIN and its lock, and ends the user's sessions.
@@ -388,16 +410,31 @@ class PgSessionRepository:
                 .values(pin_verified_at=now, last_active_at=now)
             )
 
-    async def record_session_pin_failure(self, token: str) -> int:
-        """Counts one wrong PIN on this session and returns the tries left (0 if no session)."""
+    async def claim_session_pin_try(self, token: str) -> int | None:
+        """Takes one of this session's five tries before the PIN is verified (a persona's tries
+        count here); returns the tries left if the guess is wrong, or None when the session is
+        unknown or has none left."""
         async with self._engine.begin() as conn:
             failures = await conn.scalar(
                 update(_SESSION)
-                .where(_SESSION.c.token_hash == _hash(token))
+                .where(
+                    _SESSION.c.token_hash == _hash(token), _SESSION.c.pin_failures < MAX_PIN_TRIES
+                )
                 .values(pin_failures=_SESSION.c.pin_failures + 1)
                 .returning(_SESSION.c.pin_failures)
             )
-        return 0 if failures is None else _tries_left(failures)
+        return None if failures is None else _tries_left(failures)
+
+    async def clear_session_pin_failures(self, token: str) -> bool:
+        """A right PIN: this session's tries start again. False when the session is gone."""
+        async with self._engine.begin() as conn:
+            cleared = await conn.scalar(
+                update(_SESSION)
+                .where(_SESSION.c.token_hash == _hash(token))
+                .values(pin_failures=0)
+                .returning(_SESSION.c.user_id)
+            )
+        return cleared is not None
 
     async def delete(self, token: str) -> None:
         async with self._engine.begin() as conn:

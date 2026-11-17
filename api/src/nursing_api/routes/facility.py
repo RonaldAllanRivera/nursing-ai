@@ -7,7 +7,8 @@ from nursing_core.domain.shifts import shift_choices
 from nursing_core.domain.users import can_see_facility
 from nursing_core.ports import Clock
 
-from nursing_api.deps import AdminDep, ClockDep, FacilitiesDep, SignedInDep
+from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
+from nursing_api.deps import AdminDep, ClockDep, FacilitiesDep, SessionsDep, SignedInDep, UsersDep
 from nursing_api.problems import PreconditionRequired, not_built, problems
 from nursing_api.routes import CSRF, SIGNED_IN, etag_header
 from nursing_api.schemas import FacilityOut, FacilityUpdateIn, PinIn
@@ -73,8 +74,11 @@ async def update_facility(
     admin: AdminDep,
     clock: ClockDep,
     facilities: FacilitiesDep,
+    users: UsersDep,
+    sessions: SessionsDep,
+    signed_in: SignedInDep,
     if_match: IfMatch = None,
-) -> FacilityOut:
+) -> FacilityOut | Response:
     """The admin edits a facility's settings, with their PIN. Notes already written keep their
     shift."""
     # Order: 401, 403 (the admin dependency), body 422 (the framework), 428, 404, 412, save.
@@ -84,6 +88,10 @@ async def update_facility(
     if if_match != etag(current.version):
         # Only the exact current ETag passes; a race is caught by the repository's own check.
         raise StaleVersion("the facility has changed")
+    try:
+        await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
+    except SessionEnded:
+        return session_ended_response()
     saved = await facilities.update_facility(
         facility_key, body.settings(), current.version, changed_by=admin.id
     )

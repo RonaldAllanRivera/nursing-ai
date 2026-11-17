@@ -1,10 +1,15 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Request, Response
+from nursing_core.auth.pins import PinRefused, check_new_pin, hash_pin
 from nursing_core.demo import DEMO_PERSONAS
 from nursing_core.domain.errors import NotFound
 from nursing_core.domain.shifts import default_shift, shift_choices
 from nursing_core.domain.users import SessionGate
 from nursing_core.storage.repositories import SESSION_LIFETIME, StoredSession, StoredUser
+from starlette.concurrency import run_in_threadpool
 
+from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
 from nursing_api.deps import (
     ClockDep,
     FacilitiesDep,
@@ -12,10 +17,18 @@ from nursing_api.deps import (
     MaybeSessionDep,
     NurseDep,
     SessionsDep,
+    SignedIn,
     UsersDep,
     gate_of,
 )
-from nursing_api.problems import FieldError, NotSignedIn, not_built, problem_response, problems
+from nursing_api.problems import (
+    FieldError,
+    NotSignedIn,
+    PinAlreadySet,
+    SessionGated,
+    problem_response,
+    problems,
+)
 from nursing_api.routes import CSRF, SIGNED_IN
 from nursing_api.schemas import PersonaOut, PinIn, SessionIn, SessionOut, ShiftChoiceIn
 from nursing_api.settings import Settings
@@ -122,15 +135,51 @@ async def end_session(
     response.delete_cookie(COOKIE, path="/", httponly=True, samesite="lax")
 
 
+async def open_answer(
+    signed_in: SignedIn, request: Request, users: UsersDep, sessions: SessionsDep, now: datetime
+) -> SessionOut:
+    """The session as it stands after its PIN was proved: re-read, so the gate is the real one."""
+    session = await sessions.get(signed_in.token, now)
+    if session is None:  # ended in the meantime
+        raise NotSignedIn
+    user = await users.get_user(signed_in.user.id)
+    settings: Settings = request.app.state.settings
+    return session_out(user, session, gate_of(user, session, now, settings), settings)
+
+
 @router.post(
     "/session/pin",
     response_model=SessionOut,
     responses=problems(401, 403, 409, 422),
     dependencies=[*SIGNED_IN, *CSRF],
 )
-async def set_pin(body: PinIn) -> Response:
+async def set_pin(
+    body: PinIn,
+    request: Request,
+    signed_in: GatedSessionDep,
+    clock: ClockDep,
+    users: UsersDep,
+    sessions: SessionsDep,
+) -> SessionOut | Response:
     """After the first Google sign-in: choose a six-digit PIN (409 when one is already set)."""
-    return not_built()
+    if signed_in.gate is not SessionGate.SET_PIN:
+        raise PinAlreadySet
+    try:
+        check_new_pin(body.pin)
+    except PinRefused as refused:
+        message = "a PIN is six digits" if refused.reason == "format" else "that PIN is too easy"
+        return problem_response(
+            422,
+            "invalid_request",
+            "see errors",
+            errors=[FieldError(field="body.pin", message=message)],
+        )
+    pin_hash = await run_in_threadpool(hash_pin, body.pin)
+    if not await users.set_pin(signed_in.user.id, pin_hash):  # another request set one first
+        raise PinAlreadySet
+    now = clock.now()
+    await sessions.mark_pin_verified(signed_in.token, now)
+    return await open_answer(signed_in, request, users, sessions, now)
 
 
 @router.post(
@@ -139,9 +188,24 @@ async def set_pin(body: PinIn) -> Response:
     responses=problems(401, 403, 409, 422, 423),
     dependencies=[*SIGNED_IN, *CSRF],
 )
-async def unlock(body: PinIn) -> Response:
+async def unlock(
+    body: PinIn,
+    request: Request,
+    signed_in: GatedSessionDep,
+    clock: ClockDep,
+    users: UsersDep,
+    sessions: SessionsDep,
+) -> SessionOut | Response:
     """The PIN after a sign-in or the idle lock. A wrong one is 403 with the tries left."""
-    return not_built()
+    if signed_in.gate in {SessionGate.SET_PIN, SessionGate.PIN_LOCKED}:
+        raise SessionGated(signed_in.gate)
+    try:
+        await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
+    except SessionEnded:
+        return session_ended_response()
+    now = clock.now()
+    await sessions.mark_pin_verified(signed_in.token, now)
+    return await open_answer(signed_in, request, users, sessions, now)
 
 
 @router.put(

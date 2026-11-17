@@ -324,3 +324,32 @@ async def test_oversized_timezone_is_invalid_not_a_crash(
     response = await client.put(PH, json=body, headers=match(1))
     assert response.status_code == 422
     assert response.json()["errors"][0]["field"] == "body.timezone"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_needs_the_pin(app: FastAPI, client: httpx.AsyncClient) -> None:
+    await sign_in(client, ADMIN)
+    body = await settings_of(client)
+    body["name"] = "Renamed SYNTHETIC"
+
+    wrong = await client.put(PH, json=body | {"pin": "864209"}, headers=match(1))
+    stale = await client.put(PH, json=body | {"pin": "864209"}, headers=match(7))
+    missing = await client.put(PH, json=without_pin(body), headers=match(1))
+
+    assert (wrong.status_code, wrong.json()["code"], wrong.json()["tries_left"]) == (
+        403,
+        "pin_wrong",
+        4,
+    )
+    assert (stale.status_code, missing.status_code) == (412, 422)  # If-Match first; the schema
+    assert (await client.get(PH)).json()["version"] == 1  # nothing was saved
+    saved = await client.put(PH, json=body, headers=match(1))
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["version"] == 2
+    assert len(await history(app, "ph-demo")) == 2
+    # Five wrong PINs on saves end the admin persona's session.
+    answers = [
+        await client.put(PH, json=body | {"pin": "864209"}, headers=match(2)) for _ in range(5)
+    ]
+    assert [a.status_code for a in answers] == [403, 403, 403, 403, 401]
+    assert (await client.get(PH)).status_code == 401

@@ -28,6 +28,7 @@ ALLOWED_KEYS = frozenset(
         "duration_ms",
         "job_id",
         "user_id",
+        "tries_left",
         "note_id",
         "error_class",
         "ai_mode",

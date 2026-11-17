@@ -14,7 +14,17 @@ from nursing_core.domain.units import Ucum
 from nursing_core.storage import tables
 from sqlalchemy import func, select
 
-from .helpers import ADMIN, PH_HEAD, PH_STAFF, US_STAFF, MutableClock, drain, post_note, sign_in
+from .helpers import (
+    ADMIN,
+    PH_HEAD,
+    PH_STAFF,
+    US_STAFF,
+    MutableClock,
+    client_for,
+    drain,
+    post_note,
+    sign_in,
+)
 
 SIGN = {"pin": DEMO_PIN}
 
@@ -526,3 +536,57 @@ async def test_a_malformed_line_action_is_422(
     assert response.json()["code"] == "invalid_request"
     assert "HR" not in response.text
     assert (await client.get(url(note_id))).json()["version"] == 1
+
+
+WRONG_PIN = {"pin": "864209"}
+
+
+@pytest.mark.asyncio
+async def test_sign_needs_the_right_pin(app: FastAPI, client: httpx.AsyncClient) -> None:
+    await sign_in(client, PH_STAFF)
+    note_id = await make_draft(app, client)
+
+    # The PIN is checked after If-Match and before the review check: this draft still has
+    # lines that need her, yet a wrong PIN is 403 (not 409), and a stale one is 412 first.
+    wrong = await client.post(url(note_id, "/sign"), json=WRONG_PIN, headers=V1)
+    stale = await client.post(url(note_id, "/sign"), json=WRONG_PIN, headers=ifm(9))
+    assert (wrong.status_code, wrong.json()["code"], wrong.json()["tries_left"]) == (
+        403,
+        "pin_wrong",
+        4,
+    )
+    assert (stale.status_code, stale.json()["code"]) == (412, "stale_version")
+    assert (await client.get(url(note_id))).json()["status"] == "draft"
+    unreviewed = await client.post(url(note_id, "/sign"), json=SIGN, headers=V1)
+    assert (unreviewed.status_code, unreviewed.json()["code"]) == (409, "review_incomplete")
+
+    confirmed = await confirm_flagged(client, note_id)
+    version = confirmed.json()["version"]
+    refused = await client.post(url(note_id, "/sign"), json=WRONG_PIN, headers=ifm(version))
+    assert (refused.status_code, refused.json()["tries_left"]) == (403, 4)  # the right one cleared
+    signed = await client.post(url(note_id, "/sign"), json=SIGN, headers=ifm(version))
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["status"] == "signed"
+
+
+@pytest.mark.asyncio
+async def test_wrong_pin_on_sign_counts_toward_the_lock(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    await sign_in(client, PH_STAFF)
+    note_id = await make_draft(app, client)
+    version = (await confirm_flagged(client, note_id)).json()["version"]
+
+    answers = [
+        await client.post(url(note_id, "/sign"), json=WRONG_PIN, headers=ifm(version))
+        for _ in range(5)
+    ]
+
+    assert [a.status_code for a in answers] == [403, 403, 403, 403, 401]
+    assert [a.json().get("tries_left") for a in answers[:4]] == [4, 3, 2, 1]
+    assert "max-age=0" in answers[4].headers["set-cookie"].lower()
+    assert (await client.get(url(note_id))).status_code == 401  # the session ended
+    async with client_for(app) as other:  # a fresh session of hers still signs it
+        await sign_in(other, PH_STAFF)
+        signed = await other.post(url(note_id, "/sign"), json=SIGN, headers=ifm(version))
+        assert signed.status_code == 200, signed.text
