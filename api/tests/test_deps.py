@@ -11,7 +11,7 @@ from nursing_api.providers import provider_factory
 from nursing_api.settings import Settings
 from nursing_core.clock import FixedClock
 from nursing_core.domain.shifts import ShiftRef
-from nursing_core.domain.users import Role, UserStatus
+from nursing_core.domain.users import Role, SessionGate, UserStatus
 from nursing_core.providers.fake import FakeProvider
 from nursing_core.storage.accounts import StoredSession, StoredUser
 from nursing_core.storage.repositories import PgUsageRepository
@@ -60,7 +60,7 @@ def test_the_token_is_not_in_a_signed_in_repr() -> None:
         last_active_at=NOW,
         pin_failures=0,
     )
-    shown = repr(SignedIn(user=user, session=session, token=TOKEN))
+    shown = repr(SignedIn(user=user, session=session, gate=SessionGate.OPEN, token=TOKEN))
     assert TOKEN not in shown
     assert CSRF not in shown
 

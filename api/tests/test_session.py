@@ -53,8 +53,8 @@ async def test_session_answer_carries_its_csrf_token_gate_and_limits(
     started = await client.post(SESSION, json={"persona_id": str(PH_STAFF)})
     body = started.json()
     assert (body["kind"], body["idle_lock_seconds"]) == ("persona", 300)
-    # The gate stays open until the lane that builds the PIN computes it.
-    assert body["gate"] == "open"
+    # A persona has a PIN but has not typed it in this session yet.
+    assert body["gate"] == "enter_pin"
     assert len(body["csrf_token"]) >= 43
     assert body["csrf_token"] not in started.headers["set-cookie"]
     assert datetime.fromisoformat(body["expires_at"]) == clock.now() + timedelta(hours=12)

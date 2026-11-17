@@ -1,6 +1,4 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Request, Response, Security
+from fastapi import APIRouter, Request, Response
 from nursing_core.demo import DEMO_PERSONAS
 from nursing_core.domain.errors import NotFound
 from nursing_core.domain.shifts import default_shift, shift_choices
@@ -10,13 +8,15 @@ from nursing_core.storage.repositories import SESSION_LIFETIME, StoredSession, S
 from nursing_api.deps import (
     ClockDep,
     FacilitiesDep,
+    GatedSessionDep,
+    MaybeSessionDep,
     NurseDep,
     SessionsDep,
-    SignedInDep,
     UsersDep,
+    gate_of,
 )
 from nursing_api.problems import FieldError, NotSignedIn, not_built, problem_response, problems
-from nursing_api.routes import CSRF, SESSION_COOKIE, SIGNED_IN
+from nursing_api.routes import CSRF, SIGNED_IN
 from nursing_api.schemas import PersonaOut, PinIn, SessionIn, SessionOut, ShiftChoiceIn
 from nursing_api.settings import Settings
 
@@ -25,7 +25,9 @@ router = APIRouter(prefix="/api/v1", tags=["session"])
 COOKIE = "sl_session"
 
 
-def session_out(user: StoredUser, session: StoredSession, settings: Settings) -> SessionOut:
+def session_out(
+    user: StoredUser, session: StoredSession, gate: SessionGate, settings: Settings
+) -> SessionOut:
     return SessionOut(
         user_id=user.id,
         display_name=user.display_name,
@@ -33,10 +35,8 @@ def session_out(user: StoredUser, session: StoredSession, settings: Settings) ->
         role=user.role,
         facility_key=user.facility_key,
         shift=session.shift,
-        # Only personas sign in until Google sign-in is built; the gate stays open until the PIN
-        # is (both in the p2-auth lane).
-        kind="persona",
-        gate=SessionGate.OPEN,
+        kind="persona" if user.persona else "google",
+        gate=gate,
         csrf_token=session.csrf_token,
         expires_at=session.expires_at,
         idle_lock_seconds=settings.idle_lock_minutes * 60,
@@ -97,26 +97,28 @@ async def start_session(
         samesite="lax",
         secure=settings.app_env in {"demo", "prod"},
     )
-    return session_out(user, session, settings)
+    return session_out(user, session, gate_of(user, session, now, settings), settings)
 
 
 @router.get("/session", response_model=SessionOut, responses=problems(401), dependencies=SIGNED_IN)
-async def get_session(signed_in: SignedInDep, request: Request) -> SessionOut:
-    return session_out(signed_in.user, signed_in.session, request.app.state.settings)
+async def get_session(signed_in: GatedSessionDep, request: Request) -> SessionOut:
+    return session_out(
+        signed_in.user, signed_in.session, signed_in.gate, request.app.state.settings
+    )
 
 
 @router.delete(
     "/session", status_code=204, responses=problems(403), dependencies=[*SIGNED_IN, *CSRF]
 )
 async def end_session(
-    token: Annotated[str | None, Security(SESSION_COOKIE)],
+    signed_in: MaybeSessionDep,
     response: Response,
     sessions: SessionsDep,
 ) -> None:
     # Not a docstring: that would become the route's description and change the frozen openapi.json.
     # Signing out is 204 with or without a session, and the cookie is cleared either way.
-    if token is not None:
-        await sessions.delete(token)
+    if signed_in is not None:
+        await sessions.delete(signed_in.token)
     response.delete_cookie(COOKIE, path="/", httponly=True, samesite="lax")
 
 
@@ -182,4 +184,7 @@ async def change_shift(
     session = await sessions.get(nurse.token, clock.now())
     if session is None:
         raise NotSignedIn
-    return session_out(nurse.user, session, request.app.state.settings)
+    settings: Settings = request.app.state.settings
+    return session_out(
+        nurse.user, session, gate_of(nurse.user, session, clock.now(), settings), settings
+    )

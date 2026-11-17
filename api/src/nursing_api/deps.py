@@ -1,13 +1,23 @@
 """FastAPI dependencies: they read what `create_app`'s lifespan put on `app.state`."""
 
+import hmac
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Annotated
 
+import structlog
 from fastapi import Depends, Request, Security
+from nursing_core.auth.gate import session_gate
 from nursing_core.domain.errors import Forbidden, NotFound
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.domain.shifts import ShiftRef
-from nursing_core.domain.users import can_edit_settings, can_see_facility, can_write_notes
+from nursing_core.domain.users import (
+    SessionGate,
+    UserStatus,
+    can_edit_settings,
+    can_see_facility,
+    can_write_notes,
+)
 from nursing_core.ports import Clock
 from nursing_core.storage.repositories import (
     PgFacilityRepository,
@@ -19,9 +29,17 @@ from nursing_core.storage.repositories import (
     StoredUser,
 )
 
-from nursing_api.problems import NotSignedIn
+from nursing_api.problems import CsrfFailed, NotSignedIn, SessionGated
 from nursing_api.queue import ManagedQueue
-from nursing_api.routes import SESSION_COOKIE
+from nursing_api.routes import CSRF_HEADER, SESSION_COOKIE
+from nursing_api.settings import Settings
+
+log = structlog.get_logger("nursing_api.deps")
+
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# The web polls this route while a draft is written; a poll is not the nurse being at the screen,
+# so it never counts as activity. Spotted by route template: jobs.py is not ours to change.
+DRAFT_JOB_POLL = ("GET", "/api/v1/draft-jobs/{job_id}")
 
 
 def get_clock(request: Request) -> Clock:
@@ -70,29 +88,97 @@ QueueDep = Annotated[ManagedQueue, Depends(get_queue)]
 
 @dataclass(frozen=True)
 class SignedIn:
-    """Who is signed in: the person, their live session, and the cookie's token."""
+    """Who is signed in: the person, their live session, its gate now, and the cookie's token."""
 
     user: StoredUser
     session: StoredSession
+    gate: SessionGate
     token: str = field(repr=False)  # the raw cookie value: never in a repr or a log
 
 
+def gate_of(
+    user: StoredUser, session: StoredSession, now: datetime, settings: Settings
+) -> SessionGate:
+    """What this session may do at `now` (the pure rule, fed the stored facts)."""
+    return session_gate(
+        has_pin=user.has_pin,
+        pin_locked=user.pin_locked,
+        pin_verified_at=session.pin_verified_at,
+        last_active_at=session.last_active_at,
+        now=now,
+        idle_lock=timedelta(minutes=settings.idle_lock_minutes),
+    )
+
+
+def _is_draft_job_poll(request: Request) -> bool:
+    route = request.scope.get("route")
+    return (request.method, getattr(route, "path", None)) == DRAFT_JOB_POLL
+
+
 async def current_session(
+    request: Request,
     token: Annotated[str | None, Security(SESSION_COOKIE)],
     clock: ClockDep,
     sessions: SessionsDep,
     users: UsersDep,
 ) -> SignedIn:
-    """The signed-in person, or `NotSignedIn` (401) when the cookie is missing or has expired."""
+    """The signed-in person at any gate: the routes that work while locked use this.
+
+    Refuses in this order: 401 (no cookie, an unknown or expired session, a revoked user), then
+    403 `csrf_failed` for a POST, PUT, PATCH or DELETE without this session's token. An open
+    session is marked active, except by the draft-job poll.
+    """
     if token is None:
         raise NotSignedIn
-    session = await sessions.get(token, clock.now())
+    now = clock.now()
+    session = await sessions.get(token, now)
     if session is None:
         raise NotSignedIn
-    return SignedIn(user=await users.get_user(session.user_id), session=session, token=token)
+    user = await users.get_user(session.user_id)
+    if user.status is UserStatus.REVOKED:
+        raise NotSignedIn
+    if request.method in UNSAFE_METHODS:
+        # Read from the request, never `Security(CSRF_HEADER)`: that would add the header to
+        # every signed-in GET in openapi.json.
+        sent = request.headers.get(CSRF_HEADER.model.name, "")
+        if not hmac.compare_digest(sent.encode(), session.csrf_token.encode()):
+            log.warning("security.csrf_failed", user_id=str(user.id))
+            raise CsrfFailed
+    settings: Settings = request.app.state.settings
+    gate = gate_of(user, session, now, settings)
+    if gate is SessionGate.OPEN and not _is_draft_job_poll(request):
+        await sessions.touch(token, now)
+    return SignedIn(user=user, session=session, gate=gate, token=token)
 
 
-SignedInDep = Annotated[SignedIn, Depends(current_session)]
+GatedSessionDep = Annotated[SignedIn, Depends(current_session)]
+
+
+async def current_open_session(gated: GatedSessionDep) -> SignedIn:
+    """The signed-in person with an open session: every data route; `SessionGated` (423) else."""
+    if gated.gate is not SessionGate.OPEN:
+        raise SessionGated(gated.gate)
+    return gated
+
+
+SignedInDep = Annotated[SignedIn, Depends(current_open_session)]
+
+
+async def optional_session(
+    request: Request,
+    token: Annotated[str | None, Security(SESSION_COOKIE)],
+    clock: ClockDep,
+    sessions: SessionsDep,
+    users: UsersDep,
+) -> SignedIn | None:
+    """The session at any gate, or None when there is none (signing out still answers 204)."""
+    try:
+        return await current_session(request, token, clock, sessions, users)
+    except NotSignedIn:
+        return None
+
+
+MaybeSessionDep = Annotated[SignedIn | None, Depends(optional_session)]
 
 
 @dataclass(frozen=True)
