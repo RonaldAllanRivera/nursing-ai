@@ -98,9 +98,16 @@ if [ ${#tf_files[@]} -gt 0 ]; then
     # as the site address). It counts only at the resource's own level (so a
     # one-line `{ value = "x" }` is caught and a tag called value is not), and
     # it is reported when the resource ends, because `type` may come after it.
+    # A file the scan cannot follow to its end (an open heredoc, comment,
+    # string, interpolation or resource, or unbalanced braces) is a failure,
+    # never a silent pass.
     awk -v file="$f" '
-      function scan(line,    i, n, c, c2, str, interp, rest) {
-        keep = ""; blank = ""; str = 0; interp = 0
+      # Strings and ${ } interpolations nest, and an interpolation may run over
+      # several lines, so the state lives in a stack (stk, sp) kept across lines:
+      # "S" is a string, "I" an interpolation (cnt[sp] counts its own braces).
+      # Inside a string, $${ and %%{ are literal, not an interpolation.
+      function scan(line,    i, n, c, c2, top, rest) {
+        keep = ""; blank = ""
         n = length(line)
         for (i = 1; i <= n; i++) {
           c = substr(line, i, 1); c2 = substr(line, i, 2)
@@ -108,60 +115,74 @@ if [ ${#tf_files[@]} -gt 0 ]; then
             if (c2 == "*/") { in_block = 0; i++ }
             continue
           }
-          if (str) {                                       # inside "..."
+          top = (sp > 0) ? stk[sp] : "C"
+          if (top == "S") {                                # inside "..."
             if (c == "\\") { keep = keep c substr(line, i + 1, 1); i++; continue }
-            if (interp > 0) {                              # inside ${ ... }
-              if (c == "{") interp++
-              if (c == "}") interp--
-              keep = keep c; continue
-            }
-            if (c2 == "${") { interp = 1; keep = keep c2; i++; continue }
+            if (c2 == "$$" || c2 == "%%") { keep = keep c2; i++; continue }
+            if (c2 == "${" || c2 == "%{") { sp++; stk[sp] = "I"; cnt[sp] = 0; keep = keep c2; i++; continue }
             keep = keep c
-            if (c == "\"") { str = 0; blank = blank c }
+            if (c == "\"") { sp--; if (sp == 0) blank = blank c }
             continue
           }
-          if (c == "#" || c2 == "//") break                # trailing comment
-          if (c2 == "/*") { in_block = 1; i++; continue }
-          if (c == "\"") { str = 1; keep = keep c; blank = blank c; continue }
-          if (c2 == "<<") {                                # heredoc: body starts next line
-            rest = substr(line, i + 2)
-            if (match(rest, /^-?[A-Za-z_][A-Za-z0-9_]*/)) {
-              heredoc = substr(rest, 1, RLENGTH); sub(/^-/, "", heredoc)
-              keep = keep c2; blank = blank c2
-              i += 1 + RLENGTH
-              continue
+          if (sp == 0) {                                   # plain code, outside any string
+            if (c == "#" || c2 == "//") break              # trailing comment
+            if (c2 == "/*") { in_block = 1; i++; continue }
+            if (c2 == "<<") {                              # heredoc: body starts next line
+              rest = substr(line, i + 2)
+              if (match(rest, /^-?[A-Za-z_][A-Za-z0-9_-]*/)) {
+                heredoc = substr(rest, 1, RLENGTH); sub(/^-/, "", heredoc)
+                keep = keep c2; blank = blank c2
+                i += 1 + RLENGTH
+                continue
+              }
             }
+          } else {                                         # inside ${ }: code, braces counted
+            if (c == "{") cnt[sp]++
+            if (c == "}") { if (cnt[sp] == 0) { sp--; keep = keep c; continue } else cnt[sp]-- }
           }
-          keep = keep c; blank = blank c
+          if (c == "\"") { sp++; stk[sp] = "S"; keep = keep c; if (sp == 1) blank = blank c; continue }
+          keep = keep c
+          if (sp == 0) blank = blank c
         }
+        # No HCL string spans lines: drop a string left open at the line end
+        # (an interpolation, which may span lines, is kept).
+        while (sp > 0 && stk[sp] == "S") sp--
       }
       {
+        sub(/\r$/, "")                                     # CRLF files
         if (heredoc != "") {                               # a heredoc body: ignore it
-          t = $0; gsub(/^[ \t]+|[ \t\r]+$/, "", t)
+          t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t)
           if (t == heredoc) heredoc = ""
           next
         }
         scan($0)
-        if (!inside && keep ~ /^[ \t]*resource[ \t]+"aws_ssm_parameter"/) {
+        if (keep ~ /^[ \t]*resource[ \t]+"aws_ssm_parameter"/) {
           inside = 1; opened = 0; depth = 0; plain = ""; is_string = 0
         }
-        if (!inside) next
-        if (depth == 1 && keep ~ /^[ \t]*type[ \t]*=[ \t]*"String"[ \t]*$/) is_string = 1
+        if (inside && depth == 1 && keep ~ /^[ \t]*type[ \t]*=[ \t]*"String"[ \t]*$/) is_string = 1
         for (i = 1; i <= length(blank); i++) {
           c = substr(blank, i, 1)
-          if (c == "{") { depth++; opened = 1 }
-          else if (c == "}") depth--
-          else if (depth == 1 && plain == "" && substr(blank, i) ~ /^value[ \t]*=([^=]|$)/ \
+          if (c == "{") { gdepth++; if (inside) { depth++; opened = 1 } }
+          else if (c == "}") { gdepth--; if (inside) depth-- }
+          else if (inside && depth == 1 && plain == "" && substr(blank, i) ~ /^value[ \t]*=([^=]|$)/ \
                    && (i == 1 || substr(blank, i - 1, 1) !~ /[A-Za-z0-9_-]/)) plain = FNR
         }
-        if (opened && depth <= 0) {
+        if (inside && opened && depth <= 0) {
           inside = 0
           if (plain != "" && !is_string) {
             print file ":" plain ": plaintext value in aws_ssm_parameter"; found = 1
           }
         }
       }
-      END { exit found }
+      # Fail closed: a heredoc, comment, string, interpolation or resource still
+      # open at the end, or braces that do not balance, means the scan lost track.
+      END {
+        if (heredoc != "" || in_block || sp > 0 || inside || gdepth != 0) {
+          print file ": could not parse to the end (open heredoc, comment, string or resource, or unbalanced braces)"
+          found = 1
+        }
+        exit found
+      }
     ' "$f" || bad=1
   done
 fi
