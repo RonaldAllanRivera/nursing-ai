@@ -21,7 +21,7 @@ from nursing_core.storage.repositories import (
     PgUserRepository,
 )
 from nursing_core.storage.seed import seed
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .world import NOW, build_world
@@ -495,11 +495,43 @@ async def test_touch_verify_and_session_pin_failures(engine: AsyncEngine) -> Non
     touched = await repo.get(new.token, later)
     assert touched is not None
     assert (touched.last_active_at, touched.pin_verified_at) == (later, None)
-    await repo.mark_pin_verified(new.token, later)
-    verified = await repo.get(new.token, later)
+    token = await repo.mark_pin_verified(new.token, later)
+    assert token is not None
+    verified = await repo.get(token, later)
     assert verified is not None
     assert verified.pin_verified_at == later
     assert verified.expires_at == NOW + timedelta(hours=12)  # an unlock never extends it
+
+
+@pytest.mark.asyncio
+async def test_verifying_the_pin_gives_the_session_a_new_token(engine: AsyncEngine) -> None:
+    # A cookie copied while the session waited for its PIN must open nothing once she proves it.
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    new = await repo.create(world.nurse_id, None, NOW, 12)
+    later = NOW + timedelta(minutes=3)
+
+    token = await repo.mark_pin_verified(new.token, later)
+
+    assert token is not None
+    assert token != new.token
+    assert await repo.get(new.token, later) is None
+    verified = await repo.get(token, later)
+    assert verified is not None
+    # The same session under a new token: its expiry, CSRF token and start stay.
+    assert verified.expires_at == NOW + timedelta(hours=12)
+    assert verified.csrf_token == new.csrf_token
+    assert verified.created_at == NOW
+    assert (verified.pin_verified_at, verified.last_active_at) == (later, later)
+    async with engine.connect() as conn:
+        rows = await conn.scalar(
+            select(func.count())
+            .select_from(tables.session)
+            .where(tables.session.c.user_id == world.nurse_id)
+        )
+    assert rows == 1  # the same row, not a second session
+    # The old token, or a session that is gone, verifies nothing.
+    assert await repo.mark_pin_verified(new.token, later) is None
 
 
 @pytest.mark.asyncio

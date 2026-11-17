@@ -268,6 +268,7 @@ GOOGLE_PIN = "246813"
 WRONG = "864209"
 PIN, UNLOCK = f"{SESSION}/pin", f"{SESSION}/unlock"
 PATIENTS = "/api/v1/patients"
+IDLE_LOCK = timedelta(minutes=5)  # IDLE_LOCK_MINUTES' default
 
 
 async def google_admin(app: FastAPI, client: httpx.AsyncClient, *, pin: str | None) -> UUID:
@@ -352,6 +353,40 @@ async def test_weak_pin_is_422_on_the_field(
 
 
 @pytest.mark.asyncio
+async def test_a_set_pin_session_older_than_the_idle_lock_ends(
+    app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    # She signed in with Google and walked away before choosing a PIN: whoever sits down at the
+    # screen later must not choose it for her and then act as her.
+    user_id = await google_admin(app, client, pin=None)
+    token = client.cookies["sl_session"]
+    clock.advance(IDLE_LOCK)  # exactly at the limit counts as idle, as it does for the gate
+
+    response = await client.post(PIN, json={"pin": GOOGLE_PIN})
+
+    assert (response.status_code, response.json()["code"]) == (401, "not_signed_in")
+    cleared = response.headers["set-cookie"].lower()
+    assert cleared.startswith("sl_session=")
+    assert "max-age=0" in cleared
+    assert await app.state.sessions.get(token, clock.now()) is None  # the row is gone
+    assert (await user_row(app, user_id)).pin_hash is None  # and no PIN was stored
+
+
+@pytest.mark.asyncio
+async def test_a_set_pin_session_just_inside_the_idle_lock_still_sets_the_pin(
+    app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    user_id = await google_admin(app, client, pin=None)
+    clock.advance(IDLE_LOCK - timedelta(seconds=1))
+
+    response = await client.post(PIN, json={"pin": GOOGLE_PIN})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["gate"] == "open"
+    assert verify_pin((await user_row(app, user_id)).pin_hash, GOOGLE_PIN)
+
+
+@pytest.mark.asyncio
 async def test_unlock_with_the_right_pin_opens_the_session(
     app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
 ) -> None:
@@ -381,6 +416,60 @@ async def test_unlock_with_the_right_pin_opens_the_session(
     session = await app.state.sessions.get(client.cookies["sl_session"], clock.now())
     assert session is not None
     assert session.pin_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_unlock_gives_the_session_a_new_token(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    clock: MutableClock,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # A cookie copied while the session waited at enter_pin opens nothing once she unlocks.
+    started = await start(client, PH_STAFF)
+    old = client.cookies["sl_session"]
+    clock.advance(timedelta(minutes=1))
+
+    unlocked = await client.post(UNLOCK, json={"pin": DEMO_PIN})
+
+    assert unlocked.status_code == 200, unlocked.text
+    new = unlocked.cookies["sl_session"]
+    assert new != old
+    cookie = unlocked.headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    assert "samesite=lax" in cookie
+    assert "path=/" in cookie
+    assert "max-age=43140" in cookie  # what is left of the 12 hours, not 12 hours again
+    # The same session: its expiry and CSRF token stay.
+    assert unlocked.json()["expires_at"] == started.json()["expires_at"]
+    assert unlocked.json()["csrf_token"] == started.json()["csrf_token"]
+    async with client_for(app) as copied:
+        copied.cookies.set("sl_session", old)
+        assert (await copied.get(SESSION)).status_code == 401
+    assert (await client.get(PATIENTS)).status_code == 200  # the browser holds the new one
+    captured = capfd.readouterr()
+    for token in (old, new):
+        assert token not in captured.out + captured.err
+
+
+@pytest.mark.asyncio
+async def test_choosing_the_pin_gives_the_session_a_new_token(
+    app: FastAPI, client: httpx.AsyncClient, clock: MutableClock
+) -> None:
+    await google_admin(app, client, pin=None)
+    old = client.cookies["sl_session"]
+    expires_at = (await client.get(SESSION)).json()["expires_at"]
+
+    chosen = await client.post(PIN, json={"pin": GOOGLE_PIN})
+
+    assert chosen.status_code == 200, chosen.text
+    new = chosen.cookies["sl_session"]
+    assert new != old
+    assert await app.state.sessions.get(old, clock.now()) is None
+    assert chosen.json()["expires_at"] == expires_at
+    async with client_for(app) as fresh:
+        fresh.cookies.set("sl_session", new)
+        assert (await fresh.get(SESSION)).json()["gate"] == "open"
 
 
 @pytest.mark.asyncio

@@ -412,14 +412,22 @@ class PgSessionRepository:
                 .values(last_active_at=now)
             )
 
-    async def mark_pin_verified(self, token: str, now: datetime) -> None:
-        """The PIN was right: the session is verified and active at `now`. Its expiry stays."""
+    async def mark_pin_verified(self, token: str, now: datetime) -> str | None:
+        """The PIN was right: the session is verified and active at `now`, under a new token.
+
+        Returns the new token for the cookie, or None when the session is gone. A cookie copied
+        while the session waited for its PIN opens nothing afterwards. It is the same session:
+        its expiry and its CSRF token stay.
+        """
+        new_token = secrets.token_urlsafe(32)
         async with self._engine.begin() as conn:
-            await conn.execute(
+            verified = await conn.scalar(
                 update(_SESSION)
                 .where(_SESSION.c.token_hash == _hash(token))
-                .values(pin_verified_at=now, last_active_at=now)
+                .values(token_hash=_hash(new_token), pin_verified_at=now, last_active_at=now)
+                .returning(_SESSION.c.user_id)
             )
+        return None if verified is None else new_token
 
     async def claim_session_pin_try(self, token: str) -> int | None:
         """Takes one of this session's five tries before the PIN is verified (a persona's tries

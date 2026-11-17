@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Response
 from nursing_core.auth.pins import PinRefused, check_new_pin, hash_pin
@@ -16,6 +16,7 @@ from nursing_core.storage.repositories import (
 from starlette.concurrency import run_in_threadpool
 
 from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
+from nursing_api.auth.session_cookie import set_session_cookie
 from nursing_api.deps import (
     ClockDep,
     FacilitiesDep,
@@ -86,15 +87,7 @@ async def begin_session(
     session = await sessions.get(token, now)
     if session is None:  # just created: only a clock that jumped could lose it
         raise NotSignedIn
-    response.set_cookie(
-        COOKIE,
-        token,
-        max_age=int((session.expires_at - now).total_seconds()),
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=settings.app_env in {"demo", "prod"},
-    )
+    set_session_cookie(response, token, expires_at=session.expires_at, now=now, settings=settings)
     return session
 
 
@@ -179,14 +172,22 @@ async def end_session(
 
 
 async def open_answer(
-    signed_in: SignedIn, request: Request, users: UsersDep, sessions: SessionsDep, now: datetime
+    signed_in: SignedIn,
+    request: Request,
+    response: Response,
+    users: UsersDep,
+    sessions: SessionsDep,
+    now: datetime,
 ) -> SessionOut:
-    """The session as it stands after its PIN was proved: re-read, so the gate is the real one."""
-    session = await sessions.get(signed_in.token, now)
-    if session is None:  # ended in the meantime
+    """The PIN was proved: the session is verified under a new token, whose cookie goes on
+    `response` (a copy of the old cookie opens nothing). Re-read, so the gate is the real one."""
+    token = await sessions.mark_pin_verified(signed_in.token, now)
+    session = None if token is None else await sessions.get(token, now)
+    if token is None or session is None:  # ended in the meantime
         raise NotSignedIn
-    user = await users.get_user(signed_in.user.id)
     settings: Settings = request.app.state.settings
+    set_session_cookie(response, token, expires_at=session.expires_at, now=now, settings=settings)
+    user = await users.get_user(signed_in.user.id)
     return session_out(user, session, gate_of(user, session, now, settings), settings)
 
 
@@ -199,6 +200,7 @@ async def open_answer(
 async def set_pin(
     body: PinIn,
     request: Request,
+    response: Response,
     signed_in: GatedSessionDep,
     clock: ClockDep,
     users: UsersDep,
@@ -207,6 +209,15 @@ async def set_pin(
     """After the first Google sign-in: choose a six-digit PIN (409 when one is already set)."""
     if signed_in.gate is not SessionGate.SET_PIN:
         raise PinAlreadySet
+    settings: Settings = request.app.state.settings
+    # Nothing marks a session active before its PIN is set, so this is the time since the Google
+    # sign-in. Past the idle lock she may have walked away: whoever sits down must not choose her
+    # PIN and then act as her, so the session ends and she signs in again.
+    if clock.now() - signed_in.session.last_active_at >= timedelta(
+        minutes=settings.idle_lock_minutes
+    ):
+        await sessions.delete(signed_in.token)
+        return session_ended_response()
     try:
         check_new_pin(body.pin)
     except PinRefused as refused:
@@ -220,9 +231,7 @@ async def set_pin(
     pin_hash = await run_in_threadpool(hash_pin, body.pin)
     if not await users.set_pin(signed_in.user.id, pin_hash):  # another request set one first
         raise PinAlreadySet
-    now = clock.now()
-    await sessions.mark_pin_verified(signed_in.token, now)
-    return await open_answer(signed_in, request, users, sessions, now)
+    return await open_answer(signed_in, request, response, users, sessions, clock.now())
 
 
 @router.post(
@@ -234,6 +243,7 @@ async def set_pin(
 async def unlock(
     body: PinIn,
     request: Request,
+    response: Response,
     signed_in: GatedSessionDep,
     clock: ClockDep,
     users: UsersDep,
@@ -246,9 +256,7 @@ async def unlock(
         await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
     except SessionEnded:
         return session_ended_response()
-    now = clock.now()
-    await sessions.mark_pin_verified(signed_in.token, now)
-    return await open_answer(signed_in, request, users, sessions, now)
+    return await open_answer(signed_in, request, response, users, sessions, clock.now())
 
 
 @router.put(
