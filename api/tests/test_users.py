@@ -82,6 +82,22 @@ def requests_of(user_id: UUID) -> list[tuple[str, str, dict[str, Any] | None]]:
     ]
 
 
+def malformed_manage(user_id: UUID) -> list[tuple[str, str, dict[str, Any]]]:
+    """Requests only the admin may make, each with a body or path the framework would refuse."""
+    return [
+        ("POST", USERS, {"nope": 1}),
+        ("POST", f"{USERS}/not-a-uuid/revoke", {"pin": PIN}),
+        ("POST", f"{USERS}/{user_id}/revoke", {}),
+    ]
+
+
+def malformed_reset(user_id: UUID) -> list[tuple[str, str, dict[str, Any]]]:
+    return [
+        ("POST", f"{USERS}/not-a-uuid/pin-reset", {"pin": PIN}),
+        ("POST", f"{USERS}/{user_id}/pin-reset", {}),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_staff_nurse_cannot_list_staff(app: FastAPI) -> None:
     async with signed_in_as(app, "real.nurse@example.com", Role.STAFF_NURSE, "ph-demo") as nurse:
@@ -89,6 +105,9 @@ async def test_staff_nurse_cannot_list_staff(app: FastAPI) -> None:
             response = await nurse.request(method, path, json=body)
             assert response.status_code == 403, (method, path)
             assert response.json()["code"] == "forbidden"
+        # 403 comes before the path and the body are looked at.
+        for method, path, body in malformed_manage(uuid4()) + malformed_reset(uuid4()):
+            assert (await nurse.request(method, path, json=body)).status_code == 403, path
 
 
 @pytest.mark.asyncio
@@ -171,9 +190,12 @@ async def test_admin_cannot_revoke_themselves(app: FastAPI, admin: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_revoked_user_is_signed_out_and_kept(app: FastAPI, admin: httpx.AsyncClient) -> None:
+async def test_revoked_user_is_signed_out_and_kept(
+    app: FastAPI, admin: httpx.AsyncClient, capfd: pytest.CaptureFixture[str]
+) -> None:
     async with signed_in_as(app, "sam.nurse@example.com", Role.STAFF_NURSE, "us-demo") as sam:
         sam_id = (await sam.get("/api/v1/session")).json()["user_id"]
+        capfd.readouterr()
         wrong = await admin.post(f"{USERS}/{sam_id}/revoke", json={"pin": WRONG})
         assert wrong.status_code == 403
         assert (await sam.get("/api/v1/session")).status_code == 200
@@ -183,6 +205,9 @@ async def test_revoked_user_is_signed_out_and_kept(app: FastAPI, admin: httpx.As
         assert response.json()["status"] == "revoked"
         assert (await sam.get("/api/v1/session")).status_code == 401
 
+    out = capfd.readouterr().out
+    for secret in (PIN, WRONG, "sam.nurse@example.com"):
+        assert secret not in out
     kept = [u for u in (await admin.get(USERS)).json() if u["id"] == sam_id]
     assert [u["status"] for u in kept] == ["revoked"]
     assert (await admin.post(f"{USERS}/{uuid4()}/revoke", json={"pin": PIN})).status_code == 404
@@ -212,7 +237,9 @@ async def test_head_nurse_resets_a_nurses_pin_in_her_facility_only(
     assert (await head.post(f"{USERS}/{uuid4()}/pin-reset", json={"pin": PIN})).status_code == 404
     # Herself is visible but refused.
     assert (await head.post(f"{USERS}/{head_id}/pin-reset", json={"pin": PIN})).status_code == 403
-    # A head nurse never revokes or invites.
+    # A head nurse never revokes or invites, whatever she sends.
+    for method, path, body in malformed_manage(mine):
+        assert (await head.request(method, path, json=body)).status_code == 403, path
     assert (await head.post(f"{USERS}/{mine}/revoke", json={"pin": PIN})).status_code == 403
 
     capfd.readouterr()
@@ -253,6 +280,9 @@ async def test_personas_cannot_list_invite_revoke_or_reset(app: FastAPI) -> None
             for method, path, body in requests_of(target):
                 if body is not None:
                     body = body | {"pin": DEMO_PIN}
+                response = await client.request(method, path, json=body)
+                assert response.status_code == 403, (persona.display_name, method, path)
+            for method, path, body in malformed_manage(target) + malformed_reset(target):
                 response = await client.request(method, path, json=body)
                 assert response.status_code == 403, (persona.display_name, method, path)
     # Nothing happened to the real nurse.
