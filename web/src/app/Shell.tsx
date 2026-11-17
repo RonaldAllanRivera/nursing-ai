@@ -1,4 +1,4 @@
-import { Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
+import { Link, Navigate, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
@@ -43,7 +43,8 @@ export function Shell() {
   const navigate = useNavigate();
   const page = useRef<HTMLElement>(null);
   const gateUp = session ? screenForGate(session.gate) !== null : false;
-  useRestoreFocusAfterGate(gateUp, page);
+  const where = useRouterState({ select: (state) => state.location.pathname });
+  useRestoreFocusAfterGate(gateUp, page, where);
 
   // No session (signed out, or a request came back 401): the sign-in screen.
   if (session === null) return <Navigate to="/sign-in" />;

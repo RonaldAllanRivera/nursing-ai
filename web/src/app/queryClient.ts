@@ -5,7 +5,7 @@ import { queryRetryDelay, retryQuery } from "../api/retry";
 import { isWaking, wakeRetryDelay } from "../api/waking";
 import { HELD_NOTE_ROOT } from "../notes/heldNote";
 import { gateFromProblem } from "../session/gate";
-import { sessionKey, type Session } from "../session/session";
+import { clearPersonData, demoEndedKey, sessionKey, type Session } from "../session/session";
 
 /** A write is retried only when the database was waking: that answer means nothing was written. */
 export function retryMutation(failureCount: number, error: Error): boolean {
@@ -28,8 +28,6 @@ export function createQueryClient() {
   const followServer = (error: Error) => {
     if (!(error instanceof ApiError)) return;
     if (error.status === 401) {
-      // Whatever she had typed and not sent goes with the session.
-      queryClient.removeQueries({ queryKey: [HELD_NOTE_ROOT] });
       queryClient.setQueryData(sessionKey, null);
       return;
     }
@@ -57,6 +55,27 @@ export function createQueryClient() {
   });
   // The unsent rough note outlives the page's unmounting for as long as a gate screen takes.
   queryClient.setQueryDefaults([HELD_NOTE_ROOT], { gcTime: Infinity });
+  // The one place that decides a different person is signed in: whoever wrote the session (a
+  // refetch, sign-in, unlock, set PIN, shift change, a 401), when its user differs from the last
+  // one (another person, or nobody), the last person's data is dropped at once, synchronously,
+  // before React is told, so nothing renders as the new person over the old person's cache.
+  let lastUser: string | null | undefined;
+  queryClient.getQueryCache().subscribe((event) => {
+    if (event.type !== "updated") return;
+    const key = event.query.queryKey as readonly unknown[];
+    if (key[0] !== sessionKey[0]) return;
+    const data = event.query.state.data as Session | null | undefined;
+    if (data === undefined) return;
+    const user = data?.user_id ?? null;
+    const changed = lastUser !== undefined && user !== lastUser;
+    lastUser = user;
+    if (!changed) return;
+    clearPersonData(queryClient);
+    // Someone signing in answers why the last demo session ended.
+    if (user !== null && queryClient.getQueryData(demoEndedKey)) {
+      queryClient.setQueryData(demoEndedKey, false);
+    }
+  });
   readSessionFrom(() => queryClient.getQueryData<Session | null>(sessionKey));
   return queryClient;
 }

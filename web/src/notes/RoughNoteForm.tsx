@@ -224,7 +224,12 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" variant="primary" disabled={!canSave || busy || sameAsSent}>
+          <Button
+            id="rough-note-save"
+            type="submit"
+            variant="primary"
+            disabled={!canSave || busy || sameAsSent}
+          >
             Save note
           </Button>
           {save.isError && !refused ? (

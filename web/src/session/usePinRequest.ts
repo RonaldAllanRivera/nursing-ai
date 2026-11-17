@@ -16,7 +16,7 @@ import { useState } from "react";
 export function usePinRequest<Answer>(
   send: (pin: string) => Promise<Answer>,
   handlers: {
-    onSuccess: (answer: Answer) => void;
+    onSuccess: (answer: Answer) => void | Promise<void>;
     onError?: (error: unknown, previous: unknown) => void;
   },
 ) {
@@ -27,10 +27,11 @@ export function usePinRequest<Answer>(
   /** Resolves `true` when the answer was a success, `false` when it was a failure (shown through `error`). */
   const run = async (pin: string): Promise<boolean> => {
     setPending(true);
+    // The last try's words are about the last try: a screen reader must not hear them again.
+    setError(null);
     try {
       const answer = await mutation.mutateAsync(pin);
-      setError(null);
-      handlers.onSuccess(answer);
+      await handlers.onSuccess(answer);
       return true;
     } catch (failure) {
       setError(failure);

@@ -229,11 +229,36 @@ describe("the page comes back as it was", () => {
     await typePin(DEMO_PIN);
     const back = await screen.findByLabelText("Your note");
     expect(back).toHaveValue("pt c/o hilo since 2am");
-    // The cursor is back in the box she was typing in, not lost to the top of the page.
+    // The cursor is back where it was (on Save note, which she had pressed), not lost to the top of the page.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save note" })).toHaveFocus();
+    });
+    expect(localStorage.length + sessionStorage.length).toBe(0);
+  });
+
+  it("puts the cursor back in the note box when the gate came while she was typing in it", async () => {
+    const { queryClient } = await signInAsPersona(SARAH);
+    await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
+    const box = await screen.findByLabelText("Your note");
+    await userEvent.click(box);
+    await userEvent.paste("still typing");
+    act(() => {
+      queryClient.setQueryData<Session | null>(sessionKey, (s) =>
+        s ? { ...s, gate: "idle_locked" } : s,
+      );
+    });
+    await screen.findByRole("heading", { name: /^Enter your PIN/ });
+    server.use(
+      http.post("*/api/v1/session/unlock", () =>
+        HttpResponse.json({ ...queryClient.getQueryData<Session>(sessionKey), gate: "open" }),
+      ),
+    );
+    await typePin(DEMO_PIN);
+    const back = await screen.findByLabelText("Your note");
+    expect(back).toHaveValue("still typing");
     await waitFor(() => {
       expect(back).toHaveFocus();
     });
-    expect(localStorage.length + sessionStorage.length).toBe(0);
   });
 
   it("drops a held note on sign-out", async () => {
@@ -447,5 +472,58 @@ describe("a note that was sent", () => {
       router.navigate({ to: "/patients/$patientId", params: { patientId: PATIENT_A } }),
     );
     expect(await screen.findByLabelText("Your note")).toHaveValue("");
+  });
+});
+
+describe("a new try drops the last try's words", () => {
+  it("does not keep the old wrong-PIN message up while the next try is out", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin("999999");
+    await screen.findByText("Wrong PIN. 4 tries left.");
+    server.use(
+      http.post("*/api/v1/session/unlock", async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await typePin("999999");
+    await waitFor(() => {
+      expect(screen.getByLabelText("PIN")).toHaveAttribute("readonly");
+    });
+    expect(screen.queryByText("Wrong PIN. 4 tries left.")).toBeNull();
+    expect(screen.getByLabelText("PIN")).not.toHaveAttribute("aria-invalid");
+    release();
+    expect(await screen.findByText("Wrong PIN. 3 tries left.")).toBeVisible();
+  });
+
+  it("does not keep the weak-PIN message up while the next try is out", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await renderApp("/patients", newcomer);
+    await userEvent.type(await screen.findByLabelText("New PIN"), "111111");
+    await userEvent.type(screen.getByLabelText("Type it again"), "111111{Enter}");
+    await screen.findByText(/isn't one digit repeated/);
+    server.use(
+      http.post("*/api/v1/session/pin", async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await userEvent.type(screen.getByLabelText("New PIN"), "135792");
+    await userEvent.type(screen.getByLabelText("Type it again"), "135792{Enter}");
+    await waitFor(() => {
+      expect(screen.getByLabelText("New PIN")).toHaveAttribute("readonly");
+    });
+    expect(screen.queryByText(/isn't one digit repeated/)).toBeNull();
+    expect(screen.getByLabelText("New PIN")).not.toHaveAttribute("aria-invalid");
+    release();
+    expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   });
 });

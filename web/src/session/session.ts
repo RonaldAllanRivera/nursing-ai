@@ -16,22 +16,26 @@ export type Session = components["schemas"]["SessionOut"];
 
 export const sessionKey = ["session"] as const;
 
-/**
- * The signed-in person, or `null` when there is no session (a 401 is an answer, not a failure).
- * Everything cached is about one person: when an answer names someone else (another tab signed
- * in as another nurse and the shared cookie changed) or nobody, the last person's data is
- * dropped here, before the new answer is stored and anything renders with it.
- */
+/** The signed-in person, or `null` when there is no session (a 401 is an answer, not a failure). */
 export const sessionQuery = queryOptions({
   queryKey: sessionKey,
-  queryFn: async ({ signal, client }): Promise<Session | null> => {
+  queryFn: async ({ signal }): Promise<Session | null> => {
     const answer = await api.GET("/api/v1/session", { signal });
-    const next = answer.response.status === 401 ? null : unwrap(answer);
-    const previous = client.getQueryData<Session | null>(sessionKey);
-    if (previous && previous.user_id !== next?.user_id) clearPersonData(client);
-    return next;
+    if (answer.response.status === 401) return null;
+    return unwrap(answer);
   },
 });
+
+/**
+ * Stores the session a write answered (sign-in, unlock, set PIN, shift, sign-out). Any session
+ * request still out was asked about the person before this answer, so it is cancelled first: a
+ * slower answer must not put the old person back. (Whether the stored session is someone else's
+ * is decided in one place, `createQueryClient`, whoever wrote it.)
+ */
+export async function storeSession(queryClient: QueryClient, session: Session | null) {
+  await queryClient.cancelQueries({ queryKey: sessionKey });
+  queryClient.setQueryData(sessionKey, session);
+}
 
 export function useSession() {
   return useQuery(sessionQuery);
@@ -65,6 +69,8 @@ export function clearPersonData(queryClient: QueryClient) {
     sessionKey[0],
     personasQuery.queryKey[0],
     signInOptionsQuery.queryKey[0],
+    // Why a demo session ended; it is shown on the sign-in screen and goes when a person signs in.
+    demoEndedKey[0],
   ]);
   queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
   queryClient.getMutationCache().clear();
@@ -75,9 +81,9 @@ export function useSignIn() {
   return useMutation({
     mutationFn: async (personaId: string) =>
       unwrap(await api.POST("/api/v1/session", { body: { persona_id: personaId } })),
-    onSuccess: (session) => {
+    onSuccess: async (session) => {
       clearPersonData(queryClient);
-      queryClient.setQueryData(sessionKey, session);
+      await storeSession(queryClient, session);
     },
   });
 }
@@ -99,9 +105,7 @@ export function useSetPin() {
     async (pin: string) => unwrap(await api.POST("/api/v1/session/pin", { body: { pin } })),
     {
       // Not clearPersonData: the page under the gate, and the note she was typing, come back.
-      onSuccess: (session) => {
-        queryClient.setQueryData(sessionKey, session);
-      },
+      onSuccess: (session) => storeSession(queryClient, session),
       onError: (error) => {
         lookAgainOnConflict(queryClient, error);
       },
@@ -118,9 +122,7 @@ export function useUnlock(persona: boolean) {
   return usePinRequest(
     async (pin: string) => unwrap(await api.POST("/api/v1/session/unlock", { body: { pin } })),
     {
-      onSuccess: (session) => {
-        queryClient.setQueryData(sessionKey, session);
-      },
+      onSuccess: (session) => storeSession(queryClient, session),
       onError: (error, previous) => {
         lookAgainOnConflict(queryClient, error);
         const reason = persona ? demoEndedReason(error, previous) : null;
@@ -136,9 +138,9 @@ export function useSignOut() {
     mutationFn: async () => {
       ensureOk(await api.DELETE("/api/v1/session"));
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       clearPersonData(queryClient);
-      queryClient.setQueryData(sessionKey, null);
+      await storeSession(queryClient, null);
     },
   });
 }
@@ -148,8 +150,8 @@ export function useChangeShift() {
   return useMutation({
     mutationFn: async (startsAt: string) =>
       unwrap(await api.PUT("/api/v1/session/shift", { body: { starts_at: startsAt } })),
-    onSuccess: (session) => {
-      queryClient.setQueryData(sessionKey, session);
+    onSuccess: async (session) => {
+      await storeSession(queryClient, session);
       // A patient's page shows the session's shift and its notes.
       void queryClient.invalidateQueries({ queryKey: ["patient"] });
     },
