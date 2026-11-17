@@ -25,6 +25,7 @@ import {
   isSmall,
   line,
   noSidewaysScroll,
+  pageStatus,
   resolveThreeLines,
   shot,
   signInAs,
@@ -88,7 +89,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   const drafting = "Drafting your note. This usually takes a few seconds.";
   // The visible line, not the screen-reader region that says the same words.
   await expect(page.locator("form p:not([role=status]) span").getByText(drafting)).toBeVisible();
-  await expect(page.getByRole("status")).toHaveText(drafting);
+  await expect(pageStatus(page)).toHaveText(drafting);
   await shot(page, "drafting");
   await expect(page).toHaveURL(NOTE_URL, { timeout: 8000 });
   await expect(page.getByRole("heading", { name: "Your note" })).toBeVisible();
@@ -354,7 +355,7 @@ test.describe("admin path", () => {
     await page.keyboard.type("Night");
     await tabTo(page, page.getByRole("button", { name: "Save settings" }));
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toContainText("Saved.");
+    await expect(pageStatus(page)).toContainText("Saved.");
     await expect(label).toHaveValue("Night");
     await checkScreen(page);
     await shot(page, "settings");

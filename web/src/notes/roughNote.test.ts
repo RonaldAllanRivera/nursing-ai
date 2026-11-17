@@ -32,6 +32,18 @@ describe("shouldRetry", () => {
     expect(shouldRetry(2, new ApiError(500))).toBe(false);
     expect(shouldRetry(0, new ApiError(422))).toBe(false);
   });
+
+  it("follows the waking schedule for a waking database", () => {
+    const waking = new ApiError(503, {
+      status: 503,
+      code: "database_waking",
+      title: "x",
+      type: "about:blank",
+    });
+    expect(shouldRetry(2, waking)).toBe(true);
+    expect(shouldRetry(11, waking)).toBe(true);
+    expect(shouldRetry(12, waking)).toBe(false);
+  });
 });
 
 describe("textState", () => {

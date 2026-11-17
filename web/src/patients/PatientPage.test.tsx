@@ -7,6 +7,7 @@ import type { components } from "../api/schema";
 import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
+import { pageStatus } from "../test/status";
 
 type Schemas = components["schemas"];
 
@@ -227,9 +228,7 @@ describe("patient page", () => {
       await save();
       await screen.findByText("To save a new note, change the text.");
       await waitFor(() => {
-        expect(screen.getByRole("status")).toHaveTextContent(
-          "To save a new note, change the text in the box.",
-        );
+        expect(pageStatus()).toHaveTextContent("To save a new note, change the text in the box.");
       });
       expect(screen.getByLabelText("Your note")).toHaveAccessibleDescription(
         /To save a new note, change the text\./,
@@ -313,7 +312,7 @@ describe("patient page", () => {
 
   it("says each step in one status region that stays on the page", async () => {
     await openPatientA();
-    const region = screen.getByRole("status");
+    const region = pageStatus();
     expect(region).toHaveTextContent("");
     server.use(
       http.post(ROUGH_URL, async () => {
@@ -329,9 +328,9 @@ describe("patient page", () => {
     await waitFor(() => {
       expect(region).toHaveTextContent("Drafting your note.");
     });
-    expect(screen.getByRole("status")).toBe(region);
+    expect(pageStatus()).toBe(region);
     // The visible lines are not live regions of their own.
-    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(2); // the page's and the waking line
   });
 
   it("says it is waiting for the network when the browser is offline", async () => {
@@ -354,7 +353,7 @@ describe("patient page", () => {
   });
 
   describe("the status region says what the visible line says", () => {
-    const inRegion = () => within(screen.getByRole("status"));
+    const inRegion = () => within(pageStatus());
 
     it("says the whole drafting line", async () => {
       await openPatientA();

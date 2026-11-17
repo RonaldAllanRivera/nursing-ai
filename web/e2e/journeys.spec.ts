@@ -159,7 +159,7 @@ test("Admin path: save a facility's settings, then put the label back (one origi
     expect(sent["cookie"]).toContain("sl_session=");
     expect(response.status()).toBeGreaterThanOrEqual(200);
     expect(response.status()).toBeLessThan(300);
-    await expect(page.getByRole("status")).toContainText("Saved.");
+    await expect(page.locator('[role="status"]:not(#waking-notice)')).toContainText("Saved.");
     await expect(label).toHaveValue(value);
   };
 

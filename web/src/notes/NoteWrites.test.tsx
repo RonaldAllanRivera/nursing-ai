@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
+import { pageStatus } from "../test/status";
 import { linesInOrder } from "./trace";
 
 const NOTE_1 = "00000000-0000-4000-8000-000000000015";
@@ -61,7 +62,7 @@ const line = (name: RegExp) => screen.getByRole("button", { name });
 const card = () => within(screen.getByRole("complementary", { name: /came from/ }));
 const said = (words: string) =>
   waitFor(() => {
-    expect(screen.getByRole("status")).toHaveTextContent(words);
+    expect(pageStatus()).toHaveTextContent(words);
   });
 const FOCUS = /^Dizziness with low blood pressure/;
 const ACTIONS = /Wording is right|Edit line|Undo|Remove line|Put line back|Use \d/;
@@ -553,7 +554,7 @@ describe("after a sign or a discard", () => {
     await waitFor(() => {
       expect(answer).toHaveFocus();
     });
-    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(pageStatus()).toHaveTextContent("");
   });
 
   it("says in the discard dialog that the note changed, and offers Reload note", async () => {

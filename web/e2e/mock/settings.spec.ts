@@ -8,6 +8,7 @@ import {
   expectHeaderAtMostTwoRows,
   expectNoViolations,
   noSidewaysScroll,
+  pageStatus,
   signInAs,
   tabTo,
 } from "./helpers.ts";
@@ -42,7 +43,7 @@ test("the admin edits a label by keyboard only and saves", async ({ page }) => {
   await page.keyboard.type("Night");
   await tabTo(page, page.getByRole("button", { name: "Save settings" }));
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Saved.");
+  await expect(pageStatus(page)).toContainText("Saved.");
   await expect(label).toHaveValue("Night");
   await noSidewaysScroll(page);
 });
@@ -52,7 +53,7 @@ test("a nurse who signs in after the save sees the new label", async ({ page }) 
   const label = page.getByRole("group", { name: "Shift 3" }).getByLabel("Label");
   await label.fill("Night");
   await page.getByRole("button", { name: "Save settings" }).click();
-  await expect(page.getByRole("status")).toContainText("Saved.");
+  await expect(pageStatus(page)).toContainText("Saved.");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.getByRole("button", { name: SARAH }).click();
   await expect(page.getByRole("banner").getByText("Shift Night")).toBeVisible();
@@ -67,7 +68,7 @@ test("a gap shows above the shifts before Save, and the page is still accessible
   await page.getByRole("button", { name: "Save settings" }).click();
   // Save found the problem and sent nothing: the problems block has the focus, and nothing is saved.
   await expect(page.locator("#shift-problems")).toBeFocused();
-  await expect(page.getByRole("status")).not.toContainText("Saved.");
+  await expect(pageStatus(page)).not.toContainText("Saved.");
   await noSidewaysScroll(page);
   await expectNoViolations(page);
 });

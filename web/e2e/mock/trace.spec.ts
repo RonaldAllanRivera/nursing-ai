@@ -11,6 +11,7 @@ import {
   isSmall,
   line,
   noSidewaysScroll,
+  pageStatus,
   openDemoNote,
   tabTo,
 } from "./helpers.ts";
@@ -60,7 +61,7 @@ test("works by keyboard: Tab to the draft, arrow to a line, Escape, then Sign no
   await expect(sign).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator(".line[aria-current='true']")).toBeFocused();
-  await expect(page.getByRole("status")).toHaveText("Check this line before you sign.");
+  await expect(pageStatus(page)).toHaveText("Check this line before you sign.");
 });
 
 test("demo-2's two entries, and a line left empty, have no axe violations in day and night", async ({

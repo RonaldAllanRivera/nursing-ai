@@ -144,3 +144,6 @@ export async function resolveThreeLines(page: Page) {
   await expect(line(page, PHYSICIAN)).toContainText("Removed by you");
   await expect(page.getByText("All lines checked. Ready to sign.")).toBeVisible();
 }
+
+/** The page's own status line: the app-wide "waking" line is a status too, and is not what a spec means. */
+export const pageStatus = (page: Page) => page.locator('[role="status"]:not(#waking-notice)');

@@ -15,13 +15,19 @@ import { SignIn } from "../session/SignIn";
 import { sessionQuery } from "../session/session";
 import { ErrorScreen, NotFoundScreen, PendingScreen } from "./RouteScreens";
 import { Shell } from "./Shell";
+import { WakingNotice } from "./WakingNotice";
 
 export interface RouterContext {
   queryClient: QueryClient;
 }
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
-  component: Outlet,
+  component: () => (
+    <>
+      <WakingNotice />
+      <Outlet />
+    </>
+  ),
 });
 
 /** The session, or a redirect to sign-in. A cached "signed out" answer is kept up to date by the sign-in and sign-out calls and by any 401. */

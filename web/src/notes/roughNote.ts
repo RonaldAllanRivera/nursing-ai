@@ -1,6 +1,7 @@
 import { queryOptions, useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
+import { isWaking, wakeRetryDelay } from "../api/waking";
 import { pollDelay } from "./draft";
 
 export const MAX_CHARACTERS = 4000;
@@ -43,8 +44,9 @@ export function announceStep(left: number): 200 | 100 | 50 | 0 | -1 | null {
   return null;
 }
 
-/** Twice, then give up. */
+/** Twice, then give up; a waking database is waited out on its own schedule (nothing was written). */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (isWaking(error)) return wakeRetryDelay(failureCount) !== null;
   return failureCount < 2 && isTransient(error);
 }
 

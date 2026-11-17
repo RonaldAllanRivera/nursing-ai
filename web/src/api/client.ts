@@ -1,4 +1,6 @@
 import createClient, { type Client } from "openapi-fetch";
+import type { Session } from "../session/session";
+import { csrfHeaders } from "./csrf";
 import type { components, paths } from "./schema";
 
 /** A facility's settings: a settings save's body without the PIN that proves who saved. */
@@ -8,7 +10,16 @@ export type FacilitySettings = Omit<components["schemas"]["FacilityUpdateIn"], "
 export const REQUEST_TIMEOUT_MS = 10_000;
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-type Init = { signal?: AbortSignal | null } | undefined;
+type Init = { signal?: AbortSignal | null; headers?: Record<string, string> } | undefined;
+
+type SessionSource = () => Session | null | undefined;
+
+let currentSession: SessionSource = () => undefined;
+
+/** Where the client reads the signed-in session from, for the CSRF header. The query client sets this up. */
+export function readSessionFrom(source: SessionSource) {
+  currentSession = source;
+}
 
 // No origin and no `fetch` are captured here: the origin is read from `location`, and the
 // global `fetch` looked up, when a request is made. That keeps the client independent of
@@ -38,6 +49,7 @@ function method<M extends Method>(name: M): Client<paths>[M] {
       return await call(url, {
         baseUrl: globalThis.location.origin,
         ...init,
+        headers: { ...csrfHeaders(name, currentSession()), ...init?.headers },
         signal: controller.signal,
       });
     } finally {

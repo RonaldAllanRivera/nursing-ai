@@ -6,6 +6,7 @@ import { facilityQuery } from "../facility/useFacility";
 import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
+import { pageStatus } from "../test/status";
 
 afterEach(() => {
   server.events.removeAllListeners();
@@ -70,7 +71,7 @@ describe("the settings screen", () => {
     await userEvent.clear(label);
     await userEvent.type(label, "Night");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    const status = screen.getByRole("status");
+    const status = pageStatus();
     await waitFor(() => {
       expect(status).toHaveTextContent("Saved.");
     });
@@ -155,7 +156,7 @@ describe("the settings screen", () => {
     await userEvent.type(label, "Night");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("Saved.");
+      expect(pageStatus()).toHaveTextContent("Saved.");
     });
     expect(screen.getByRole("combobox", { name: "Timezone" })).toHaveValue("UTC");
   });
