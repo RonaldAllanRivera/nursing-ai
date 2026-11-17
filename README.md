@@ -110,10 +110,17 @@ Empty sections stay empty and are flagged for the nurse.
 - [ ] **Sign in with Google** (OpenID Connect, invite-only, no account passwords stored), with demo personas for visitors
 - [ ] **Built for shared ward PCs:** idle lock, and a personal signing PIN for unlocking and for every signature, so the next nurse can't act as the last one
 - [ ] **Eval harness** with a synthetic gold set (AI-reviewed; nurse review pending) and a CI quality gate
+- [ ] **Model comparison:** the same gold set on several Claude models, with accuracy, cost per draft and time per draft side by side, so the model choice rests on numbers
+- [ ] **Prompt-injection cases:** notes and glossary entries that try to give the model orders, which the draft must ignore; every eval result names its prompt version and model
+- [ ] **A plain machine-learning baseline:** a small scikit-learn classifier that sorts each phrase of a note into its FDAR section, compared with the Claude draft on accuracy, cost and speed
 - [ ] **Glossary lookup for ward shorthand and Taglish:** retrieval-augmented generation (RAG) with hybrid search (exact, fuzzy and semantic) in PostgreSQL with pgvector; it explains words and never suggests care, and a term with more than one meaning is flagged, never guessed
 - [ ] **Append-only, hash-chained audit log** of every view, edit, signature and agent tool call
-- [ ] **MCP server** with read-only patient and glossary tools, and an agent mode that chooses its own tools
+- [ ] **MCP server** with read-only patient and glossary tools, and an agent mode that chooses its own tools, built twice (by hand and with LangGraph) and compared on the same evals
 - [ ] **SBAR shift handoff** drafted from the nurse's notes for the shift and the patient's context, with the same checks, then signed by the outgoing nurse
+- [ ] **Voice dictation:** dictate a rough note in English or Taglish; the nurse checks the transcript before anything is drafted from it
+- [ ] **Vital signs from a photo:** a photo of a handwritten vital signs sheet becomes a table of numbers; each number shows the part of the photo it came from, and the nurse confirms it
+- [ ] **Traced AI calls:** every AI call records its prompt version, model, tokens, cost, time and errors (never the note text), with a small dashboard and an alert when errors rise
+- [ ] **Nightly checks:** a scheduled pipeline rebuilds the glossary search index when it changes and runs the free evals
 - [ ] **Amendments:** edits after signing become a new version that points to the old one
 - [ ] **Ward board** for head nurses: who still needs a signed note or handoff this shift
 - [ ] **Print to A4**, and **offline drafts** for slow ward internet
@@ -212,15 +219,18 @@ synthetic and AI-reviewed; review by a registered nurse is pending.
 | Number mismatches | Numbers in a line that don't appear in its source (code only) |
 | Critical items missed | Gold-set critical items missing from the output (code only) |
 | PHI leaks | Identifiers that reached the AI provider (must be 0) |
+| Prompt injection | Orders hidden in a note or glossary entry are ignored (code check against the case's forbidden content; every case must pass) |
 | Shorthand and Taglish terms | Expected meanings present, and terms given a wrong meaning (code match + LLM judge) |
 | Ambiguous terms flagged | Terms with more than one meaning flagged instead of expanded (code only) |
-| Run-to-run variance | Each case run 5 times |
+| Run-to-run variance | Each case run 5 times on the cheapest model, once on the others |
 | Cost and time per note | Tokens and seconds logged per call |
 
-**Results:** to be published here once the harness runs. Planned comparisons: model vs model, prompt
-v1 vs v2, no glossary vs the whole glossary in the prompt vs retrieved entries, and the agent with
-tools vs without. If the whole glossary in a cached prompt beats retrieval at this size, the report
-will say so.
+**Results:** to be published here once the harness runs. Planned comparisons: model vs model (with
+cost and time per draft), prompt v1 vs v2, no glossary vs the whole glossary in the prompt vs
+retrieved entries, the agent with tools vs without, the hand-built agent vs LangGraph, and a plain
+scikit-learn classifier vs Claude for sorting phrases into note sections. If the whole glossary in a
+cached prompt beats retrieval at this size, or the plain classifier is good enough, the report will
+say so.
 
 **CI gate:** a pull request that changes a prompt or the pipeline runs the gold set. A drop in recall
 or in ambiguous terms flagged, or any rise in unsupported lines, missed critical items, misread terms
@@ -305,9 +315,10 @@ Each release ships one complete feature through every layer, from the screen to 
 - [x] **v0.1** Foundation: monorepo, Docker Compose, CI
 - [ ] **v0.2** First feature, end to end: rough note → checked FDAR draft with source highlights → edit → sign
 - [ ] **v0.3** Live on AWS: Terraform, continuous deployment, Google sign-in, async drafts on SQS
-- [ ] **v0.4** Eval harness with a CI gate and first published results, plus glossary lookup for ward shorthand (hybrid search with pgvector)
-- [ ] **v0.5** MCP server and tool-using agent: read-only patient and glossary tools, every call in a hash-chained audit log, a draft SBAR handoff, and an eval comparison
-- [ ] **v0.6** Full ward: SOAPIE, amendments, SBAR handoff screen and signing, ward board, A4 print, offline drafts
+- [ ] **v0.4** Eval harness with a CI gate and first published results: a model comparison (accuracy, cost and time per draft), prompt-injection cases, and a scikit-learn section classifier measured against Claude; plus glossary lookup for ward shorthand (hybrid search with pgvector)
+- [ ] **v0.5** MCP server and tool-using agent: read-only patient and glossary tools, every call in a hash-chained audit log, a draft SBAR handoff, and an eval comparison; the agent is built by hand and again with LangGraph, with a decision record on the trade-offs
+- [ ] **v0.6** Voice, photo and traced AI calls: Taglish dictation, vital signs read from a photo of a handwritten sheet, every AI call traced with a dashboard and an error alert, and a nightly pipeline that re-indexes the glossary and runs the free evals
+- [ ] **v0.7** Full ward: SOAPIE, amendments, SBAR handoff screen and signing, ward board, A4 print, offline drafts
 - [ ] **v1.0** Launch: results, demo video, security review
 
 See [CHANGELOG.md](CHANGELOG.md) for what has shipped.

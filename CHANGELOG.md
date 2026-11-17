@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 
 ## [Unreleased]
 
+### Changed
+
+- README roadmap and features: v0.4 adds a model comparison (accuracy, cost and time per draft),
+  prompt-injection cases and a scikit-learn section classifier measured against Claude; v0.5 builds
+  the agent twice, by hand and with LangGraph; a new v0.6 adds voice dictation, vital signs from a
+  photo, traced AI calls with a dashboard and an error alert, and a nightly pipeline; the full ward
+  moves to v0.7. The Evaluation section adds a prompt-injection metric and the new comparisons, and
+  measures run-to-run variance on the cheapest model. All of it is planned.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added
