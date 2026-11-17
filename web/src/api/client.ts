@@ -55,6 +55,10 @@ function method<M extends Method>(name: M): Client<paths>[M] {
         signal: controller.signal,
       });
     } finally {
+      // Noted again when it settles: the server stamps its idle clock when it handles a request,
+      // which can be well after it was sent (a slow or waking server), and always before it answers.
+      // A timed-out or aborted one may have been handled too. Over-counting only locks later.
+      noteRequest(name, url);
       clearTimeout(timer);
       caller?.removeEventListener("abort", forward);
     }

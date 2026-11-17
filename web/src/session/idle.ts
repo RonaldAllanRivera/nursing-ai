@@ -21,11 +21,11 @@ export function idleDeadline(
   lastRequest: number | null = null,
 ): number {
   const limit = seconds * 1000;
-  // A clock that stepped backwards is no reason to lock, and a request "from the future" is no
-  // reason to wait.
+  // A clock that stepped backwards is no reason to lock: the last activity counts as just now.
   const own = Math.min(lastActivity, now) + limit;
-  const server =
-    lastRequest !== null && lastRequest <= now ? lastRequest + limit + SERVER_SLACK_MS : 0;
+  // The same for a request: if the clock stepped back after it, the server may still have stamped
+  // it, so it counts as having just happened rather than not at all.
+  const server = lastRequest !== null ? Math.min(lastRequest, now) + limit + SERVER_SLACK_MS : 0;
   return Math.max(own, server);
 }
 

@@ -288,12 +288,17 @@ describe("a timer clock that pauses while the machine sleeps", () => {
 
   it("sends no request just to check the clock", async () => {
     await openPage();
-    const { counter, stop } = countSessionReads();
+    // Every request of any kind, not only the session read.
+    const sent: string[] = [];
+    const onStart = ({ request }: { request: Request }) => {
+      sent.push(`${request.method} ${new URL(request.url).pathname}`);
+    };
+    server.events.on("request:start", onStart);
     try {
       await pass(200_000);
-      expect(counter.reads).toBe(0);
+      expect(sent).toEqual([]);
     } finally {
-      stop();
+      server.events.removeListener("request:start", onStart);
     }
   });
 });

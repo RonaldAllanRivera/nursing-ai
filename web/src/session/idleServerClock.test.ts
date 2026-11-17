@@ -21,8 +21,12 @@ describe("idleState with the server's own idle clock", () => {
     expect(idleState(activity, start + 499_999, 300, request).locked).toBe(false);
     expect(idleState(activity, start + 500_000, 300, request).locked).toBe(true);
   });
-  it("ignores a request time from the future (the clock stepped back)", () => {
-    expect(idleState(start, start + 300_000, 300, start + 9_000_000).locked).toBe(true);
+  it("treats a request from the future as just now (the clock stepped back), never as none", () => {
+    // The server may well have stamped it, so the browser waits a full count from this moment.
+    expect(idleState(start, start + 300_000, 300, start + 9_000_000)).toEqual({
+      locked: false,
+      msLeft: 305_000,
+    });
   });
   it("is the old rule when no request has been sent", () => {
     expect(idleState(start, start + 300_000, 300, null).locked).toBe(true);

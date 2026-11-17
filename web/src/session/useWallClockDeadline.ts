@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 /**
  * The longest a timer is trusted to sleep. A long `setTimeout` stops counting while the machine
@@ -65,5 +65,6 @@ export function useWallClockDeadline(
     };
   }, [active]);
 
-  return () => look.current();
+  // Stable, so a listener that depends on it is attached once, not on every render.
+  return useCallback(() => look.current(), []);
 }

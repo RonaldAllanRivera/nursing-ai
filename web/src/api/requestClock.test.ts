@@ -1,5 +1,5 @@
-import { http, HttpResponse } from "msw";
-import { afterEach, describe, expect, it } from "vitest";
+import { delay, http, HttpResponse } from "msw";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { server } from "../test/setup";
 import { api } from "./client";
 import {
@@ -25,6 +25,39 @@ describe("refreshesServerIdle", () => {
   it("keeps counting anything else under the draft-jobs address", () => {
     expect(refreshesServerIdle("POST", "/api/v1/draft-jobs/{job_id}")).toBe(true);
     expect(refreshesServerIdle("GET", "/api/v1/draft-jobs/abc/extra")).toBe(true);
+  });
+});
+
+describe("a slow request", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("counts from when its answer arrives too: the server stamps it before it answers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+    server.use(
+      http.get("*/api/v1/patients", async () => {
+        await delay(8_000);
+        return HttpResponse.json([]);
+      }),
+      http.get("*/api/v1/draft-jobs/:id", async () => {
+        await delay(8_000);
+        return HttpResponse.json({}, { status: 404 });
+      }),
+    );
+    const sentAt = Date.now();
+    const call = api.GET("/api/v1/patients");
+    expect(lastRefreshingRequest()).toBe(sentAt);
+    await vi.advanceTimersByTimeAsync(8_000);
+    await call;
+    expect(lastRefreshingRequest()).toBeGreaterThanOrEqual(sentAt + 8_000);
+
+    // The poll never counts, sent or answered.
+    resetRequestClock();
+    const poll = api.GET("/api/v1/draft-jobs/{job_id}", { params: { path: { job_id: "x" } } });
+    await vi.advanceTimersByTimeAsync(8_000);
+    await poll;
+    expect(lastRefreshingRequest()).toBeNull();
   });
 });
 
