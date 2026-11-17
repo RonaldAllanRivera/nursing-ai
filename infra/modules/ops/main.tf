@@ -14,6 +14,27 @@ resource "aws_ssm_parameter" "secret" {
   value_wo_version = 1
 }
 
+# The site address is public (the address of the site itself), so it is a plain
+# String that Terraform writes, and it changes when the address does (check.sh
+# lets a plain `value` only on a String).
+resource "aws_ssm_parameter" "site_url" {
+  name        = "${var.parameter_path}/site-url"
+  description = "Address of the site (an origin, no path), written by Terraform. The app reads it at cold start."
+  type        = "String"
+  value       = var.site_url
+}
+
+# Set by hand like the secrets above. The placeholder is a well-formed email
+# (exactly one @) because the app checks the setting at every cold start, and
+# would otherwise fail to start until the owner sets the real address.
+resource "aws_ssm_parameter" "bootstrap_admin_email" {
+  name             = "${var.parameter_path}/bootstrap-admin-email"
+  description      = "Set with aws ssm put-parameter --overwrite. Terraform never reads this value."
+  type             = "SecureString"
+  value_wo         = var.bootstrap_admin_email_placeholder
+  value_wo_version = 1
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/${var.api_function_name}"
   retention_in_days = var.log_retention_days
@@ -21,6 +42,11 @@ resource "aws_cloudwatch_log_group" "api" {
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/aws/lambda/${var.worker_function_name}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "ops" {
+  name              = "/aws/lambda/${var.ops_function_name}"
   retention_in_days = var.log_retention_days
 }
 

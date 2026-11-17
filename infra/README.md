@@ -38,9 +38,9 @@ changes, and a deploy before they land will not serve requests:
 | `modules/network/` | VPC, two private dual-stack subnets, the IPv6 egress-only gateway, security groups. |
 | `modules/aurora/` | The Aurora PostgreSQL cluster and the `database-url` parameter. |
 | `modules/registry/` | The ECR image repository (keeps the newest 3 images). |
-| `modules/compute/` | The API and worker Lambda functions, the HTTP API, the job queue and its dead-letter queue. |
+| `modules/compute/` | The API, worker and ops Lambda functions, the HTTP API, the job queue and its dead-letter queue. |
 | `modules/web/` | The S3 bucket and CloudFront distribution for the web app. |
-| `modules/ops/` | Log groups, the three secret parameters, the alarm topic and three alarms. |
+| `modules/ops/` | Log groups, the three secret parameters, the `bootstrap-admin-email` and `site-url` parameters, the alarm topic and three alarms. |
 | `modules/brake/` | The budget action that cuts the Lambda functions off from AWS at 100% of the budget. |
 | `scripts/check.sh` | One command that runs every check. |
 

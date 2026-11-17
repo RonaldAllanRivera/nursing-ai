@@ -9,7 +9,7 @@ variable "name" {
 }
 
 variable "image_uri" {
-  description = "Full URI of the application container image, including its tag, that both functions run."
+  description = "Full URI of the application container image, including its tag, that all three functions run."
   type        = string
 
   validation {
@@ -171,6 +171,56 @@ variable "google_client_secret_parameter_name" {
   }
 }
 
+variable "site_url_parameter_arn" {
+  description = "ARN of the parameter that holds the site address (an origin such as https://d111111abcdef8.cloudfront.net). Every function may read it."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.site_url_parameter_arn))
+    error_message = "site_url_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
+
+  validation {
+    condition     = endswith(var.site_url_parameter_arn, ":parameter${var.site_url_parameter_name}")
+    error_message = "site_url_parameter_arn must be the ARN of the parameter named site_url_parameter_name."
+  }
+}
+
+variable "site_url_parameter_name" {
+  description = "Name of the parameter that holds the site address (an origin such as https://d111111abcdef8.cloudfront.net)."
+  type        = string
+
+  validation {
+    condition     = startswith(var.site_url_parameter_name, "/")
+    error_message = "site_url_parameter_name must be a parameter name that starts with /."
+  }
+}
+
+variable "bootstrap_admin_email_parameter_arn" {
+  description = "ARN of the parameter that holds the bootstrap admin email. Only the API may read it."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:ssm:", var.bootstrap_admin_email_parameter_arn))
+    error_message = "bootstrap_admin_email_parameter_arn must be an SSM parameter ARN (arn:aws:ssm:...)."
+  }
+
+  validation {
+    condition     = endswith(var.bootstrap_admin_email_parameter_arn, ":parameter${var.bootstrap_admin_email_parameter_name}")
+    error_message = "bootstrap_admin_email_parameter_arn must be the ARN of the parameter named bootstrap_admin_email_parameter_name."
+  }
+}
+
+variable "bootstrap_admin_email_parameter_name" {
+  description = "Name of the parameter that holds the bootstrap admin email."
+  type        = string
+
+  validation {
+    condition     = startswith(var.bootstrap_admin_email_parameter_name, "/")
+    error_message = "bootstrap_admin_email_parameter_name must be a parameter name that starts with /."
+  }
+}
+
 variable "api_log_group_name" {
   description = "Name of the log group the API function writes to."
   type        = string
@@ -178,6 +228,11 @@ variable "api_log_group_name" {
 
 variable "worker_log_group_name" {
   description = "Name of the log group the worker function writes to."
+  type        = string
+}
+
+variable "ops_log_group_name" {
+  description = "Name of the log group the ops function writes to."
   type        = string
 }
 
@@ -260,5 +315,49 @@ variable "architecture" {
   validation {
     condition     = contains(["x86_64", "arm64"], var.architecture)
     error_message = "architecture must be x86_64 or arm64."
+  }
+}
+
+variable "ops_memory_mb" {
+  description = "Memory for the ops function, in MB. It runs migrations, the demo seed and the smoke check."
+  type        = number
+  default     = 1024
+
+  validation {
+    condition     = var.ops_memory_mb >= 128 && var.ops_memory_mb <= 10240
+    error_message = "ops_memory_mb must be between 128 and 10240."
+  }
+}
+
+variable "ops_timeout_s" {
+  description = "Timeout for the ops function, in seconds. A migration may wait for a paused database to wake."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.ops_timeout_s >= 1 && var.ops_timeout_s <= 900
+    error_message = "ops_timeout_s must be between 1 and 900."
+  }
+}
+
+variable "idle_lock_minutes" {
+  description = "Minutes of inactivity after which the API asks for the PIN again (the IDLE_LOCK_MINUTES setting)."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.idle_lock_minutes >= 1
+    error_message = "idle_lock_minutes must be at least 1."
+  }
+}
+
+variable "ai_daily_drafts_per_user" {
+  description = "Most drafts one invited user may start in a day (the AI_DAILY_DRAFTS_PER_USER setting)."
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.ai_daily_drafts_per_user >= 1
+    error_message = "ai_daily_drafts_per_user must be at least 1."
   }
 }

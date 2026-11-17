@@ -55,6 +55,13 @@ override_resource {
 }
 
 override_resource {
+  target = module.compute.aws_iam_role.ops
+  values = {
+    arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-ops"
+  }
+}
+
+override_resource {
   target = module.compute.aws_apigatewayv2_api.this
   values = {
     id            = "abc123"
@@ -88,6 +95,20 @@ override_resource {
   target = module.ops.aws_ssm_parameter.secret["google-client-secret"]
   values = {
     arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/google-client-secret"
+  }
+}
+
+override_resource {
+  target = module.ops.aws_ssm_parameter.site_url
+  values = {
+    arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/site-url"
+  }
+}
+
+override_resource {
+  target = module.ops.aws_ssm_parameter.bootstrap_admin_email
+  values = {
+    arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/bootstrap-admin-email"
   }
 }
 
@@ -203,6 +224,36 @@ run "site_routes_api_calls_to_the_http_api" {
   assert {
     condition     = output.web_bucket_name == module.web.bucket_name && output.distribution_id == module.web.distribution_id && output.queue_url == module.compute.queue_url
     error_message = "the outputs must come from the web and compute modules"
+  }
+}
+
+run "ops_function_is_wired_to_its_log_group_and_outputs" {
+  assert {
+    condition     = module.compute.function_log_groups.ops == module.ops.ops_log_group_name && module.ops.ops_log_group_name == "/aws/lambda/${module.compute.ops_function_name}"
+    error_message = "the ops function must log to the group ops made for it"
+  }
+  assert {
+    condition     = output.ops_function_name == "nursing-ai-demo-ops" && output.http_api_id == "abc123" && output.dlq_name == "${module.compute.dlq_name}"
+    error_message = "the deploy outputs must come from compute"
+  }
+  assert {
+    condition     = output.alarm_names == { api_5xx = "nursing-ai-demo-api-5xx", dead_jobs = "nursing-ai-demo-dead-jobs", ai_spend = "nursing-ai-demo-ai-spend" }
+    error_message = "alarm_names must name the three alarms"
+  }
+  assert {
+    condition     = !contains(module.brake.target_role_names, module.compute.ops_role_name)
+    error_message = "the ops role stays outside the brake"
+  }
+}
+
+run "site_url_parameter_holds_the_distribution_address" {
+  assert {
+    condition     = module.ops.site_url_parameter_name == "/nursing-ai/demo/site-url" && module.ops.bootstrap_admin_email_parameter_name == "/nursing-ai/demo/bootstrap-admin-email"
+    error_message = "the new parameters live under the environment's path"
+  }
+  assert {
+    condition     = module.ops.site_url_parameter_value == "https://${module.web.domain_name}" && module.ops.site_url_parameter_value == output.site_url
+    error_message = "the site-url parameter must be https:// plus the distribution's domain, the same as the site_url output"
   }
 }
 

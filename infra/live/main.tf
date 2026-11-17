@@ -2,11 +2,12 @@ locals {
   name           = "nursing-ai-${var.environment}"
   parameter_path = "/nursing-ai/${var.environment}"
 
-  # Compute names its functions "<name>-api" and "<name>-worker". Ops makes the
+  # Compute names its functions "<name>-api", "<name>-worker" and "<name>-ops". Ops makes the
   # log groups before the functions exist, so it needs the same names. A test
   # checks that the two agree.
   api_function_name    = "${local.name}-api"
   worker_function_name = "${local.name}-worker"
+  ops_function_name    = "${local.name}-ops"
 }
 
 module "network" {
@@ -26,8 +27,9 @@ module "aurora" {
   database_url_parameter_name = "${local.parameter_path}/database-url"
 }
 
-# Ops reads compute's API ID and queue name for its alarms, and compute reads
-# ops's log groups and parameters. Terraform orders the resources, not the
+# Ops reads compute's API ID and queue name for its alarms and the web module's
+# domain for the site-url parameter, and compute reads ops's log groups and
+# parameters. Terraform orders the resources, not the
 # modules, so the log groups still exist before the functions.
 module "ops" {
   source = "../modules/ops"
@@ -37,6 +39,8 @@ module "ops" {
   alarm_email              = var.alert_email
   api_function_name        = local.api_function_name
   worker_function_name     = local.worker_function_name
+  ops_function_name        = local.ops_function_name
+  site_url                 = "https://${module.web.domain_name}"
   http_api_id              = module.compute.http_api_id
   dlq_name                 = module.compute.dlq_name
   ai_daily_spend_alarm_usd = var.ai_daily_spend_alarm_usd
@@ -63,8 +67,14 @@ module "compute" {
   google_client_secret_parameter_arn  = module.ops.parameter_arns["google-client-secret"]
   google_client_secret_parameter_name = module.ops.parameter_names["google-client-secret"]
 
+  site_url_parameter_arn               = module.ops.site_url_parameter_arn
+  site_url_parameter_name              = module.ops.site_url_parameter_name
+  bootstrap_admin_email_parameter_arn  = module.ops.bootstrap_admin_email_parameter_arn
+  bootstrap_admin_email_parameter_name = module.ops.bootstrap_admin_email_parameter_name
+
   api_log_group_name       = module.ops.api_log_group_name
   worker_log_group_name    = module.ops.worker_log_group_name
+  ops_log_group_name       = module.ops.ops_log_group_name
   api_access_log_group_arn = module.ops.api_access_log_group_arn
 }
 

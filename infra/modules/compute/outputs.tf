@@ -18,6 +18,11 @@ output "worker_function_name" {
   value       = aws_lambda_function.worker.function_name
 }
 
+output "ops_function_name" {
+  description = "Name of the ops function, which a deploy invokes for migrations, the demo seed and the smoke check."
+  value       = aws_lambda_function.ops.function_name
+}
+
 output "api_role_name" {
   description = "Name of the API function's role."
   value       = aws_iam_role.api.name
@@ -36,6 +41,11 @@ output "worker_role_name" {
 output "worker_role_arn" {
   description = "ARN of the worker function's role."
   value       = aws_iam_role.worker.arn
+}
+
+output "ops_role_name" {
+  description = "Name of the ops function's role."
+  value       = aws_iam_role.ops.name
 }
 
 output "queue_url" {
@@ -59,9 +69,10 @@ output "dlq_arn" {
 }
 
 output "function_log_groups" {
-  description = "Names of the log groups the two functions write to, keyed api and worker."
+  description = "Names of the log groups the three functions write to, keyed api, worker and ops."
   value = {
     api    = aws_lambda_function.api.logging_config[0].log_group
     worker = aws_lambda_function.worker.logging_config[0].log_group
+    ops    = aws_lambda_function.ops.logging_config[0].log_group
   }
 }

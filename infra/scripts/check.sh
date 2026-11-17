@@ -86,18 +86,25 @@ if [ ${#tf_files[@]} -gt 0 ]; then
   fi
   for f in "${tf_files[@]}"; do
     # Braces are counted on a copy of the line without strings and comments.
+    # A plain `value` is allowed only on a parameter whose type is "String"
+    # (a public setting such as the site address). It is reported when the
+    # resource ends, because `type` may come after it.
     awk -v file="$f" '
-      /^[[:space:]]*resource[[:space:]]+"aws_ssm_parameter"/ { inside = 1; depth = 0 }
+      /^[[:space:]]*resource[[:space:]]+"aws_ssm_parameter"/ { inside = 1; depth = 0; plain = ""; is_string = 0 }
       inside {
         l = $0
+        if (l ~ /^[[:space:]]*type[[:space:]]*=[[:space:]]*"String"[[:space:]]*$/) is_string = 1
         gsub(/"([^"\\]|\\.)*"/, "", l)
         sub(/(#|\/\/).*/, "", l)
-        if (l ~ /^[[:space:]]*value[[:space:]]*=/) {
-          print file ":" FNR ": plaintext value in aws_ssm_parameter"; found = 1
-        }
+        if (l ~ /^[[:space:]]*value[[:space:]]*=/ && plain == "") plain = FNR
         n = gsub(/\{/, "{", l); m = gsub(/\}/, "}", l)
         depth += n - m
-        if (depth <= 0 && (n > 0 || m > 0)) inside = 0
+        if (depth <= 0 && (n > 0 || m > 0)) {
+          inside = 0
+          if (plain != "" && !is_string) {
+            print file ":" plain ": plaintext value in aws_ssm_parameter"; found = 1
+          }
+        }
       }
       END { exit found }
     ' "$f" || bad=1

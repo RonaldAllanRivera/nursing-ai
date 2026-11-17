@@ -36,6 +36,27 @@ override_resource {
 }
 
 override_resource {
+  target = aws_cloudwatch_log_group.ops
+  values = {
+    arn = "arn:aws:logs:ap-southeast-2:123456789012:log-group:/aws/lambda/ops-fn"
+  }
+}
+
+override_resource {
+  target = aws_ssm_parameter.site_url
+  values = {
+    arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/site-url"
+  }
+}
+
+override_resource {
+  target = aws_ssm_parameter.bootstrap_admin_email
+  values = {
+    arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/bootstrap-admin-email"
+  }
+}
+
+override_resource {
   target = aws_cloudwatch_log_group.api_access
   values = {
     arn = "arn:aws:logs:ap-southeast-2:123456789012:log-group:/aws/apigateway/access"
@@ -55,6 +76,8 @@ variables {
   alarm_email          = "ops@example.com"
   api_function_name    = "nursing-ai-demo-api"
   worker_function_name = "nursing-ai-demo-worker"
+  ops_function_name    = "nursing-ai-demo-ops"
+  site_url             = "https://d111111abcdef8.cloudfront.net"
   http_api_id          = "abc123"
   dlq_name             = "nursing-ai-demo-dlq"
 }
@@ -265,5 +288,112 @@ run "inputs_reach_their_resources" {
   assert {
     condition     = aws_cloudwatch_metric_alarm.api_5xx.dimensions["Stage"] == "live"
     error_message = "http_api_stage must reach the 5xx alarm."
+  }
+}
+
+run "ops_function_logs_kept_14_days" {
+  command = plan
+
+  assert {
+    condition     = aws_cloudwatch_log_group.ops.name == "/aws/lambda/nursing-ai-demo-ops" && aws_cloudwatch_log_group.ops.retention_in_days == 14
+    error_message = "The ops function's log group must be kept 14 days."
+  }
+  assert {
+    condition     = output.ops_log_group_name == "/aws/lambda/nursing-ai-demo-ops"
+    error_message = "ops_log_group_name must be the ops function's group."
+  }
+}
+
+run "site_url_parameter_is_a_plain_string" {
+  command = plan
+
+  assert {
+    condition     = aws_ssm_parameter.site_url.name == "/nursing-ai/demo/site-url" && aws_ssm_parameter.site_url.type == "String"
+    error_message = "The site address is a plain String under the path: it is public and Terraform writes it."
+  }
+  assert {
+    condition     = aws_ssm_parameter.site_url.value == "https://d111111abcdef8.cloudfront.net"
+    error_message = "The site-url parameter must hold the address it was given."
+  }
+  assert {
+    condition     = output.site_url_parameter_name == "/nursing-ai/demo/site-url"
+    error_message = "site_url_parameter_name must name the parameter."
+  }
+}
+
+run "site_url_must_be_an_origin" {
+  command = plan
+
+  variables {
+    site_url = "https://d111111abcdef8.cloudfront.net/"
+  }
+
+  expect_failures = [var.site_url]
+}
+
+run "site_url_must_be_https_or_http" {
+  command = plan
+
+  variables {
+    site_url = "d111111abcdef8.cloudfront.net"
+  }
+
+  expect_failures = [var.site_url]
+}
+
+run "bootstrap_admin_email_is_set_by_hand" {
+  command = plan
+
+  assert {
+    condition     = aws_ssm_parameter.bootstrap_admin_email.name == "/nursing-ai/demo/bootstrap-admin-email" && aws_ssm_parameter.bootstrap_admin_email.type == "SecureString"
+    error_message = "The bootstrap admin email is a SecureString under the path."
+  }
+  assert {
+    condition     = aws_ssm_parameter.bootstrap_admin_email.value_wo_version == 1
+    error_message = "The placeholder must go in as a write-only value, version 1."
+  }
+}
+
+run "new_parameter_outputs_line_up" {
+  assert {
+    condition     = output.site_url_parameter_arn == "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/site-url" && output.bootstrap_admin_email_parameter_arn == "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/bootstrap-admin-email"
+    error_message = "each ARN output must be its own parameter's."
+  }
+  assert {
+    condition     = output.bootstrap_admin_email_parameter_name == "/nursing-ai/demo/bootstrap-admin-email"
+    error_message = "bootstrap_admin_email_parameter_name must name the parameter."
+  }
+  assert {
+    condition     = output.alarm_names == { api_5xx = "nursing-ai-demo-api-5xx", dead_jobs = "nursing-ai-demo-dead-jobs", ai_spend = "nursing-ai-demo-ai-spend" }
+    error_message = "alarm_names must name the 5xx, dead-letter and AI-spend alarms."
+  }
+}
+
+run "placeholder_email_must_have_exactly_one_at_sign" {
+  command = plan
+
+  variables {
+    bootstrap_admin_email_placeholder = "nobody@@example.com"
+  }
+
+  expect_failures = [var.bootstrap_admin_email_placeholder]
+}
+
+run "placeholder_email_without_an_at_sign_is_refused" {
+  command = plan
+
+  variables {
+    bootstrap_admin_email_placeholder = "nobody"
+  }
+
+  expect_failures = [var.bootstrap_admin_email_placeholder]
+}
+
+run "placeholder_email_defaults_to_an_example_address" {
+  command = plan
+
+  assert {
+    condition     = var.bootstrap_admin_email_placeholder == "nobody@example.com"
+    error_message = "The default placeholder is nobody@example.com."
   }
 }
