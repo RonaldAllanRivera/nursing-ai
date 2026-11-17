@@ -1,4 +1,4 @@
-import type { Ref } from "react";
+import type { KeyboardEventHandler, Ref } from "react";
 import { Icon } from "../components/Icon";
 import { PIN_LENGTH } from "./pin";
 
@@ -17,6 +17,7 @@ interface PinFieldProps {
   /** Hidden-from-sight help the field is also described by (the screen's hint). */
   describedBy?: string;
   ref?: Ref<HTMLInputElement>;
+  onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
   /** Held still while a request is out, so digits typed meanwhile are not wiped by the clear after a wrong PIN. */
   readOnly?: boolean;
 }
@@ -34,6 +35,7 @@ export function PinField({
   describedBy,
   ref,
   readOnly,
+  onKeyDown,
 }: PinFieldProps) {
   const messageId = `${id}-message`;
   const described = [describedBy, message ? messageId : undefined].filter(Boolean).join(" ");
@@ -51,6 +53,7 @@ export function PinField({
         maxLength={PIN_LENGTH}
         value={value}
         readOnly={readOnly}
+        onKeyDown={onKeyDown}
         aria-invalid={message ? true : undefined}
         aria-describedby={described || undefined}
         onChange={(event) => {

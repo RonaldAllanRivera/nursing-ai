@@ -119,6 +119,18 @@ export function useSetPin() {
 }
 
 /**
+ * After a PIN request failed for a demo person: a 401 means the session already ended (the fifth
+ * wrong PIN, or it ran out), and the sign-in screen says which. The hours it lasted, if an
+ * earlier 401 already said so, are the better answer.
+ */
+export function explainDemoEnd(queryClient: QueryClient, error: unknown, previous: unknown) {
+  const reason = demoEndedReason(error, previous);
+  if (reason && !queryClient.getQueryData(signInNoticeKey)) {
+    queryClient.setQueryData(signInNoticeKey, reason);
+  }
+}
+
+/**
  * Proves who is at the keyboard (after sign-in, or after an idle lock). A demo person's 401 has
  * already signed the app out; this says why on the sign-in screen.
  */
@@ -130,11 +142,7 @@ export function useUnlock(persona: boolean) {
       onSuccess: (session) => storeSession(queryClient, session),
       onError: (error, previous) => {
         lookAgainOnConflict(queryClient, error);
-        const reason = persona ? demoEndedReason(error, previous) : null;
-        // The hours the session lasted, if the 401 already said so, is the better answer.
-        if (reason && !queryClient.getQueryData(signInNoticeKey)) {
-          queryClient.setQueryData(signInNoticeKey, reason);
-        }
+        if (persona) explainDemoEnd(queryClient, error, previous);
       },
     },
   );

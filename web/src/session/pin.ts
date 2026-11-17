@@ -15,6 +15,14 @@ export function isPinTyped(value: string): boolean {
   return /^[0-9]{6}$/.test(value);
 }
 
+/** Said where a PIN is asked for in passing (signing, saving settings) when fewer than six digits were typed. */
+export const PIN_NEEDED = "Enter your 6-digit PIN.";
+
+/** A wrong PIN, as opposed to any other way a request that carries a PIN can be refused. */
+export function isPinRefusal(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.problem?.code === "pin_wrong";
+}
+
 export const PIN_LOCKED = "Your PIN is locked. Ask a head nurse or the admin to reset it.";
 /** The locked screen's next step: the session never looks again by itself, so she signs in anew. */
 export const PIN_LOCKED_NEXT = "Once it's reset, choose Switch nurse above and sign in again.";

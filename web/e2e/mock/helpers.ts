@@ -110,6 +110,19 @@ export async function checkScreen(page: Page, opts: { night?: boolean } = {}) {
   else await expectNoViolations(page);
 }
 
+/** Like `checkScreen` with night, for an open dialog: the theme button is behind it, so the theme is set on the page directly. */
+export async function checkDialog(page: Page) {
+  await noSidewaysScroll(page);
+  await expectNoViolations(page);
+  await page.evaluate(() => {
+    document.documentElement.setAttribute("data-theme", "night");
+  });
+  await expectNoViolations(page);
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute("data-theme");
+  });
+}
+
 /** Tab (never click) until `target` has the focus, failing if it never does. */
 export async function tabTo(page: Page, target: Locator, limit = 80) {
   for (let i = 0; i < limit; i++) {
@@ -142,6 +155,20 @@ export async function enterDemoPin(page: Page) {
   await page.keyboard.type(DEMO_PIN);
   await page.keyboard.press("Enter");
 }
+
+/**
+ * In a dialog that asks for the PIN (signing, saving settings, resetting the demo): the PIN field
+ * already has the focus, so type the demo PIN and press Enter, with the keyboard only.
+ */
+export async function enterPinInDialog(page: Page, name: string | RegExp) {
+  const dialog = page.getByRole("dialog", { name });
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await page.keyboard.type(DEMO_PIN);
+  await page.keyboard.press("Enter");
+  return dialog;
+}
+
+export const SAVE_PIN_DIALOG = "Enter your PIN to save these settings";
 
 export async function signInAs(page: Page, persona: string, landing: string) {
   await page.goto("/sign-in");

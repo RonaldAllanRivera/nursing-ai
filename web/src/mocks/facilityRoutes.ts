@@ -63,6 +63,10 @@ function settingsErrors(body: Settings): Schemas["FieldError"][] {
   if (!["24h", "12h"].includes(body.clock)) {
     add("body.clock", "Choose 24-hour or 12-hour.");
   }
+  const hours: unknown = body.session_max_hours;
+  if (typeof hours !== "number" || !Number.isInteger(hours) || hours < 1 || hours > 24) {
+    add("body.session_max_hours", "Enter 1 to 24 hours.");
+  }
   if (localMinutes(body.day_starts_at) === null) {
     add("body.day_starts_at", "A time in whole minutes, like 06:00.");
   }

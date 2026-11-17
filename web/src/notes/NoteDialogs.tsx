@@ -1,7 +1,12 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useRef, type ReactNode, type RefObject } from "react";
+import { isPinRefusal } from "../session/pin";
+import { PinField } from "../session/PinField";
+import { explainDemoEnd, useSession } from "../session/session";
+import { usePinEntry } from "../session/usePinEntry";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
 import { WriteProblem } from "./WriteProblem";
-import { failureOf, useFinishNote } from "./writes";
+import { failureOf, useDiscardNote, useSignNote } from "./writes";
 
 interface Shared {
   open: boolean;
@@ -23,24 +28,27 @@ function Choice({
   onNo,
   primary,
   safe,
+  submit = false,
 }: {
   yes: string;
   yesBusy: string;
   no: string;
   busy: boolean;
-  onYes: () => void;
+  /** Not needed when the first button submits the form around it. */
+  onYes?: () => void;
   onNo: () => void;
   primary: boolean;
-  safe: RefObject<HTMLButtonElement | null>;
+  safe?: RefObject<HTMLButtonElement | null>;
+  submit?: boolean;
 }) {
   return (
     <div className="actions">
       <button
-        type="button"
+        type={submit ? "submit" : "button"}
         className={primary ? "btn btn-primary" : "btn btn-firm"}
         aria-disabled={busy || undefined}
         onClick={() => {
-          if (!busy) onYes();
+          if (!busy && !submit) onYes?.();
         }}
       >
         {busy ? yesBusy : yes}
@@ -62,20 +70,22 @@ function Choice({
 }
 
 /**
- * The panel. It opens with the focus on the safe choice (an Enter held down on the opener must
- * not go on to sign or discard), and can't be dismissed while the write is under way.
+ * The panel. It opens with the focus where an Enter held down on the opener can't sign or
+ * discard (the safe choice, or the empty PIN field), and can't be dismissed while the write is
+ * under way.
  */
 function Panel({
   shared,
   title,
   busy,
-  safe,
+  focus,
   children,
 }: {
   shared: Shared;
   title: string;
   busy: boolean;
-  safe: RefObject<HTMLButtonElement | null>;
+  /** What takes the focus when the dialog opens: the safe choice, or an empty PIN field. */
+  focus: RefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
   const hold = (event: Event) => {
@@ -87,7 +97,7 @@ function Panel({
       className="note-dialog"
       onOpenAutoFocus={(event) => {
         event.preventDefault();
-        safe.current?.focus();
+        focus.current?.focus();
       }}
       onCloseAutoFocus={shared.onCloseAutoFocus}
       onEscapeKeyDown={hold}
@@ -100,7 +110,7 @@ function Panel({
   );
 }
 
-/** "Sign this FDAR note": who is signing, what is missing, then Sign note. No PIN. */
+/** "Sign this FDAR note": who is signing, what is missing, her PIN, then Sign note. */
 export function SignDialog({
   format,
   signerName,
@@ -117,16 +127,39 @@ export function SignDialog({
   onSigned: () => void;
   onIncomplete: (lineIds: string[]) => void;
 }) {
-  const sign = useFinishNote(shared.noteId, "sign");
-  const safe = useRef<HTMLButtonElement>(null);
+  const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const persona = session?.kind === "persona";
+  const sign = useSignNote(shared.noteId, {
+    onSuccess: () => {
+      onSigned();
+      done();
+    },
+    onError: (error, previous) => {
+      if (persona) explainDemoEnd(queryClient, error, previous);
+      const failure = failureOf(error);
+      // With no line to go to, the dialog stays and says what to do.
+      if (failure.kind === "incomplete" && failure.lineIds.length > 0) {
+        onIncomplete(failure.lineIds);
+        done();
+      }
+    },
+  });
+  const field = useRef<HTMLInputElement>(null);
+  const entry = usePinEntry(sign, persona, field);
+  /** Closes the dialog with nothing of the last try left in it (the typed PIN, the words under it). */
+  function done() {
+    entry.reset();
+    shared.onOpenChange(false);
+  }
   const close = (open: boolean) => {
-    if (!open && sign.isPending) return;
-    if (!open) sign.reset();
-    shared.onOpenChange(open);
+    if (!open && sign.pending) return;
+    if (!open) done();
+    else shared.onOpenChange(open);
   };
   return (
     <Dialog open={shared.open} onOpenChange={close}>
-      <Panel shared={shared} title={`Sign this ${format} note`} busy={sign.isPending} safe={safe}>
+      <Panel shared={shared} title={`Sign this ${format} note`} busy={sign.pending} focus={field}>
         <DialogDescription>
           {`You're signing as ${signerName}. After you sign, the note is locked.`}
         </DialogDescription>
@@ -137,42 +170,40 @@ export function SignDialog({
             </p>
           </div>
         ) : null}
-        {sign.isError ? (
-          <WriteProblem
-            error={sign.error}
-            noteId={shared.noteId}
-            onReloaded={() => {
-              sign.reset();
+        <form noValidate onSubmit={entry.onSubmit}>
+          <div className="mt-4">
+            <PinField
+              ref={field}
+              id="sign-pin"
+              label="Your PIN"
+              value={entry.pin}
+              onChange={entry.onChange}
+              message={entry.message}
+              readOnly={sign.pending}
+              onKeyDown={entry.onKeyDown}
+            />
+          </div>
+          {sign.error !== null && !isPinRefusal(sign.error) ? (
+            <WriteProblem
+              error={sign.error}
+              noteId={shared.noteId}
+              onReloaded={() => {
+                sign.clear();
+              }}
+            />
+          ) : null}
+          <Choice
+            primary
+            submit
+            yes="Sign note"
+            yesBusy="Signing…"
+            no="Cancel"
+            busy={sign.pending}
+            onNo={() => {
+              close(false);
             }}
           />
-        ) : null}
-        <Choice
-          primary
-          safe={safe}
-          yes="Sign note"
-          yesBusy="Signing…"
-          no="Cancel"
-          busy={sign.isPending}
-          onNo={() => {
-            close(false);
-          }}
-          onYes={() => {
-            sign.mutate(undefined, {
-              onSuccess: () => {
-                onSigned();
-                close(false);
-              },
-              onError: (error) => {
-                const failure = failureOf(error);
-                // With no line to go to, the dialog stays and says what to do.
-                if (failure.kind === "incomplete" && failure.lineIds.length > 0) {
-                  onIncomplete(failure.lineIds);
-                  close(false);
-                }
-              },
-            });
-          }}
-        />
+        </form>
       </Panel>
     </Dialog>
   );
@@ -185,7 +216,7 @@ export function DiscardDialog({
 }: Shared & {
   onDiscarded: () => void;
 }) {
-  const discard = useFinishNote(shared.noteId, "discard");
+  const discard = useDiscardNote(shared.noteId);
   const safe = useRef<HTMLButtonElement>(null);
   const close = (open: boolean) => {
     if (!open && discard.isPending) return;
@@ -194,7 +225,7 @@ export function DiscardDialog({
   };
   return (
     <Dialog open={shared.open} onOpenChange={close}>
-      <Panel shared={shared} title="Discard this draft?" busy={discard.isPending} safe={safe}>
+      <Panel shared={shared} title="Discard this draft?" busy={discard.isPending} focus={safe}>
         <DialogDescription>
           It won&apos;t reach the record. Your typed note stays saved.
         </DialogDescription>

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
 import type { components } from "../api/schema";
-import { INTERIM_PIN } from "../session/interimPin";
+import { usePinRequest } from "../session/usePinRequest";
 import { noteQuery } from "./note";
 
 type Schemas = components["schemas"];
@@ -57,33 +57,71 @@ export function useActOnLine(noteId: string) {
   });
 }
 
-/** Sign the note, or discard the draft. Either way this shift's list on the patient page is out of date. */
-export function useFinishNote(noteId: string, how: "sign" | "discard") {
+/** A sign or a discard finished: its answer replaces the note, and this shift's list on the patient page is out of date. */
+function keepFinished(
+  queryClient: QueryClient,
+  noteId: string,
+  { note, etag }: { note: Schemas["NoteOut"]; etag: string | null },
+) {
+  keepAnswer(queryClient, noteId, note, etag);
+  void queryClient.invalidateQueries({ queryKey: ["patient"] });
+}
+
+/** Discard the draft. It joins the note's one-at-a-time line of writes. */
+export function useDiscardNote(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     scope: { id: noteScope(noteId) },
     mutationFn: async () => {
-      const params = {
+      const answer = await api.POST("/api/v1/notes/{note_id}/discard", {
         params: {
           path: { note_id: noteId },
           header: { "If-Match": currentEtag(queryClient, noteId) },
         },
-      };
-      const answer =
-        how === "sign"
-          ? await api.POST("/api/v1/notes/{note_id}/sign", {
-              ...params,
-              body: { pin: INTERIM_PIN },
-            })
-          : await api.POST("/api/v1/notes/{note_id}/discard", params);
+      });
       return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
     },
     onMutate: () => queryClient.cancelQueries({ queryKey: entryKey(noteId) }),
-    onSuccess: ({ note, etag }) => {
-      keepAnswer(queryClient, noteId, note, etag);
-      void queryClient.invalidateQueries({ queryKey: ["patient"] });
+    onSuccess: (answer) => {
+      keepFinished(queryClient, noteId, answer);
     },
   });
+}
+
+/**
+ * Sign the note with the PIN that was typed. It goes through `usePinRequest`, so the PIN never
+ * stays in TanStack's mutation cache, and it keeps what every write to a note does: it shares the
+ * note's scope (so it waits for the writes before it), and it reads the version tag only when its
+ * turn comes, so it is made against what the last write returned.
+ */
+export function useSignNote(
+  noteId: string,
+  handlers: { onSuccess: () => void; onError: (error: unknown, previous: unknown) => void },
+) {
+  const queryClient = useQueryClient();
+  return usePinRequest(
+    async (pin: string) => {
+      const answer = await api.POST("/api/v1/notes/{note_id}/sign", {
+        params: {
+          path: { note_id: noteId },
+          header: { "If-Match": currentEtag(queryClient, noteId) },
+        },
+        body: { pin },
+      });
+      return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
+    },
+    {
+      onSuccess: (answer) => {
+        keepFinished(queryClient, noteId, answer);
+        handlers.onSuccess();
+      },
+      onError: handlers.onError,
+    },
+    {
+      scope: noteScope(noteId),
+      onMutate: () => queryClient.cancelQueries({ queryKey: entryKey(noteId) }),
+    },
+  );
 }
 
 /** What went wrong with a write, in the terms a screen acts on. */

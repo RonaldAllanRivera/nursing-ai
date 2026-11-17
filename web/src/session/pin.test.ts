@@ -7,7 +7,9 @@ import {
   demoEndedReason,
   PIN_CONNECTION,
   PIN_LOCKED,
+  PIN_NEEDED,
   idleLockWords,
+  isPinRefusal,
   isPinTyped,
   pinProblemMessage,
   screenForGate,
@@ -23,6 +25,19 @@ describe("screenForGate", () => {
     expect(screenForGate("enter_pin")).toBe("enter_pin");
     expect(screenForGate("idle_locked")).toBe("idle_locked");
     expect(screenForGate("pin_locked")).toBe("pin_locked");
+  });
+});
+
+describe("the PIN to type", () => {
+  it("asks for six digits in words", () => {
+    expect(PIN_NEEDED).toBe("Enter your 6-digit PIN.");
+  });
+
+  it("tells a wrong PIN from every other refusal", () => {
+    expect(isPinRefusal(problem(403, "pin_wrong", { tries_left: 3 }))).toBe(true);
+    expect(isPinRefusal(problem(403, "forbidden"))).toBe(false);
+    expect(isPinRefusal(problem(409, "note_locked"))).toBe(false);
+    expect(isPinRefusal(new Error("offline"))).toBe(false);
   });
 });
 

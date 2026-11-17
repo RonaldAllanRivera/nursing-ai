@@ -13,6 +13,8 @@ import { expect, test } from "@playwright/test";
 import { widths } from "../widths.ts";
 import {
   ADMIN,
+  enterPinInDialog,
+  SAVE_PIN_DIALOG,
   D2,
   EMILY,
   enterDemoPin,
@@ -143,7 +145,9 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await shot(page, "sign-dialog");
 
   // Signed: locked, with its hash. The removed line is not in the record.
-  await dialog.getByRole("button", { name: "Sign note" }).click();
+  // It asks for her own PIN, with the focus already in the field.
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await enterPinInDialog(page, "Sign this FDAR note");
   await expect(dialog).toBeHidden();
   await expect(page.getByText(SIGNED_AT)).toBeVisible();
   await expect(page.getByText(HASH)).toBeVisible();
@@ -237,8 +241,9 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Sign this FDAR note" });
   await expect(dialog).toBeVisible();
-  // It opens on the safe choice: a held Enter on Sign note can't go on to sign.
-  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  // It opens in the empty PIN field: a held Enter on Sign note can't go on to sign.
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await expect(dialog.getByLabel("Your PIN")).toHaveValue("");
   await checkScreen(page);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -246,13 +251,13 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
 
   await page.keyboard.press("Enter");
   await expect(dialog).toBeVisible();
-  // The focus is trapped in the dialog: Tab goes round its two buttons and never leaves.
-  for (let i = 0; i < 4; i++) {
+  // The focus is trapped in the dialog: Tab goes round its field and two buttons and never leaves.
+  for (let i = 0; i < 5; i++) {
     await page.keyboard.press("Tab");
     expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
   }
-  await tabTo(page, dialog.getByRole("button", { name: "Sign note" }));
-  await page.keyboard.press("Enter");
+  await tabTo(page, dialog.getByLabel("Your PIN"));
+  await enterPinInDialog(page, "Sign this FDAR note");
   await expect(page.getByText(SIGNED_AT)).toBeVisible();
   await expect(page.getByText(HASH)).toBeVisible();
   await expect(page.getByText("Signed. This note is locked.")).toBeVisible();
@@ -360,6 +365,7 @@ test.describe("admin path", () => {
     await page.keyboard.type("Night");
     await tabTo(page, page.getByRole("button", { name: "Save settings" }));
     await page.keyboard.press("Enter");
+    await enterPinInDialog(page, SAVE_PIN_DIALOG);
     await expect(pageStatus(page)).toContainText("Saved.");
     await expect(label).toHaveValue("Night");
     await checkScreen(page);

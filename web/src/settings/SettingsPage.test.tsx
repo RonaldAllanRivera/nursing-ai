@@ -4,10 +4,11 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 import { facilityQuery } from "../facility/useFacility";
 import { demoApi } from "../mocks/demo-api";
+import { MOCK_EMAILS } from "../mocks/staff";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
-import { chooseAndUnlock } from "../test/signIn";
+import { chooseAndUnlock, DEMO_PIN } from "../test/signIn";
 
 afterEach(() => {
   server.events.removeAllListeners();
@@ -21,6 +22,16 @@ async function openSettings(before?: () => void) {
   await screen.findByRole("heading", { name: "Settings" });
   const name = await screen.findByRole("textbox", { name: "Facility name" });
   return { ...view, name };
+}
+
+/** Presses Save settings, and gives the PIN in the dialog that asks for it. */
+async function saveWithPin(pin = DEMO_PIN) {
+  await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Enter your PIN to save these settings",
+  });
+  await userEvent.type(within(dialog).getByLabelText("Your PIN"), pin);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Save settings" }));
 }
 
 function shift(n: number) {
@@ -71,7 +82,7 @@ describe("the settings screen", () => {
     const label = within(shift(3)).getByLabelText("Label");
     await userEvent.clear(label);
     await userEvent.type(label, "Night");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     const status = pageStatus();
     await waitFor(() => {
       expect(status).toHaveTextContent("Saved.");
@@ -81,7 +92,7 @@ describe("the settings screen", () => {
     expect(queryClient.getQueryState(facilityQuery("ph-demo").queryKey)?.isInvalidated).toBe(true);
     // The next save goes against the new version, so it is accepted too.
     await userEvent.type(label, "s");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     await waitFor(() => {
       expect(status).toHaveTextContent("version 3");
     });
@@ -155,7 +166,7 @@ describe("the settings screen", () => {
     const label = within(shift(3)).getByLabelText("Label");
     await userEvent.clear(label);
     await userEvent.type(label, "Night");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     await waitFor(() => {
       expect(pageStatus()).toHaveTextContent("Saved.");
     });
@@ -165,12 +176,12 @@ describe("the settings screen", () => {
   it("says what to do for a refusal that names no field, and for one the server blames on the account", async () => {
     await openSettings();
     server.use(http.put("*/api/v1/facilities/:key", () => refuse(422, "invalid_request", [])));
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The server did not accept the settings and named no field. Check each field, then try again.",
     );
     server.use(http.put("*/api/v1/facilities/:key", () => refuse(403, "forbidden")));
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(
         "This account can't change settings. Sign out, then sign in as the admin.",
@@ -201,7 +212,7 @@ describe("the settings screen", () => {
         ]),
       ),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     const label = within(shift(2)).getByLabelText("Label");
     await waitFor(() => {
       expect(label).toHaveAccessibleDescription("A label is 1 to 40 characters.");
@@ -220,7 +231,7 @@ describe("the settings screen", () => {
         ]),
       ),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     const message = await screen.findByText("Shifts must cover 24 hours with no gap or overlap.");
     const table = screen.getByRole("group", { name: "Shifts" });
     expect(table).toContainElement(message);
@@ -235,7 +246,7 @@ describe("the settings screen", () => {
     );
     await userEvent.clear(name);
     await userEvent.type(name, "SYNTHETIC Edited Name");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await saveWithPin();
     expect(
       await screen.findByText("Someone else changed the settings. Reload to see them."),
     ).toBeVisible();
@@ -315,6 +326,284 @@ describe("the settings screen", () => {
       "The facilities did not load. Reload the page to try again.",
     );
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
+  });
+});
+
+describe("saving with your own PIN", () => {
+  /** Keeps the PUTs the screen sends: how many, and the last body. */
+  function watchPuts() {
+    const seen: { count: number; body: Record<string, unknown> | null } = { count: 0, body: null };
+    server.events.on("request:start", ({ request }) => {
+      if (request.method !== "PUT") return;
+      seen.count += 1;
+      void request
+        .clone()
+        .json()
+        .then((body: Record<string, unknown>) => {
+          seen.body = body;
+        });
+    });
+    return seen;
+  }
+
+  it("asks for the PIN after the form checks out, and sends it flat with the settings", async () => {
+    const { name, queryClient } = await openSettings();
+    const seen = watchPuts();
+    await userEvent.type(name, "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Enter your PIN to save these settings",
+    });
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
+    expect(seen.count).toBe(0);
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), `${DEMO_PIN}{Enter}`);
+    await waitFor(() => {
+      expect(pageStatus()).toHaveTextContent("Saved.");
+    });
+    expect(seen.body).toMatchObject({
+      pin: DEMO_PIN,
+      name: "SYNTHETIC Demo Hospital (PH)!",
+      session_max_hours: 12,
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(JSON.stringify(queryClient.getMutationCache().getAll())).not.toContain(DEMO_PIN);
+  });
+
+  it("does not ask while the form still has a problem", async () => {
+    await openSettings();
+    const nameField = screen.getByRole("textbox", { name: "Facility name" });
+    await userEvent.clear(nameField);
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does not send fewer than 6 digits", async () => {
+    await openSettings();
+    const seen = watchPuts();
+    await saveWithPin("1357");
+    expect(await screen.findByText("Enter your 6-digit PIN.")).toBeVisible();
+    expect(seen.count).toBe(0);
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("a wrong PIN keeps every typed setting, clears the PIN and says the tries left", async () => {
+    const { name } = await openSettings();
+    await userEvent.type(name, "!");
+    const label = within(shift(3)).getByLabelText("Label");
+    await userEvent.clear(label);
+    await userEvent.type(label, "Night");
+    await userEvent.type(
+      screen.getByLabelText("Sign nurses out after (hours)"),
+      "{Backspace}{Backspace}8",
+    );
+    await saveWithPin("999999");
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText("Wrong PIN. 4 tries left.")).toBeVisible();
+    const field = within(dialog).getByLabelText("Your PIN");
+    expect(field).toHaveValue("");
+    await waitFor(() => {
+      expect(field).toHaveFocus();
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(name).toHaveValue("SYNTHETIC Demo Hospital (PH)!");
+    expect(label).toHaveValue("Night");
+    expect(screen.getByLabelText("Sign nurses out after (hours)")).toHaveValue(8);
+    // Trying again with the right PIN saves all of it.
+    await saveWithPin();
+    await waitFor(() => {
+      expect(pageStatus()).toHaveTextContent("Saved.");
+    });
+    expect(name).toHaveValue("SYNTHETIC Demo Hospital (PH)!");
+  });
+
+  it("Cancel sends nothing and leaves the form as it was", async () => {
+    const { name } = await openSettings();
+    const seen = watchPuts();
+    await userEvent.type(name, "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(seen.count).toBe(0);
+    expect(name).toHaveValue("SYNTHETIC Demo Hospital (PH)!");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save settings" })).toHaveFocus();
+    });
+  });
+
+  it("closes the question on a 412 and says so in the form, as before", async () => {
+    const { name } = await openSettings();
+    server.use(
+      http.put("*/api/v1/facilities/:key", () => refuse(412, "stale_version"), { once: true }),
+    );
+    await userEvent.type(name, "!");
+    await saveWithPin();
+    expect(
+      await screen.findByText("Someone else changed the settings. Reload to see them."),
+    ).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(name).toHaveValue("SYNTHETIC Demo Hospital (PH)!");
+  });
+
+  it("sends a demo person back to sign-in after the fifth wrong PIN", async () => {
+    const { name } = await openSettings();
+    await userEvent.type(name, "!");
+    for (let i = 0; i < 4; i += 1) {
+      await saveWithPin("999999");
+      await screen.findByText(new RegExp(`^Wrong PIN\\. ${String(4 - i)} tr`));
+    }
+    await userEvent.type(screen.getByLabelText("Your PIN"), "999999{Enter}");
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
+});
+
+describe("how long a session lasts", () => {
+  const HOURS = "Sign nurses out after (hours)";
+
+  it("shows each facility's preset, with what a change does", async () => {
+    await openSettings();
+    const hours = screen.getByLabelText(HOURS);
+    expect(hours).toHaveValue(12);
+    expect(hours).toHaveAccessibleDescription("Applies to sessions that start after you save.");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Facility" }), "us-demo");
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Facility name" })).toHaveValue(
+        "SYNTHETIC Demo Hospital (US)",
+      );
+    });
+    expect(screen.getByLabelText(HOURS)).toHaveValue(14);
+  });
+
+  it.each([
+    ["0", "Enter 1 to 24 hours."],
+    ["25", "Enter 1 to 24 hours."],
+    ["1.5", "Enter whole hours."],
+    ["", "Enter 1 to 24 hours."],
+  ])("refuses %j before it asks for a PIN", async (typed, message) => {
+    await openSettings();
+    const hours = screen.getByLabelText(HOURS);
+    await userEvent.clear(hours);
+    if (typed) await userEvent.type(hours, typed);
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(hours).toBeInvalid();
+    expect(hours).toHaveAccessibleDescription(expect.stringContaining(message));
+    expect(hours).toHaveFocus();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it.each([1, 24])("saves %i hours", async (count) => {
+    await openSettings();
+    const hours = screen.getByLabelText(HOURS);
+    await userEvent.clear(hours);
+    await userEvent.type(hours, String(count));
+    await saveWithPin();
+    await waitFor(() => {
+      expect(pageStatus()).toHaveTextContent("Saved.");
+    });
+    expect(hours).toHaveValue(count);
+    expect(demoApi.facilities["ph-demo"]?.profile.session_max_hours).not.toBe(count);
+  });
+
+  it("shows the server's word on the hours field", async () => {
+    await openSettings();
+    server.use(
+      http.put("*/api/v1/facilities/:key", () =>
+        refuse(422, "invalid_request", [
+          { field: "body.session_max_hours", message: "Enter 1 to 24 hours." },
+        ]),
+      ),
+    );
+    await saveWithPin();
+    const hours = screen.getByLabelText(HOURS);
+    await waitFor(() => {
+      expect(hours).toHaveAccessibleDescription(expect.stringContaining("Enter 1 to 24 hours."));
+    });
+    expect(hours).toHaveFocus();
+  });
+});
+
+describe("Reset demo settings", () => {
+  const RESET = { name: "Reset demo settings" };
+
+  it("is there for the demo's admin, as a secondary button beside Save settings", async () => {
+    await openSettings();
+    const reset = screen.getByRole("button", RESET);
+    expect(reset).toBeVisible();
+    expect(reset.className).not.toContain("bg-primary");
+    expect(screen.getByRole("button", { name: "Save settings" }).className).toContain("bg-primary");
+  });
+
+  it("puts the settings back to the preset after a PIN, and says so", async () => {
+    const { name } = await openSettings();
+    // First save a change, so there is something to put back.
+    await userEvent.type(name, "!");
+    await saveWithPin();
+    await waitFor(() => {
+      expect(pageStatus()).toHaveTextContent("version 2");
+    });
+    expect(name).toHaveValue("SYNTHETIC Demo Hospital (PH)!");
+
+    await userEvent.click(screen.getByRole("button", RESET));
+    const dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    expect(
+      within(dialog).getByText("Put this facility's settings back to how the demo started?"),
+    ).toBeVisible();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), `${DEMO_PIN}{Enter}`);
+    await waitFor(() => {
+      expect(name).toHaveValue("SYNTHETIC Demo Hospital (PH)");
+    });
+    expect(pageStatus()).toHaveTextContent("Settings are back to how the demo started.");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // The next save goes against the version the reset returned.
+    await userEvent.type(name, "?");
+    await saveWithPin();
+    await waitFor(() => {
+      expect(pageStatus()).toHaveTextContent("Saved.");
+    });
+  });
+
+  it("says that changes not yet saved are dropped, only when there are some", async () => {
+    const { name } = await openSettings();
+    await userEvent.click(screen.getByRole("button", RESET));
+    let dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    expect(within(dialog).queryByText(/aren't saved/)).toBeNull();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    await userEvent.type(name, "!");
+    await userEvent.click(screen.getByRole("button", RESET));
+    dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    expect(within(dialog).getByText("Changes you haven't saved are dropped.")).toBeVisible();
+  });
+
+  it("a wrong PIN keeps the dialog open and says the tries left", async () => {
+    await openSettings();
+    await userEvent.click(screen.getByRole("button", RESET));
+    const dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), "999999{Enter}");
+    expect(await within(dialog).findByText("Wrong PIN. 4 tries left.")).toBeVisible();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveValue("");
+  });
+
+  it("is not there for a Google admin", async () => {
+    await renderApp("/settings", { account: { user: MOCK_EMAILS.admin, gate: "open" } });
+    await screen.findByRole("textbox", { name: "Facility name" });
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeVisible();
+    expect(screen.queryByRole("button", RESET)).toBeNull();
+  });
+
+  it("is not there when the demo is off", async () => {
+    await renderApp("/sign-in", { demo: false });
+    await chooseAndUnlock("Admin · Victor Lazaro");
+    await screen.findByRole("textbox", { name: "Facility name" });
+    expect(screen.queryByRole("button", RESET)).toBeNull();
   });
 });
 
