@@ -68,6 +68,42 @@ async def load_facilities(
     ]
 
 
+async def _write_version(
+    conn: AsyncConnection,
+    facility_id: UUID,
+    version: int,
+    settings: FacilitySettings,
+    by: UUID | None,
+    now: datetime,
+    *,
+    reset: bool,
+) -> StoredFacility:
+    """The one place a facility's new version is written, on a row the caller has locked.
+
+    Updates the facility columns, rewrites the shift rows and appends the history row (`reset`
+    marks a demo reset, which has no author), then returns the facility as stored.
+    """
+    await conn.execute(
+        update(_FACILITY)
+        .where(_FACILITY.c.id == facility_id)
+        .values(**facility_columns(settings), version=version, updated_by=by, updated_at=now)
+    )
+    await conn.execute(delete(_SHIFT).where(_SHIFT.c.facility_id == facility_id))
+    await conn.execute(insert(_SHIFT), shift_rows(facility_id, settings.shifts))
+    await conn.execute(
+        insert(tables.facility_change).values(
+            id=uuid4(),
+            facility_id=facility_id,
+            version=version,
+            changed_by=by,
+            changed_at=now,
+            settings=settings.model_dump(mode="json"),
+            reset=reset,
+        )
+    )
+    return (await load_facilities(conn, _FACILITY.c.id == facility_id))[0]
+
+
 class PgFacilityRepository:
     def __init__(self, engine: AsyncEngine, clock: Clock) -> None:
         self._engine = engine
@@ -101,30 +137,9 @@ class PgFacilityRepository:
                 raise NotFound("no such facility")
             if current.version != expected_version:
                 raise StaleVersion("the facility was changed by someone else")
-            version = current.version + 1
-            await conn.execute(
-                update(_FACILITY)
-                .where(_FACILITY.c.id == current.id)
-                .values(
-                    **facility_columns(settings),
-                    version=version,
-                    updated_by=changed_by,
-                    updated_at=now,
-                )
+            return await _write_version(
+                conn, current.id, current.version + 1, settings, changed_by, now, reset=False
             )
-            await conn.execute(delete(_SHIFT).where(_SHIFT.c.facility_id == current.id))
-            await conn.execute(insert(_SHIFT), shift_rows(current.id, settings.shifts))
-            await conn.execute(
-                insert(tables.facility_change).values(
-                    id=uuid4(),
-                    facility_id=current.id,
-                    version=version,
-                    changed_by=changed_by,
-                    changed_at=now,
-                    settings=settings.model_dump(mode="json"),
-                )
-            )
-            return (await load_facilities(conn, _FACILITY.c.id == current.id))[0]
 
     async def reset_to_preset(self, key: str, now: datetime) -> StoredFacility:
         """Puts a demo facility's settings back to its preset and records it as a `reset` change.
@@ -145,29 +160,9 @@ class PgFacilityRepository:
             ).one_or_none()
             if current is None:
                 raise NotFound("no such facility")
-            settings = preset.model_copy(update={"name": current.name})
-            version = current.version + 1
-            await conn.execute(
-                update(_FACILITY)
-                .where(_FACILITY.c.id == current.id)
-                .values(
-                    **facility_columns(settings),
-                    version=version,
-                    updated_by=None,
-                    updated_at=now,
-                )
+            settings = FacilitySettings.model_validate(
+                preset.model_dump(exclude={"key"}) | {"name": current.name}
             )
-            await conn.execute(delete(_SHIFT).where(_SHIFT.c.facility_id == current.id))
-            await conn.execute(insert(_SHIFT), shift_rows(current.id, settings.shifts))
-            await conn.execute(
-                insert(tables.facility_change).values(
-                    id=uuid4(),
-                    facility_id=current.id,
-                    version=version,
-                    changed_by=None,
-                    changed_at=now,
-                    settings=settings.model_dump(mode="json", exclude={"key"}),
-                    reset=True,
-                )
+            return await _write_version(
+                conn, current.id, current.version + 1, settings, None, now, reset=True
             )
-            return (await load_facilities(conn, _FACILITY.c.id == current.id))[0]

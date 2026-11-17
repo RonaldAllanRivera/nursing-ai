@@ -63,6 +63,20 @@ async def test_session_answer_carries_its_csrf_token_gate_and_limits(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("persona", "hours"), [(PH_STAFF, 12), (US_STAFF, 14), (ADMIN, 12)], ids=["ph", "us", "admin"]
+)
+async def test_session_and_cookie_last_the_facilitys_hours(
+    client: httpx.AsyncClient, clock: MutableClock, persona: UUID, hours: int
+) -> None:
+    response = await start(client, persona)
+
+    assert f"max-age={hours * 3600}" in response.headers["set-cookie"].lower()
+    expires = datetime.fromisoformat(response.json()["expires_at"])
+    assert expires == clock.now() + timedelta(hours=hours)
+
+
+@pytest.mark.asyncio
 async def test_unknown_persona_is_404(client: httpx.AsyncClient) -> None:
     response = await client.post(SESSION, json={"persona_id": str(uuid4())})
     assert response.status_code == 404

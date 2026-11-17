@@ -256,5 +256,15 @@ async def test_reset_to_preset_keeps_key_and_name(engine: AsyncEngine) -> None:
         (3, None, True),
     ]
     assert history[2].changed_at == later
+    async with engine.connect() as conn:
+        recorded = await conn.scalar(
+            select(tables.facility_change.c.settings).where(
+                tables.facility_change.c.facility_id == world.facility_id,
+                tables.facility_change.c.version == 3,
+            )
+        )
+    assert FacilitySettings.model_validate(recorded) == FacilitySettings.model_validate(
+        wanted.model_copy(update={"name": "SYNTHETIC Renamed"}).model_dump(exclude={"key"})
+    )
     with pytest.raises(NotFound):
         await repo.reset_to_preset("nowhere", later)
