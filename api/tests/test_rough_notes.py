@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_core.demo import load_demo_cases
+from nursing_core.domain.errors import ProviderUnavailable
 from nursing_core.domain.shifts import ShiftRef
 
 from .helpers import (
@@ -21,6 +22,7 @@ from .helpers import (
     sign_in,
 )
 from .test_budget import add_invited_nurse
+from .test_redraft import SwitchableProvider, draft_path
 
 PH_CASES = [case for case in load_demo_cases() if case.facility_key == "ph-demo"]
 US_CASES = [case for case in load_demo_cases() if case.facility_key == "us-demo"]
@@ -285,3 +287,28 @@ async def test_no_daily_cap_setting_means_no_cap(database_url: str, clock: Mutab
             )
             assert posted.status_code == 202
         await app.state.queue.drain()
+
+
+@pytest.mark.asyncio
+async def test_replaying_the_first_post_after_a_retry_returns_the_newest_job(
+    database_url: str, clock: MutableClock
+) -> None:
+    provider = SwitchableProvider(ProviderUnavailable("x"))
+    async with (
+        running_app(database_url, clock, provider_for=provider.for_patient) as app,
+        client_for(app) as client,
+    ):
+        await sign_in(client, PH_STAFF)
+        first = (await post_note(client, PH_CASE.patient_id, "pt resting", key="r-1")).json()
+        await app.state.queue.drain()
+        provider.error = None
+        clock.advance(timedelta(minutes=1))
+        retry = await client.post(draft_path(first["rough_note_id"]))
+        assert retry.status_code == 202
+        await app.state.queue.drain()
+
+        replay = await post_note(client, PH_CASE.patient_id, "pt resting", key="r-1")
+
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["id"] == retry.json()["id"] != first["id"]
+        assert replay.json()["rough_note_id"] == first["rough_note_id"]

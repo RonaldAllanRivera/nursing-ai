@@ -86,3 +86,17 @@ async def test_detail_visibility(client: httpx.AsyncClient) -> None:
     assert (await client.get(f"/api/v1/patients/{uuid4()}")).status_code == 404
     await sign_in(client, ADMIN)
     assert (await client.get(path)).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_demo_note_only_for_demo_patients(app: FastAPI, client: httpx.AsyncClient) -> None:
+    await sign_in(client, PH_STAFF)
+    demo = await client.get(f"/api/v1/patients/{PH_CASE.patient_id}")
+    assert demo.json()["demo_note"] == PH_CASE.rough_note.text
+    with_case = {case.patient_id for case in CASES}
+    bare = next(
+        p for p in await app.state.patients.list_patients("ph-demo") if p.id not in with_case
+    )
+    other = await client.get(f"/api/v1/patients/{bare.id}")
+    assert other.status_code == 200
+    assert other.json()["demo_note"] is None
