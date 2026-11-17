@@ -1,5 +1,5 @@
 import { GateFrame, WhoLine } from "./GateFrame";
-import { PIN_LOCKED, screenForGate } from "./pin";
+import { PIN_LOCKED, PIN_LOCKED_NEXT, screenForGate } from "./pin";
 import { SetPinScreen } from "./SetPinScreen";
 import { UnlockScreen } from "./UnlockScreen";
 import type { Session } from "./session";
@@ -10,6 +10,7 @@ function PinLockedScreen({ session }: { session: Session }) {
     <GateFrame heading={`PIN locked, ${session.display_name}`}>
       <WhoLine session={session} reason="Nobody sees a patient while the PIN is locked." />
       <p className="mt-4 text-18 font-semibold">{PIN_LOCKED}</p>
+      <p className="mt-2 text-ink-2">{PIN_LOCKED_NEXT}</p>
     </GateFrame>
   );
 }

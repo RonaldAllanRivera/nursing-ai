@@ -42,7 +42,8 @@ describe("enter your PIN", () => {
     await userEvent.click(await screen.findByRole("button", { name: SARAH }));
     await screen.findByLabelText("PIN");
     expect(screen.getByRole("banner")).toHaveTextContent("Sarah Navarro, RN");
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Switch nurse" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     await typePin(DEMO_PIN);
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
     expect(screen.queryByLabelText("PIN")).toBeNull();

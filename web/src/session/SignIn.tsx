@@ -3,11 +3,27 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
+import { cn } from "../lib/cn";
 import { HealthStatus } from "../health/HealthStatus";
 import { groupPersonas, personaLabel } from "./personas";
 import { DEMO_ENDED, DEMO_EXPIRED } from "./pin";
-import { demoEndedKey, personasQuery, signInOptionsQuery, useSignIn } from "./session";
+import { sessionEndedWords } from "./expiry";
+import {
+  demoEndedKey,
+  personasQuery,
+  signInOptionsQuery,
+  useSignIn,
+  type SignInNotice,
+} from "./session";
 import { GOOGLE_START, SIGN_IN_MESSAGES, offeredFrom, signInErrorFrom } from "./signInOptions";
+
+/** The sentence for why a session ended on its own, whichever way it did. */
+function noticeWords(notice: SignInNotice | undefined): string | null {
+  if (!notice) return null;
+  if (notice === "fifth") return DEMO_ENDED;
+  if (notice === "expired") return DEMO_EXPIRED;
+  return sessionEndedWords(notice.hours);
+}
 
 /** The sign-in screen: Google for invited staff, then the demo people on a ruled sheet, role first on every button. */
 export function SignIn() {
@@ -21,7 +37,7 @@ export function SignIn() {
   // Set when a demo session ended on its own (a fifth wrong PIN); nothing fetches it.
   const demoEnded = useQuery({
     queryKey: demoEndedKey,
-    queryFn: () => Promise.resolve<"fifth" | "expired" | false>(false),
+    queryFn: () => Promise.resolve<SignInNotice>(false),
     enabled: false,
   });
   const navigate = useNavigate();
@@ -44,16 +60,16 @@ export function SignIn() {
         {error || demoEnded.data ? (
           <p
             role="alert"
-            className="mt-4 flex items-start gap-2 rounded-control border border-stop bg-stop-tint px-3 py-2 text-stop"
+            className={cn(
+              "mt-4 flex items-start gap-2 rounded-control border px-3 py-2",
+              // Running out of hours is routine (sign in again), not a refusal: amber, not red.
+              !error && typeof demoEnded.data === "object"
+                ? "border-review bg-review-tint text-review"
+                : "border-stop bg-stop-tint text-stop",
+            )}
           >
             <Icon name="flag" className="mt-0.5" />
-            <span>
-              {error
-                ? SIGN_IN_MESSAGES[error]
-                : demoEnded.data === "fifth"
-                  ? DEMO_ENDED
-                  : DEMO_EXPIRED}
-            </span>
+            <span>{error ? SIGN_IN_MESSAGES[error] : noticeWords(demoEnded.data)}</span>
           </p>
         ) : null}
 

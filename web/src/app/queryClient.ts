@@ -4,8 +4,15 @@ import { ApiError } from "../api/errors";
 import { queryRetryDelay, retryQuery } from "../api/retry";
 import { isWaking, wakeRetryDelay } from "../api/waking";
 import { HELD_NOTE_ROOT } from "../notes/heldNote";
-import { gateFromProblem } from "../session/gate";
-import { clearPersonData, demoEndedKey, sessionKey, type Session } from "../session/session";
+import { gateFromProblem, patchGate } from "../session/gate";
+import { isPastExpiry, sessionHours } from "../session/expiry";
+import {
+  clearPersonData,
+  demoEndedKey,
+  sessionKey,
+  type Session,
+  type SignInNotice,
+} from "../session/session";
 
 /** A write is retried only when the database was waking: that answer means nothing was written. */
 export function retryMutation(failureCount: number, error: Error): boolean {
@@ -33,9 +40,7 @@ export function createQueryClient() {
     }
     const gate = gateFromProblem(error.problem);
     if (gate !== null) {
-      queryClient.setQueryData<Session | null>(sessionKey, (session) =>
-        session ? { ...session, gate } : session,
-      );
+      patchGate(queryClient, gate);
     } else if (error.status === 403 && error.problem?.code === "csrf_failed") {
       void queryClient.invalidateQueries({ queryKey: sessionKey });
     }
@@ -60,6 +65,7 @@ export function createQueryClient() {
   // one (another person, or nobody), the last person's data is dropped at once, synchronously,
   // before React is told, so nothing renders as the new person over the old person's cache.
   let lastUser: string | null | undefined;
+  let lastSession: Session | undefined;
   queryClient.getQueryCache().subscribe((event) => {
     if (event.type !== "updated") return;
     const key = event.query.queryKey as readonly unknown[];
@@ -68,9 +74,18 @@ export function createQueryClient() {
     if (data === undefined) return;
     const user = data?.user_id ?? null;
     const changed = lastUser !== undefined && user !== lastUser;
+    const before = lastSession;
     lastUser = user;
+    if (data) lastSession = data;
     if (!changed) return;
+    // The session was last seen past its hard limit and now there is nobody: it ran out. Read the
+    // facility's hours before the data (the facility with it) goes.
+    const ranOut =
+      user === null && before && isPastExpiry(before.expires_at, Date.now())
+        ? { hours: sessionHours(queryClient, before) }
+        : null;
     clearPersonData(queryClient);
+    if (ranOut) queryClient.setQueryData<SignInNotice>(demoEndedKey, ranOut);
     // Someone signing in answers why the last demo session ended.
     if (user !== null && queryClient.getQueryData(demoEndedKey)) {
       queryClient.setQueryData(demoEndedKey, false);

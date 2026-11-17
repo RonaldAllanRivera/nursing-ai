@@ -16,6 +16,8 @@ export function isPinTyped(value: string): boolean {
 }
 
 export const PIN_LOCKED = "Your PIN is locked. Ask a head nurse or the admin to reset it.";
+/** The locked screen's next step: the session never looks again by itself, so she signs in anew. */
+export const PIN_LOCKED_NEXT = "Once it's reset, choose Switch nurse above and sign in again.";
 export const PIN_CONNECTION = "Couldn't check your PIN. Check your connection and try again.";
 export const PIN_SHORT = "A PIN is 6 digits, 0 to 9.";
 export const PINS_DIFFER = "The two PINs don't match.";

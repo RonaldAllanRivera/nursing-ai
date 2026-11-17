@@ -8,6 +8,9 @@ import { roleLabel } from "../session/personas";
 import { screenForGate } from "../session/pin";
 import { useSession, useSignOut } from "../session/session";
 import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
+import { useFacility } from "../facility/useFacility";
+import { useIdleLock, useLookAgainWhenSeen } from "../session/useIdleLock";
+import { useSessionExpiry } from "../session/useSessionExpiry";
 import { useRestoreFocusAfterGate } from "./gateFocus";
 import { ShellFrame } from "./RouteScreens";
 import { ShiftControl } from "./ShiftControl";
@@ -45,12 +48,24 @@ export function Shell() {
   const gateUp = session ? screenForGate(session.gate) !== null : false;
   const where = useRouterState({ select: (state) => state.location.pathname });
   useRestoreFocusAfterGate(gateUp, page, where);
+  // The browser's own timers: an unattended screen locks, a session past its hours ends, and a
+  // tab seen again asks who the session is now. The facility stays loaded here so the hours a
+  // session lasts are known even while a gate hides the shift picker.
+  useFacility(session?.facility_key ?? null);
+  useIdleLock(session);
+  useSessionExpiry(session?.expires_at);
+  useLookAgainWhenSeen(session != null);
 
   // No session (signed out, or a request came back 401): the sign-in screen.
   if (session === null) return <Navigate to="/sign-in" />;
   if (session === undefined) return null;
 
   const isAdmin = session.facility_key === null;
+  const endSession = () => {
+    signOut.mutate(undefined, {
+      onSuccess: () => void navigate({ to: "/sign-in" }),
+    });
+  };
 
   return (
     <>
@@ -74,32 +89,40 @@ export function Shell() {
           </div>
           {/* On a phone, Sign out sits on the first row beside who is signed in, so it comes second
               in the DOM and the focus order follows what the eye sees. From `sm` up everything fits
-              on one row and Sign out goes last. */}
-          <Button
-            className="sm:order-last"
-            disabled={signOut.isPending}
-            onClick={() => {
-              signOut.mutate(undefined, {
-                onSuccess: () => void navigate({ to: "/sign-in" }),
-              });
-            }}
-          >
-            Sign out
-          </Button>
-          {session.shift && session.facility_key !== null ? (
-            <ShiftControl shift={session.shift} facilityKey={session.facility_key} />
-          ) : null}
-          <nav aria-label="Main" className="flex items-center gap-1 sm:ml-auto">
-            {isAdmin ? (
-              <Link to="/settings" className={NAV_LINK}>
-                Settings
-              </Link>
-            ) : (
-              <Link to="/patients" className={NAV_LINK}>
-                Patients
-              </Link>
-            )}
-          </nav>
+              on one row and Sign out goes last. While a gate is up the page is hidden, so the shift
+              picker and the links (which lead only to hidden pages) go too, and the one way out is
+              "Not you? Switch nurse": the same action, in the words of someone at the wrong screen. */}
+          {gateUp ? (
+            <>
+              <div className="flex items-center gap-2 sm:order-last">
+                <p className="text-14 text-ink-2">Not you?</p>
+                <Button disabled={signOut.isPending} onClick={endSession}>
+                  Switch nurse
+                </Button>
+              </div>
+              <div aria-hidden="true" className="max-sm:hidden sm:ml-auto" />
+            </>
+          ) : (
+            <>
+              <Button className="sm:order-last" disabled={signOut.isPending} onClick={endSession}>
+                Sign out
+              </Button>
+              {session.shift && session.facility_key !== null ? (
+                <ShiftControl shift={session.shift} facilityKey={session.facility_key} />
+              ) : null}
+              <nav aria-label="Main" className="flex items-center gap-1 sm:ml-auto">
+                {isAdmin ? (
+                  <Link to="/settings" className={NAV_LINK}>
+                    Settings
+                  </Link>
+                ) : (
+                  <Link to="/patients" className={NAV_LINK}>
+                    Patients
+                  </Link>
+                )}
+              </nav>
+            </>
+          )}
           <ThemeToggle />
           {signOut.isError ? (
             <p role="alert" className="order-last basis-full text-14 text-stop">

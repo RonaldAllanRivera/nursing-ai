@@ -62,6 +62,11 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     const base =
       active.kind === "persona" ? data.sessions[active.userId] : googleBase(active.userId);
     if (!base) return undefined;
+    // The hard limit: like the server, past it nobody is signed in, whatever the gate.
+    if (Date.now() >= Date.parse(active.expiresAt)) {
+      active = null;
+      return undefined;
+    }
     if (active.gate === "open" && Date.now() - active.lastActive >= base.idle_lock_seconds * 1000) {
       active.gate = "idle_locked";
     }

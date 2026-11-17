@@ -88,7 +88,12 @@ export function useSignIn() {
   });
 }
 
-/** Why the sign-in screen is showing after a demo session ended on its own: `"fifth"` (a fifth wrong PIN) or `"expired"`. It goes when a person is chosen. */
+/**
+ * Why the sign-in screen is showing after a session ended on its own: a demo session's `"fifth"`
+ * (a fifth wrong PIN) or `"expired"`, or `{ hours }` for a session that reached its hard limit.
+ * It goes when a person signs in.
+ */
+export type SignInNotice = "fifth" | "expired" | { hours: number } | false;
 export const demoEndedKey = ["sign-in-notice"] as const;
 
 /** A 409 at a PIN screen means the session moved on elsewhere (another window opened it or set the PIN): look again, and the right screen shows. */
@@ -126,7 +131,10 @@ export function useUnlock(persona: boolean) {
       onError: (error, previous) => {
         lookAgainOnConflict(queryClient, error);
         const reason = persona ? demoEndedReason(error, previous) : null;
-        if (reason) queryClient.setQueryData(demoEndedKey, reason);
+        // The hours the session lasted, if the 401 already said so, is the better answer.
+        if (reason && !queryClient.getQueryData(demoEndedKey)) {
+          queryClient.setQueryData(demoEndedKey, reason);
+        }
       },
     },
   );
