@@ -53,6 +53,20 @@ resource "aws_iam_role_policy" "brake" {
   })
 }
 
+# The brake role keeps exactly the one inline policy above and no managed
+# policy: anything added to it by hand is removed on the next apply. This is
+# for the brake role only. Never make the Lambda roles exclusive: an apply
+# would detach the deny-all policy this role attaches to them.
+resource "aws_iam_role_policies_exclusive" "brake" {
+  role_name    = aws_iam_role.brake.name
+  policy_names = [aws_iam_role_policy.brake.name]
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "brake" {
+  role_name   = aws_iam_role.brake.name
+  policy_arns = []
+}
+
 resource "aws_budgets_budget_action" "brake" {
   budget_name        = var.budget_name
   action_type        = "APPLY_IAM_POLICY"

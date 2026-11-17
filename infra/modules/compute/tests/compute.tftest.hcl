@@ -365,14 +365,66 @@ run "swapped_parameter_arn_and_name_is_refused" {
   ]
 }
 
-run "parameter_arn_must_be_an_arn" {
+# Each ARN's shape rule alone: the value is not an ARN, but it still ends with
+# :parameter<name>, so the name rule passes and only the shape rule can fail.
+run "database_url_parameter_arn_must_be_an_arn" {
   command = plan
 
   variables {
-    database_url_parameter_arn = "/nursing-ai/test/database-url"
+    database_url_parameter_arn = "not-an-arn:parameter/nursing-ai/test/database-url"
   }
 
   expect_failures = [var.database_url_parameter_arn]
+}
+
+run "anthropic_api_key_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    anthropic_api_key_parameter_arn = "not-an-arn:parameter/nursing-ai/test/anthropic-api-key"
+  }
+
+  expect_failures = [var.anthropic_api_key_parameter_arn]
+}
+
+run "google_client_id_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    google_client_id_parameter_arn = "not-an-arn:parameter/nursing-ai/test/google-client-id"
+  }
+
+  expect_failures = [var.google_client_id_parameter_arn]
+}
+
+run "google_client_secret_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    google_client_secret_parameter_arn = "not-an-arn:parameter/nursing-ai/test/google-client-secret"
+  }
+
+  expect_failures = [var.google_client_secret_parameter_arn]
+}
+
+run "site_url_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    site_url_parameter_arn = "not-an-arn:parameter/nursing-ai/test/site-url"
+  }
+
+  expect_failures = [var.site_url_parameter_arn]
+}
+
+run "bootstrap_admin_email_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    bootstrap_admin_email_parameter_arn = "not-an-arn:parameter/nursing-ai/test/bootstrap-admin-email"
+  }
+
+  expect_failures = [var.bootstrap_admin_email_parameter_arn]
 }
 
 run "log_groups_are_exposed_by_function" {
@@ -384,6 +436,17 @@ run "log_groups_are_exposed_by_function" {
   }
 }
 
+# Each ARN's name rule alone: a well-formed SSM ARN of a different parameter.
+run "database_url_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    database_url_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/site-url"
+  }
+
+  expect_failures = [var.database_url_parameter_arn]
+}
+
 run "parameter_arn_must_match_its_name" {
   command = plan
 
@@ -392,6 +455,46 @@ run "parameter_arn_must_match_its_name" {
   }
 
   expect_failures = [var.anthropic_api_key_parameter_arn]
+}
+
+run "google_client_id_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    google_client_id_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-secret"
+  }
+
+  expect_failures = [var.google_client_id_parameter_arn]
+}
+
+run "google_client_secret_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    google_client_secret_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-id"
+  }
+
+  expect_failures = [var.google_client_secret_parameter_arn]
+}
+
+run "site_url_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    site_url_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/database-url"
+  }
+
+  expect_failures = [var.site_url_parameter_arn]
+}
+
+run "bootstrap_admin_email_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    bootstrap_admin_email_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/site-url"
+  }
+
+  expect_failures = [var.bootstrap_admin_email_parameter_arn]
 }
 
 run "ops_function_runs_tasks_only" {

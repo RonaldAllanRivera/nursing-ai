@@ -195,6 +195,8 @@ still counts.
 At 100% of actual spend, a budget action attaches a deny-everything policy
 (`<name>-brake-deny-all`) to the API and worker Lambda roles. A deny beats every allow. The brake
 role AWS Budgets runs as can attach and detach only that one policy, and only on those two roles.
+That role's own policies are exclusive: its one inline policy is the only one it can have, and a
+policy added to it by hand is removed on the next apply.
 
 ### Lifting the brake
 
