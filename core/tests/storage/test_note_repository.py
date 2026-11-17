@@ -11,6 +11,7 @@ from nursing_core.domain.hashing import SignedNote, content_hash, signed_content
 from nursing_core.domain.jobs import JobFailure, JobStatus
 from nursing_core.domain.notes import Discard, Note, NoteStatus, RoughNote, Signature
 from nursing_core.storage import tables
+from nursing_core.storage.notes import JOB_LEASE, MAX_JOB_ATTEMPTS
 from nursing_core.storage.repositories import PgNoteRepository
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -415,3 +416,76 @@ async def test_signing_with_another_notes_record_is_refused(engine: AsyncEngine)
         await repo.sign(note.id, 1, record)
 
     assert (await repo.get_note(note.id)).status is NoteStatus.DRAFT
+
+
+class _MovingClock:
+    def __init__(self, at: datetime) -> None:
+        self.at = at
+
+    def now(self) -> datetime:
+        return self.at
+
+
+async def _job_row(engine: AsyncEngine, job_id: UUID) -> tuple[str, str | None, int]:
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(
+                    tables.draft_job.c.status,
+                    tables.draft_job.c.failure,
+                    tables.draft_job.c.attempts,
+                ).where(tables.draft_job.c.id == job_id)
+            )
+        ).one()
+    return row.status, row.failure, row.attempts
+
+
+@pytest.mark.asyncio
+async def test_a_claim_is_a_lease_that_expires_after_150_seconds(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    clock = _MovingClock(CLOCK.now())
+    repo = PgNoteRepository(engine, clock)
+    rough = rough_note(world)
+    _, job = await repo.add_rough_note(rough, "key-1", HASH_A)
+
+    assert await repo.claim_job(job.id) == rough
+    assert await _job_row(engine, job.id) == ("running", None, 1)
+
+    clock.at += JOB_LEASE - timedelta(seconds=1)
+    assert await repo.claim_job(job.id) is None  # inside the lease
+    assert await _job_row(engine, job.id) == ("running", None, 1)
+
+    clock.at += timedelta(seconds=2)
+    assert await repo.claim_job(job.id) == rough  # the lease ran out
+    assert await _job_row(engine, job.id) == ("running", None, 2)
+
+
+@pytest.mark.asyncio
+async def test_the_fourth_claim_fails_the_job_instead_of_running_it(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    clock = _MovingClock(CLOCK.now())
+    repo = PgNoteRepository(engine, clock)
+    _, job = await repo.add_rough_note(rough_note(world), "key-1", HASH_A)
+
+    for _ in range(MAX_JOB_ATTEMPTS):
+        assert await repo.claim_job(job.id) is not None
+        clock.at += JOB_LEASE + timedelta(seconds=1)
+
+    assert await repo.claim_job(job.id) is None
+    status, failure, _ = await _job_row(engine, job.id)
+    assert (status, failure) == ("failed", "provider_error")
+    assert await repo.claim_job(job.id) is None  # a failed job stays failed
+
+
+@pytest.mark.asyncio
+async def test_a_succeeded_job_is_never_claimed_again(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    clock = _MovingClock(CLOCK.now())
+    repo = PgNoteRepository(engine, clock)
+    note = await _drafted(repo, world)
+    del note
+    clock.at += JOB_LEASE * 10
+    async with engine.connect() as conn:
+        job = (await conn.execute(select(tables.draft_job.c.id))).scalars().first()
+    assert job is not None
+    assert await repo.claim_job(job) is None

@@ -566,3 +566,46 @@ async def test_worker_retries_the_connect_while_the_database_wakes(
             await worker_for(notes).run(job_id)
         assert notes.attempts == 3
         assert (await state.notes.get_job(job_id)).status is JobStatus.QUEUED
+
+
+async def _queued_job(app: FastAPI, key: str = "lease-1") -> UUID:
+    record = await app.state.patients.get_patient(PH_CASE.patient_id)
+    rough = PH_CASE.rough_note.model_copy(
+        update={"id": uuid4(), "author_id": PH_STAFF, "encounter_id": record.encounter_id}
+    )
+    _, job = await app.state.notes.add_rough_note(rough, key, sha256(key.encode()).hexdigest())
+    return job.id
+
+
+@pytest.mark.asyncio
+async def test_running_job_inside_its_lease_is_not_claimed(
+    database_url: str, clock: MutableClock
+) -> None:
+    spy = SpyProvider()
+    async with running_app(
+        database_url, clock, app_role="worker", provider_for=lambda _p: spy
+    ) as app:
+        job_id = await _queued_job(app)
+        assert await app.state.notes.claim_job(job_id) is not None
+        clock.set(clock.now() + timedelta(seconds=149))
+        await app.state.worker.run(job_id)
+        job = await app.state.notes.get_job(job_id)
+    assert (job.status, spy.requests) == (JobStatus.RUNNING, [])
+
+
+@pytest.mark.asyncio
+async def test_claim_after_lease_retries_then_fails_on_the_fourth(
+    database_url: str, clock: MutableClock
+) -> None:
+    spy = SpyProvider()
+    async with running_app(
+        database_url, clock, app_role="worker", provider_for=lambda _p: spy
+    ) as app:
+        job_id = await _queued_job(app)
+        for _ in range(3):  # three workers each claimed it, then timed out
+            assert await app.state.notes.claim_job(job_id) is not None
+            clock.set(clock.now() + timedelta(seconds=151))
+        await app.state.worker.run(job_id)
+        job = await app.state.notes.get_job(job_id)
+    assert (job.status, job.failure) == (JobStatus.FAILED, JobFailure.PROVIDER_ERROR)
+    assert spy.requests == []

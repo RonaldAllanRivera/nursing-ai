@@ -87,6 +87,7 @@ def create_app(
             the_clock,
             provider_factory(resolved, app.state.usage, the_clock, provider_for),
         )
+        app.state.worker = worker
         queue = build_queue(resolved, worker.run, app.state.notes)
         app.state.queue = queue
         try:

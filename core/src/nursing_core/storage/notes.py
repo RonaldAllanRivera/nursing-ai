@@ -4,10 +4,11 @@ Every method is one transaction. Domain errors carry fixed messages: a database 
 echoes row values (note text, keys), so none is ever passed on.
 """
 
+from datetime import timedelta
 from typing import NoReturn
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -31,6 +32,11 @@ from nursing_core.storage.rows import AnyRow, shift_columns, shift_from_row
 _ROUGH = tables.rough_note
 _JOB = tables.draft_job
 _NOTE = tables.note
+
+# A claim is a lease: the worker's 120 s timeout plus 30 s. A job `running` for longer is taken
+# to have died (SQS delivers at least once) and can be claimed again, up to MAX_JOB_ATTEMPTS.
+JOB_LEASE = timedelta(seconds=150)
+MAX_JOB_ATTEMPTS = 3
 
 
 def _rough_note(row: AnyRow) -> RoughNote:
@@ -169,16 +175,53 @@ class PgNoteRepository:
         return _job(row)
 
     async def claim_job(self, job_id: UUID) -> RoughNote | None:
+        """Claims a queued job, or a running one whose lease ran out, and adds an attempt.
+
+        The claim that would be the fourth fails the job (`provider_error`) and returns None.
+        """
+        now = self._clock.now()
         async with self._engine.begin() as conn:
-            rough_note_id = await conn.scalar(
-                update(_JOB)
-                .where(_JOB.c.id == job_id, _JOB.c.status == JobStatus.QUEUED.value)
-                .values(status=JobStatus.RUNNING.value, updated_at=self._clock.now())
-                .returning(_JOB.c.rough_note_id)
-            )
-            if rough_note_id is None:
+            claimed = (
+                await conn.execute(
+                    update(_JOB)
+                    .where(
+                        _JOB.c.id == job_id,
+                        or_(
+                            _JOB.c.status == JobStatus.QUEUED.value,
+                            and_(
+                                _JOB.c.status == JobStatus.RUNNING.value,
+                                or_(
+                                    _JOB.c.claimed_at.is_(None),
+                                    _JOB.c.claimed_at < now - JOB_LEASE,
+                                ),
+                            ),
+                        ),
+                    )
+                    .values(
+                        status=JobStatus.RUNNING.value,
+                        claimed_at=now,
+                        attempts=_JOB.c.attempts + 1,
+                        updated_at=now,
+                    )
+                    .returning(_JOB.c.rough_note_id, _JOB.c.attempts)
+                )
+            ).one_or_none()
+            if claimed is None:
                 return None
-            row = (await conn.execute(select(_ROUGH).where(_ROUGH.c.id == rough_note_id))).one()
+            if claimed.attempts > MAX_JOB_ATTEMPTS:
+                await conn.execute(
+                    update(_JOB)
+                    .where(_JOB.c.id == job_id)
+                    .values(
+                        status=JobStatus.FAILED.value,
+                        failure=JobFailure.PROVIDER_ERROR.value,
+                        updated_at=now,
+                    )
+                )
+                return None
+            row = (
+                await conn.execute(select(_ROUGH).where(_ROUGH.c.id == claimed.rough_note_id))
+            ).one()
             return _rough_note(row)
 
     async def complete_job(self, job_id: UUID, note: Note) -> None:

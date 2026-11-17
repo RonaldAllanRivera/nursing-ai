@@ -33,6 +33,9 @@ from nursing_api.usage import UsageRecorder
 # timeout, so there is no sleep between them; after the last the error goes back to the queue.
 CLAIM_ATTEMPTS = 3
 
+# At most this many in-process jobs at once, like the worker's SQS concurrency.
+MAX_CONCURRENT_JOBS = 2
+
 log = structlog.get_logger("nursing_api.worker")
 
 FAILURES: dict[type[Exception], JobFailure] = {
@@ -138,6 +141,7 @@ class InProcessQueue:
         self._run = run
         self._notes = notes
         self._tasks: set[asyncio.Task[None]] = set()
+        self._slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
     @property
     def pending(self) -> int:
@@ -152,7 +156,8 @@ class InProcessQueue:
     async def _guarded(self, job_id: UUID) -> None:
         # A task's exception must never go unretrieved (asyncio would log its message).
         try:
-            await self._run(job_id)
+            async with self._slots:
+                await self._run(job_id)
         except Exception as error:
             log.error("draft job crashed", job_id=str(job_id), error_class=type(error).__name__)
 
