@@ -142,13 +142,16 @@ class PgFacilityRepository:
                 conn, current.id, current.version + 1, settings, changed_by, now, reset=False
             )
 
-    async def reset_to_preset(self, key: str, now: datetime) -> StoredFacility:
-        """Puts a demo facility's settings back to its preset and records it as a `reset` change.
+    async def reset_to_preset(
+        self, key: str, now: datetime, expected_version: int
+    ) -> StoredFacility:
+        """Puts a demo facility's settings, name included, back to its preset and records it as a
+        `reset` change with no author.
 
-        The key and the name stay as they are; the history row has no author. A facility with no
-        preset is `NotFound`.
+        Like `update_facility`, it refuses a save that landed meanwhile (`StaleVersion`, checked
+        under the row lock). A facility with no preset is `NotFound`.
         """
-        reset = await self._reset(key, now, only_if_stale=False)
+        reset = await self._reset(key, now, expected_version=expected_version, only_if_stale=False)
         if reset is None:  # unreachable: only the stale check can decline
             raise NotFound("no such facility")
         return reset
@@ -162,12 +165,15 @@ class PgFacilityRepository:
         """
         done: list[str] = []
         for preset in DEMO_FACILITIES:
-            if await self._reset(preset.key, now, only_if_stale=True) is not None:
+            if (
+                await self._reset(preset.key, now, expected_version=None, only_if_stale=True)
+                is not None
+            ):
                 done.append(preset.key)
         return done
 
     async def _reset(
-        self, key: str, now: datetime, *, only_if_stale: bool
+        self, key: str, now: datetime, *, expected_version: int | None, only_if_stale: bool
     ) -> StoredFacility | None:
         preset = next((p for p in DEMO_FACILITIES if p.key == key), None)
         if preset is None:
@@ -175,20 +181,20 @@ class PgFacilityRepository:
         async with self._engine.begin() as conn:
             current = (
                 await conn.execute(
-                    select(_FACILITY.c.id, _FACILITY.c.version, _FACILITY.c.name)
+                    select(_FACILITY.c.id, _FACILITY.c.version)
                     .where(_FACILITY.c.key == key)
                     .with_for_update()
                 )
             ).one_or_none()
             if current is None:
                 raise NotFound("no such facility")
+            if expected_version is not None and current.version != expected_version:
+                raise StaleVersion("the facility was changed by someone else")
             if only_if_stale and not await _persona_changed_before_today(
                 conn, current.id, key, now
             ):
                 return None
-            settings = FacilitySettings.model_validate(
-                preset.model_dump(exclude={"key"}) | {"name": current.name}
-            )
+            settings = FacilitySettings.model_validate(preset.model_dump(exclude={"key"}))
             return await _write_version(
                 conn, current.id, current.version + 1, settings, None, now, reset=True
             )

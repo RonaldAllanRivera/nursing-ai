@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -416,13 +416,18 @@ async def test_persona_edit_is_put_back_after_the_nursing_day_turns(
     clock.advance(timedelta(hours=1))
     await persona_signs_in(app)
     assert (await app.state.facilities.get_facility("ph-demo")).version == 2
-    # The day turns: the next sign-in puts it back, once (the one after finds a reset row).
-    clock.advance(timedelta(hours=24))
+    # The edit (day starts 07:00) was made at 00:00 UTC, 08:00 Manila on the 12th. At 06:50 on the
+    # 13th in Manila the local date turned but the edited nursing day has not.
+    clock.set(datetime(2026, 11, 12, 22, 50, tzinfo=UTC))
+    await persona_signs_in(app)
+    assert (await app.state.facilities.get_facility("ph-demo")).version == 2
+    # At 07:10 the nursing day turned, though the UTC date and 24 hours did not: it goes back,
+    # once (the sign-in after finds a reset row).
+    clock.set(datetime(2026, 11, 12, 23, 10, tzinfo=UTC))
     await persona_signs_in(app)
     await persona_signs_in(app)
     stored = await app.state.facilities.get_facility("ph-demo")
-    expected = preset_of("ph-demo").model_copy(update={"name": "Renamed SYNTHETIC"})
-    assert stored.profile.model_dump(exclude={"key"}) == expected.model_dump()
+    assert stored.profile.model_dump(exclude={"key"}) == preset_of("ph-demo").model_dump()
     rows = await history(app, "ph-demo")
     assert [(r.version, r.reset, r.changed_by) for r in rows] == [
         (1, False, None),
@@ -468,6 +473,7 @@ async def test_reset_button_restores_the_preset_now(database_url: str, clock: Mu
         profile = reset.json()["profile"]
         assert profile["shifts"][0]["code"] == "6-2"
         assert profile["day_starts_at"] == "06:00:00"
+        assert profile["name"] == "SYNTHETIC Demo Hospital (PH)"
         assert DEMO_PIN not in reset.text
         again = await admin.get(PH)
         assert again.json()["profile"] == profile

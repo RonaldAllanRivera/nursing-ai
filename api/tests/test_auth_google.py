@@ -164,6 +164,33 @@ async def test_the_attempt_cookie_is_secure_in_demo_and_prod(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("app_env", "secure"), [("demo", True), ("prod", True), ("dev", False)])
+async def test_the_session_cookie_is_secure_in_demo_and_prod(
+    database_url: str, clock: MutableClock, fake: FakeGoogle, app_env: str, secure: bool
+) -> None:
+    google = AuthlibGoogleOidc(CLIENT_ID, CLIENT_SECRET, transport=fake.transport)
+    async with (
+        running_app(
+            database_url,
+            clock,
+            app_env,
+            google=google,
+            site_url=SITE_URL,
+            google_client_id=CLIENT_ID,
+            google_client_secret=CLIENT_SECRET,
+        ) as app,
+        client_for(app) as client,
+    ):
+        client.base_url = httpx.URL(
+            "https://test"
+        )  # a Secure attempt cookie comes back only on https
+        await add_google_user(app, "sam.nurse@example.com", Role.STAFF_NURSE, "us-demo")
+        response = await google_sign_in(client, fake, email="sam.nurse@example.com", sub="sub-sam")
+    (cookie,) = cookie_lines(response, "sl_session")
+    assert ("secure" in cookie.lower().split("; ")) is secure
+
+
+@pytest.mark.asyncio
 async def test_start_is_404_when_google_is_off(client: httpx.AsyncClient) -> None:
     response = await client.get(START)
     assert response.status_code == 404

@@ -38,7 +38,7 @@ def shift_of(response: httpx.Response) -> dict[str, str]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("app_env", "secure"), [("dev", False), ("test", False), ("demo", True)])
-async def test_session_cookie_secure_only_in_demo_and_prod(
+async def test_persona_session_cookie_is_secure_in_demo(
     database_url: str, clock: MutableClock, app_env: str, secure: bool
 ) -> None:
     async with running_app(database_url, clock, app_env) as app, client_for(app) as client:

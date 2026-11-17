@@ -6,9 +6,22 @@ from nursing_core.domain.facility import StoredFacility
 from nursing_core.domain.shifts import shift_choices
 from nursing_core.domain.users import can_see_facility
 from nursing_core.ports import Clock
+from nursing_core.storage.repositories import (
+    PgFacilityRepository,
+    PgSessionRepository,
+    PgUserRepository,
+)
 
 from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
-from nursing_api.deps import AdminDep, ClockDep, FacilitiesDep, SessionsDep, SignedInDep, UsersDep
+from nursing_api.deps import (
+    AdminDep,
+    ClockDep,
+    FacilitiesDep,
+    SessionsDep,
+    SignedIn,
+    SignedInDep,
+    UsersDep,
+)
 from nursing_api.problems import PreconditionRequired, problems
 from nursing_api.routes import CSRF, SIGNED_IN, etag_header
 from nursing_api.schemas import FacilityOut, FacilityUpdateIn, PinIn
@@ -67,6 +80,28 @@ IfMatch = Annotated[str | None, Header(alias="If-Match", description="Required: 
 SAVE = {200: {"headers": etag_header()}, **problems(401, 403, 404, 412, 422, 423, 428)}
 
 
+async def checked_save(
+    facility_key: str,
+    if_match: str | None,
+    pin: str,
+    signed_in: SignedIn,
+    facilities: PgFacilityRepository,
+    users: PgUserRepository,
+    sessions: PgSessionRepository,
+    clock: Clock,
+) -> StoredFacility:
+    """What a settings save and a demo reset both need first: the If-Match (428 missing, 412 not
+    the current ETag) and then the PIN. Returns the facility as read; the repository checks its
+    version again under the row lock, so a save that lands during the PIN check is never lost."""
+    if not if_match:
+        raise PreconditionRequired
+    current = await facilities.get_facility(facility_key)
+    if if_match != etag(current.version):
+        raise StaleVersion("the facility has changed")
+    await prove_pin(signed_in, pin, users=users, sessions=sessions, clock=clock)
+    return current
+
+
 @router.put("/{facility_key}", response_model=FacilityOut, responses=SAVE, dependencies=CSRF)
 async def update_facility(
     facility_key: str,
@@ -83,14 +118,10 @@ async def update_facility(
     """The admin edits a facility's settings, with their PIN. Notes already written keep their
     shift."""
     # Order: 401, 403 (the admin dependency), body 422 (the framework), 428, 404, 412, save.
-    if not if_match:
-        raise PreconditionRequired
-    current = await facilities.get_facility(facility_key)
-    if if_match != etag(current.version):
-        # Only the exact current ETag passes; a race is caught by the repository's own check.
-        raise StaleVersion("the facility has changed")
     try:
-        await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
+        current = await checked_save(
+            facility_key, if_match, body.pin, signed_in, facilities, users, sessions, clock
+        )
     except SessionEnded:
         return session_ended_response()
     saved = await facilities.update_facility(
@@ -118,15 +149,12 @@ async def reset_facility(
     settings: Settings = request.app.state.settings
     if settings.app_env != "demo" or not admin.persona:
         raise Forbidden("only the demo's admin persona resets settings")
-    if not if_match:
-        raise PreconditionRequired
-    current = await facilities.get_facility(facility_key)
-    if if_match != etag(current.version):
-        raise StaleVersion("the facility has changed")
     try:
-        await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
+        current = await checked_save(
+            facility_key, if_match, body.pin, signed_in, facilities, users, sessions, clock
+        )
     except SessionEnded:
         return session_ended_response()
-    saved = await facilities.reset_to_preset(facility_key, clock.now())
+    saved = await facilities.reset_to_preset(facility_key, clock.now(), current.version)
     response.headers["ETag"] = etag(saved.version)
     return facility_out(saved, clock)
