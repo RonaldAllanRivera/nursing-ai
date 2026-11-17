@@ -1,10 +1,14 @@
 """Secrets and the site address come from SSM Parameter Store, once, at cold start."""
 
-from collections.abc import Mapping
+from __future__ import annotations
 
-from types_boto3_ssm import SSMClient
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from nursing_api.aws.clients import dual_stack_client
+
+if TYPE_CHECKING:  # the stubs are a dev dependency: never imported at run time
+    from types_boto3_ssm import SSMClient
 
 SUFFIX = "_SSM_PARAMETER"
 

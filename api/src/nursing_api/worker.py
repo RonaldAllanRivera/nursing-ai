@@ -122,12 +122,15 @@ class DraftWorker:
         except NotFound:
             return  # the job is no longer open
         except Exception as error:
-            # Nothing more can be done here; startup recovery fails a job left running.
+            # No outcome is recorded, so the job stays running. Raise, so the queue delivers the
+            # message again: once its lease has run out the next claim retries the job, or the
+            # fourth fails it. (In process, the queue's guard logs this and nothing retries.)
             log.error(
                 "job could not be marked failed",
                 job_id=str(job_id),
                 error_class=type(error).__name__,
             )
+            raise
 
 
 class InProcessQueue:

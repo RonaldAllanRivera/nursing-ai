@@ -297,7 +297,7 @@ async def test_a_database_error_while_saving_the_draft_fails_the_job(
 
 
 @pytest.mark.asyncio
-async def test_a_database_error_while_failing_a_job_is_logged_not_raised(
+async def test_a_database_error_while_failing_a_job_is_logged_and_reaches_the_queue(
     database_url: str,
     clock: MutableClock,
     monkeypatch: pytest.MonkeyPatch,
@@ -317,7 +317,7 @@ async def test_a_database_error_while_failing_a_job_is_logged_not_raised(
         monkeypatch.setattr(app.state.notes, "fail_job", broken)
         await sign_in(client, PH_STAFF)
         await post_and_finish(app, client)
-    assert "draft job crashed" not in caplog.text
+    assert "draft job crashed" in caplog.text  # the in-process guard logs the class only
     assert "could not be marked failed" in caplog.text
     assert canary not in caplog.text
 

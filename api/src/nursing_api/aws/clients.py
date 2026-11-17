@@ -4,13 +4,17 @@ Every client uses the dual-stack endpoints (`*.api.aws`), which resolve over IPv
 retries. boto3 is synchronous: callers in async code run its calls through `asyncio.to_thread`.
 """
 
-from typing import Literal, overload
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal, overload
 
 import boto3
 from botocore.config import Config
-from types_boto3_lambda import LambdaClient
-from types_boto3_sqs import SQSClient
-from types_boto3_ssm import SSMClient
+
+if TYPE_CHECKING:  # the stubs are a dev dependency: never imported at run time
+    from types_boto3_lambda import LambdaClient
+    from types_boto3_sqs import SQSClient
+    from types_boto3_ssm import SSMClient
 
 CONFIG = Config(use_dualstack_endpoint=True, retries={"mode": "standard"})
 

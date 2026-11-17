@@ -4,13 +4,17 @@ boto3 is synchronous, so each call runs in a thread. The worker Lambda reads the
 (POST /events); nothing here receives or deletes them.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from types_boto3_sqs import SQSClient
-
 from nursing_api.aws.clients import dual_stack_client
+
+if TYPE_CHECKING:  # the stubs are a dev dependency: never imported at run time
+    from types_boto3_sqs import SQSClient
 
 
 def make_client() -> SQSClient:

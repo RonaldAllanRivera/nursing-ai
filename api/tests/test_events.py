@@ -112,3 +112,16 @@ async def test_a_database_that_stays_asleep_answers_503_so_sqs_redelivers(
         async with client_for(app) as client:
             response = await client.post("/events", json=records(message(uuid4())))
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_job_whose_outcome_cannot_be_recorded_answers_5xx(
+    database_url: str, clock: MutableClock
+) -> None:
+    async with running_app(database_url, clock, app_role="worker") as app:
+        job_id = await add_job(app)
+        app.state.notes.complete_job = AsyncMock(side_effect=OSError("db down"))
+        app.state.notes.fail_job = AsyncMock(side_effect=OSError("db down"))
+        async with client_for(app) as client:
+            response = await client.post("/events", json=records(message(job_id)))
+    assert response.status_code >= 500
