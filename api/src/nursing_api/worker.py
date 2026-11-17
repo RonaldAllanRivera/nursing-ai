@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import structlog
 from nursing_core.domain.errors import (
     AiBudgetReached,
+    DatabaseWaking,
     InvalidModelOutput,
     ModelRefused,
     NotFound,
@@ -27,6 +28,10 @@ from nursing_core.storage.repositories import (
 
 from nursing_api.providers import ProviderFor
 from nursing_api.usage import UsageRecorder
+
+# Claim attempts in all while the database wakes. Each one already waits up to the connect
+# timeout, so there is no sleep between them; after the last the error goes back to the queue.
+CLAIM_ATTEMPTS = 3
 
 log = structlog.get_logger("nursing_api.worker")
 
@@ -65,7 +70,7 @@ class DraftWorker:
         self._provider_for = provider_for
 
     async def run(self, job_id: UUID) -> None:
-        rough = await self._notes.claim_job(job_id)
+        rough = await self._claim(job_id)
         if rough is None:
             return  # another worker has it, or it is already done
         try:
@@ -81,6 +86,14 @@ class DraftWorker:
         except Exception as error:
             log.error("draft not saved", job_id=str(job_id), error_class=type(error).__name__)
             await self._fail(job_id, JobFailure.PROVIDER_ERROR)
+
+    async def _claim(self, job_id: UUID) -> RoughNote | None:
+        for attempt in range(1, CLAIM_ATTEMPTS):
+            try:
+                return await self._notes.claim_job(job_id)
+            except DatabaseWaking:
+                log.warning("database waking", job_id=str(job_id), attempts=attempt)
+        return await self._notes.claim_job(job_id)  # the last attempt: let the error go
 
     async def _draft(self, job_id: UUID, rough: RoughNote) -> Note:
         patient = await self._patients.get_patient_by_encounter(rough.encounter_id)

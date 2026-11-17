@@ -12,10 +12,12 @@ import pytest
 from fastapi import FastAPI
 from nursing_api.app import create_app
 from nursing_api.settings import Settings
+from nursing_api.worker import DraftWorker
 from nursing_core.db import create_engine
 from nursing_core.demo import DemoCase, load_demo_cases
 from nursing_core.domain.errors import (
     AiBudgetReached,
+    DatabaseWaking,
     InvalidModelOutput,
     ModelRefused,
     PhiLeak,
@@ -506,3 +508,61 @@ async def test_a_billed_failure_is_recorded_once_and_keeps_its_problem_code(
                 )
             ).one()
     assert (row[0], row[1], row[2]) == (1500, 500, Decimal("0.32"))
+
+
+class WakingNotes:
+    """A notes repository whose claim finds the database waking `wakings` times, then claims."""
+
+    def __init__(self, real: PgNoteRepository, wakings: int) -> None:
+        self._real = real
+        self.wakings = wakings
+        self.attempts = 0
+
+    async def claim_job(self, job_id: UUID) -> RoughNote | None:
+        self.attempts += 1
+        if self.attempts <= self.wakings:
+            raise DatabaseWaking("the database is waking up")
+        return await self._real.claim_job(job_id)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_the_connect_while_the_database_wakes(
+    database_url: str, clock: MutableClock
+) -> None:
+    async with running_app(database_url, clock) as app:
+        state = app.state
+        record = await state.patients.get_patient(PH_CASE.patient_id)
+
+        async def queued_job(key: str) -> UUID:
+            rough = PH_CASE.rough_note.model_copy(
+                update={"id": uuid4(), "author_id": PH_STAFF, "encounter_id": record.encounter_id}
+            )
+            _, job = await state.notes.add_rough_note(rough, key, sha256(key.encode()).hexdigest())
+            return job.id
+
+        def worker_for(notes: WakingNotes) -> DraftWorker:
+            return DraftWorker(
+                notes,  # pyright: ignore[reportArgumentType]
+                state.patients,
+                state.usage,
+                clock,
+                lambda _patient: FakeProvider(PH_CASE.model_output),
+            )
+
+        # Two wakings, then the claim works: the job runs once.
+        job_id = await queued_job("wakes-twice")
+        notes = WakingNotes(state.notes, wakings=2)
+        await worker_for(notes).run(job_id)
+        assert notes.attempts == 3
+        assert (await state.notes.get_job(job_id)).status is JobStatus.SUCCEEDED
+
+        # Three wakings: three attempts in all, then the error goes back to the queue.
+        job_id = await queued_job("wakes-always")
+        notes = WakingNotes(state.notes, wakings=3)
+        with pytest.raises(DatabaseWaking):
+            await worker_for(notes).run(job_id)
+        assert notes.attempts == 3
+        assert (await state.notes.get_job(job_id)).status is JobStatus.QUEUED

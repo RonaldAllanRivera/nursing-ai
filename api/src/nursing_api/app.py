@@ -58,7 +58,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        engine = create_engine(resolved.database_url)
+        engine = create_engine(
+            resolved.database_url,
+            null_pool=resolved.db_pool == "null",
+            connect_timeout_s=resolved.db_connect_timeout_s,
+        )
         app.state.settings = resolved
         app.state.clock = the_clock
         app.state.engine = engine

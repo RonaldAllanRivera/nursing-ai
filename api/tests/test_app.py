@@ -1,5 +1,6 @@
 """The app's lifespan: it builds what the routes read from app.state, and disposes the engine."""
 
+import time
 from typing import Literal
 
 import httpx
@@ -11,6 +12,7 @@ from nursing_api.queue import ManagedQueue
 from nursing_api.settings import Settings
 from nursing_api.worker import InProcessQueue
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.pool import NullPool
 
 
 @pytest.mark.asyncio
@@ -95,3 +97,34 @@ async def test_without_a_queue_url_drafts_run_in_process(database_url: str) -> N
     async with app.router.lifespan_context(app):
         queue: ManagedQueue = app.state.queue
         assert isinstance(queue, InProcessQueue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("pool", "null"), [("null", True), ("queue", False)])
+async def test_lambda_settings_use_null_pool(
+    database_url: str, pool: Literal["queue", "null"], null: bool
+) -> None:
+    app = create_app(Settings(database_url=database_url, db_pool=pool))
+    async with app.router.lifespan_context(app):
+        assert isinstance(app.state.engine.pool, NullPool) is null
+
+
+@pytest.mark.asyncio
+async def test_api_says_database_waking_when_the_connect_times_out(silent_port: int) -> None:
+    settings = Settings(
+        database_url=f"postgresql+asyncpg://app:x@127.0.0.1:{silent_port}/app",
+        db_connect_timeout_s=0.5,
+        db_ping_timeout_s=0.5,
+    )
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set("sl_session", "made-up-token")
+            started = time.monotonic()
+            response = await client.get("/api/v1/session")
+            elapsed = time.monotonic() - started
+    assert elapsed < 2.0
+    assert response.status_code == 503
+    assert response.json()["code"] == "database_waking"
+    assert response.headers["Retry-After"] == "5"
