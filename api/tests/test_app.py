@@ -36,7 +36,9 @@ UNUSED = "postgresql+asyncpg://unused@localhost/unused"
 
 
 async def status_of(app: FastAPI, method: str, path: str) -> int:
-    transport = httpx.ASGITransport(app=app)
+    # No lifespan runs here, so a built route that reads app.state fails: as a 500, which still
+    # proves it is registered (only a missing route is a 404).
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         return (await client.request(method, path, json={})).status_code
 
