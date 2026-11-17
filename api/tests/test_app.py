@@ -1,6 +1,8 @@
 """The app's lifespan: it builds what the routes read from app.state, and disposes the engine."""
 
+import os
 import time
+from collections.abc import Mapping
 from typing import Literal
 
 import httpx
@@ -128,3 +130,24 @@ async def test_api_says_database_waking_when_the_connect_times_out(silent_port: 
     assert response.status_code == 503
     assert response.json()["code"] == "database_waking"
     assert response.headers["Retry-After"] == "5"
+
+
+@pytest.mark.asyncio
+async def test_create_app_builds_settings_from_ssm(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no settings given, the values SSM holds become the settings, over the environment."""
+    asked: list[Mapping[str, str]] = []
+
+    def fake_load(environ: Mapping[str, str]) -> dict[str, str]:
+        asked.append(environ)
+        return {"DATABASE_URL": database_url, "SITE_URL": "https://site.example.com"}
+
+    monkeypatch.setenv("DATABASE_URL", UNUSED)
+    monkeypatch.setenv("DATABASE_URL_SSM_PARAMETER", "/app/database-url")
+    monkeypatch.setattr("nursing_api.app.load_ssm_settings", fake_load)
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        assert app.state.settings.database_url == database_url
+        assert app.state.settings.site_url == "https://site.example.com"
+    assert asked == [os.environ]

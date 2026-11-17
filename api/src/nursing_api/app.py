@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -16,6 +17,7 @@ from nursing_core.storage.repositories import (
 
 from nursing_api.auth import build_google
 from nursing_api.auth.oidc import GoogleOidc
+from nursing_api.aws.ssm import load_ssm_settings
 from nursing_api.health import router as health_router
 from nursing_api.logging import RequestLogMiddleware, configure_logging
 from nursing_api.problems import install_problems
@@ -48,9 +50,15 @@ def create_app(
     """Builds the app. Tests pass their own settings, a clock they can move, a function from a
     patient to an AI provider and a Google client (so nothing reaches the network).
 
+    Without settings it reads them from the environment and SSM.
+
     Raises ValueError in live mode without a monthly cap or an API key.
     """
-    resolved = settings if settings is not None else Settings()  # pyright: ignore[reportCallIssue]
+    if settings is None:
+        # At cold start the secrets and the site address come from SSM, over the environment.
+        from_ssm = {name.lower(): value for name, value in load_ssm_settings(os.environ).items()}
+        settings = Settings(**from_ssm)  # pyright: ignore[reportCallIssue, reportArgumentType]
+    resolved = settings
     the_clock: Clock = clock if clock is not None else SystemClock()
     configure_logging()
     # Fails here, before serving, when live mode has no cap or key.
