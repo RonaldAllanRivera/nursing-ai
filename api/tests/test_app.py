@@ -1,8 +1,6 @@
 """The app's lifespan: it builds what the routes read from app.state, and disposes the engine."""
 
-import os
 import time
-from collections.abc import Mapping
 from typing import Literal
 
 import httpx
@@ -15,6 +13,11 @@ from nursing_api.settings import Settings
 from nursing_api.worker import InProcessQueue
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import NullPool
+from types_boto3_ssm import SSMClient
+
+from .test_aws_ssm import fake_aws, ssm_with
+
+__all__ = ["fake_aws"]  # the fixture, shared with test_aws_ssm
 
 
 @pytest.mark.asyncio
@@ -133,21 +136,21 @@ async def test_api_says_database_waking_when_the_connect_times_out(silent_port: 
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("fake_aws")
 async def test_create_app_builds_settings_from_ssm(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With no settings given, the values SSM holds become the settings, over the environment."""
-    asked: list[Mapping[str, str]] = []
-
-    def fake_load(environ: Mapping[str, str]) -> dict[str, str]:
-        asked.append(environ)
-        return {"DATABASE_URL": database_url, "SITE_URL": "https://site.example.com"}
-
+    """With no settings given, the real loader reads the named parameter through a stubbed client
+    and the values SSM holds become the settings, over the environment."""
+    client, stubber = ssm_with(("/app/database-url", database_url))
     monkeypatch.setenv("DATABASE_URL", UNUSED)
     monkeypatch.setenv("DATABASE_URL_SSM_PARAMETER", "/app/database-url")
-    monkeypatch.setattr("nursing_api.app.load_ssm_settings", fake_load)
+
+    def stubbed(service: str) -> SSMClient:
+        return client
+
+    monkeypatch.setattr("nursing_api.aws.ssm.dual_stack_client", stubbed)
     app = create_app()
     async with app.router.lifespan_context(app):
         assert app.state.settings.database_url == database_url
-        assert app.state.settings.site_url == "https://site.example.com"
-    assert asked == [os.environ]
+    stubber.assert_no_pending_responses()
