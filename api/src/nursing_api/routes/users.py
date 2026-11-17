@@ -7,8 +7,8 @@ from nursing_core.domain.users import can_list_staff, can_manage_staff, can_rese
 from nursing_core.storage.repositories import StoredUser
 
 from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
-from nursing_api.deps import ClockDep, SessionsDep, SignedInDep, UsersDep
-from nursing_api.problems import problems
+from nursing_api.deps import ClockDep, FacilitiesDep, SessionsDep, SignedInDep, UsersDep
+from nursing_api.problems import FieldError, problem_response, problems
 from nursing_api.routes import CSRF, SIGNED_IN
 from nursing_api.schemas import InviteIn, PinIn, UserOut
 
@@ -65,11 +65,23 @@ async def invite(
     users: UsersDep,
     sessions: SessionsDep,
     clock: ClockDep,
+    facilities: FacilitiesDep,
 ) -> UserOut | Response:
     """The admin invites a Google account by email, with a role and a facility."""
     actor = signed_in.user
     if not can_manage_staff(actor.role, persona=actor.persona):
         raise Forbidden("only the admin invites")
+    # Checked before the PIN: no PIN is compared here, so no guess goes uncounted.
+    if body.facility_key is not None:
+        try:
+            await facilities.get_facility(body.facility_key)
+        except NotFound:
+            return problem_response(
+                422,
+                "invalid_request",
+                "see errors",
+                errors=[FieldError(field="body.facility_key", message="no such facility")],
+            )
     try:
         await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
     except SessionEnded:

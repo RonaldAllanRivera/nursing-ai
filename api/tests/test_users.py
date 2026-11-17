@@ -331,3 +331,17 @@ async def test_test_teardown_revokes_without_deleting(
 async def test_the_seed_admin_persona_is_not_a_real_admin(client: httpx.AsyncClient) -> None:
     await sign_in(client, ADMIN)
     assert (await client.get(USERS)).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_inviting_to_an_unknown_facility_is_a_field_error(admin: httpx.AsyncClient) -> None:
+    body = {"email": NEW, "role": "staff_nurse", "facility_key": "nowhere", "pin": PIN}
+    response = await admin.post(USERS, json=body)
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_request"
+    assert [e["field"] for e in response.json()["errors"]] == ["body.facility_key"]
+    assert NEW not in [u["email"] for u in (await admin.get(USERS)).json()]
+    # The facility is checked before the PIN, but no PIN is compared there, so no guess goes
+    # uncounted; a wrong PIN with a real facility is still refused.
+    wrong = await admin.post(USERS, json=body | {"facility_key": "ph-demo", "pin": WRONG})
+    assert wrong.status_code == 403
