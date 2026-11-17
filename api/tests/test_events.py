@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_api.app import create_app
+from nursing_api.ops import OpsResult
 from nursing_api.settings import Settings
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import DatabaseWaking
@@ -125,3 +126,49 @@ async def test_a_job_whose_outcome_cannot_be_recorded_answers_5xx(
         async with client_for(app) as client:
             response = await client.post("/events", json=records(message(job_id)))
     assert response.status_code >= 500
+
+
+class FakeOps:
+    def __init__(self) -> None:
+        self.tasks: list[str] = []
+
+    async def run(self, task: str) -> OpsResult:
+        self.tasks.append(task)
+        failed = ["sqs"] if task == "smoke" else []
+        return OpsResult(task=task, ok=not failed, failed=failed)
+
+
+@pytest.mark.asyncio
+async def test_unknown_ops_task_is_400() -> None:
+    settings = Settings(database_url=UNUSED, app_role="ops")
+    app = create_app(settings)
+    app.state.settings = settings  # no lifespan runs here
+    app.state.ops = FakeOps()
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        unknown = await client.post("/events", json={"task": "drop-everything"})
+        garbage = await client.post("/events", content=b"not json")
+        missing = await client.post("/events", json={})
+    assert [r.status_code for r in (unknown, garbage, missing)] == [400, 400, 400]
+    assert unknown.json() == {"task": "unknown", "ok": False, "failed": []}
+    assert app.state.ops.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_ops_answer_is_the_task_ok_and_failed_names_with_500_when_not_ok() -> None:
+    settings = Settings(database_url=UNUSED, app_role="ops")
+    app = create_app(settings)
+    app.state.settings = settings  # no lifespan runs here
+    app.state.ops = FakeOps()
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        migrate = await client.post("/events", json={"task": "migrate"})
+        smoke = await client.post("/events", json={"task": "smoke"})
+    assert (migrate.status_code, migrate.json()) == (
+        200,
+        {"task": "migrate", "ok": True, "failed": []},
+    )
+    assert (smoke.status_code, smoke.json()) == (
+        500,
+        {"task": "smoke", "ok": False, "failed": ["sqs"]},
+    )

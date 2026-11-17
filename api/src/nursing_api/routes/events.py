@@ -4,8 +4,9 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import JSONResponse
 
-from nursing_api.problems import not_built
+from nursing_api.ops import TASKS, Ops
 from nursing_api.worker import DraftWorker
 
 log = structlog.get_logger("nursing_api.events")
@@ -33,10 +34,28 @@ def _job_ids(payload: object) -> list[UUID]:
     return ids
 
 
+async def _ops_answer(request: Request) -> Response:
+    """Run the ops task in the body: 200 when it worked, 500 when it didn't, 400 for any other."""
+    try:
+        body: Any = await request.json()
+        task = body["task"]
+    except (ValueError, KeyError, TypeError):
+        task = None
+    if not isinstance(task, str) or task not in TASKS:
+        log.warning("ops task unknown")
+        return JSONResponse({"task": "unknown", "ok": False, "failed": []}, status_code=400)
+    ops: Ops = request.app.state.ops
+    result = await ops.run(task)
+    status = 400 if result.refused else 200 if result.ok else 500
+    return JSONResponse(
+        {"task": result.task, "ok": result.ok, "failed": result.failed}, status_code=status
+    )
+
+
 @router.post("/events")
 async def handle_events(request: Request) -> Response:
-    if request.app.state.settings.app_role != "worker":
-        return not_built()  # the ops tasks arrive with the deploy lane's work
+    if request.app.state.settings.app_role == "ops":
+        return await _ops_answer(request)
     try:
         payload: object = await request.json()
     except ValueError as error:

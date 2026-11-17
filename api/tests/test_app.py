@@ -159,12 +159,12 @@ async def test_create_app_builds_settings_from_ssm(
 
 
 def test_app_imports_without_the_type_stubs() -> None:
-    """The image installs no dev group, so `types_boto3_*` must never be needed at run time."""
+    """The image installs no dev group: `types_boto3_*` and `httpx` are never needed at run time."""
     code = (
         "import sys\n"
         "class Block:\n"
         "    def find_spec(self, name, path=None, target=None):\n"
-        '        if name.split(".")[0].startswith("types_boto3"):\n'
+        '        if name.split(".")[0].startswith("types_boto3") or name == "httpx":\n'
         "            raise ModuleNotFoundError(name)\n"
         "sys.meta_path.insert(0, Block())\n"
         "import nursing_api.app\n"

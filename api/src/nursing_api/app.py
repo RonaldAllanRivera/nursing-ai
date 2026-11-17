@@ -21,6 +21,7 @@ from nursing_api.aws.metrics import emit_ai_spend
 from nursing_api.aws.ssm import load_ssm_settings
 from nursing_api.health import router as health_router
 from nursing_api.logging import RequestLogMiddleware, configure_logging
+from nursing_api.ops import Ops
 from nursing_api.problems import install_problems
 from nursing_api.providers import ProviderFor, check_live_settings, provider_factory
 from nursing_api.queue import build_queue
@@ -90,6 +91,7 @@ def create_app(
             emit_ai_spend if resolved.app_role == "worker" else None,
         )
         app.state.worker = worker
+        app.state.ops = Ops(resolved, engine, the_clock)
         queue = build_queue(resolved, worker.run, app.state.notes)
         app.state.queue = queue
         try:
