@@ -78,10 +78,12 @@ async def start_session(
         raise NotFound("no such persona")
     now = clock.now()
     shift = None
+    max_hours = int(SESSION_LIFETIME.total_seconds() // 3600)  # the admin's
     if user.facility_key is not None:
         profile = (await facilities.get_facility(user.facility_key)).profile
         shift = default_shift(now, profile)
-    token = await sessions.create(user.id, shift, now)
+        max_hours = profile.session_max_hours
+    token = (await sessions.create(user.id, shift, now, max_hours)).token
     session = await sessions.get(token, now)
     if session is None:  # just created: only a clock that jumped could lose it
         raise NotSignedIn
@@ -89,7 +91,7 @@ async def start_session(
     response.set_cookie(
         COOKIE,
         token,
-        max_age=int(SESSION_LIFETIME.total_seconds()),
+        max_age=int((session.expires_at - now).total_seconds()),
         path="/",
         httponly=True,
         samesite="lax",

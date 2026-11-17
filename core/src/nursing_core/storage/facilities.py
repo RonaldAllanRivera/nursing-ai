@@ -1,10 +1,12 @@
 """The facility repository: the region profile as the admin last saved it, and its history."""
 
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import ColumnElement, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from nursing_core.demo import DEMO_FACILITIES
 from nursing_core.domain.errors import NotFound, StaleVersion
 from nursing_core.domain.facility import FacilityProfile, FacilitySettings, StoredFacility
 from nursing_core.ports import Clock
@@ -120,6 +122,52 @@ class PgFacilityRepository:
                     changed_by=changed_by,
                     changed_at=now,
                     settings=settings.model_dump(mode="json"),
+                )
+            )
+            return (await load_facilities(conn, _FACILITY.c.id == current.id))[0]
+
+    async def reset_to_preset(self, key: str, now: datetime) -> StoredFacility:
+        """Puts a demo facility's settings back to its preset and records it as a `reset` change.
+
+        The key and the name stay as they are; the history row has no author. A facility with no
+        preset is `NotFound`.
+        """
+        preset = next((p for p in DEMO_FACILITIES if p.key == key), None)
+        if preset is None:
+            raise NotFound("no preset for this facility")
+        async with self._engine.begin() as conn:
+            current = (
+                await conn.execute(
+                    select(_FACILITY.c.id, _FACILITY.c.version, _FACILITY.c.name)
+                    .where(_FACILITY.c.key == key)
+                    .with_for_update()
+                )
+            ).one_or_none()
+            if current is None:
+                raise NotFound("no such facility")
+            settings = preset.model_copy(update={"name": current.name})
+            version = current.version + 1
+            await conn.execute(
+                update(_FACILITY)
+                .where(_FACILITY.c.id == current.id)
+                .values(
+                    **facility_columns(settings),
+                    version=version,
+                    updated_by=None,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(delete(_SHIFT).where(_SHIFT.c.facility_id == current.id))
+            await conn.execute(insert(_SHIFT), shift_rows(current.id, settings.shifts))
+            await conn.execute(
+                insert(tables.facility_change).values(
+                    id=uuid4(),
+                    facility_id=current.id,
+                    version=version,
+                    changed_by=None,
+                    changed_at=now,
+                    settings=settings.model_dump(mode="json", exclude={"key"}),
+                    reset=True,
                 )
             )
             return (await load_facilities(conn, _FACILITY.c.id == current.id))[0]
