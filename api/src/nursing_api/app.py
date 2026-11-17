@@ -17,6 +17,7 @@ from nursing_core.storage.repositories import (
 
 from nursing_api.auth import build_google
 from nursing_api.auth.oidc import GoogleOidc
+from nursing_api.aws.metrics import emit_ai_spend
 from nursing_api.aws.ssm import load_ssm_settings
 from nursing_api.health import router as health_router
 from nursing_api.logging import RequestLogMiddleware, configure_logging
@@ -86,6 +87,7 @@ def create_app(
             app.state.usage,
             the_clock,
             provider_factory(resolved, app.state.usage, the_clock, provider_for),
+            emit_ai_spend if resolved.app_role == "worker" else None,
         )
         app.state.worker = worker
         queue = build_queue(resolved, worker.run, app.state.notes)

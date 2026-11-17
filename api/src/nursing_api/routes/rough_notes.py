@@ -1,9 +1,10 @@
 import hashlib
 import json
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, Header, Request, Response
 from nursing_core.domain.notes import RoughNote
 
 from nursing_api.deps import (
@@ -14,13 +15,22 @@ from nursing_api.deps import (
     QueueDep,
     ensure_own_facility,
 )
-from nursing_api.problems import HeaderRefused, PreconditionRequired, not_built, problems
+from nursing_api.problems import (
+    DailyDraftLimit,
+    HeaderRefused,
+    PreconditionRequired,
+    not_built,
+    problems,
+)
 from nursing_api.routes import CSRF, SIGNED_IN, location_header
 from nursing_api.routes.jobs import job_out
 from nursing_api.schemas import DraftJobOut, RoughNoteIn
 
 # A longer key would pass Postgres's index-row limit and end as a plain 500.
 MAX_IDEMPOTENCY_KEY = 200
+
+# The daily draft cap counts the jobs created in this long.
+DAILY_WINDOW = timedelta(hours=24)
 
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=SIGNED_IN)
 # A new job counts toward the person's daily draft cap (429).
@@ -54,6 +64,7 @@ async def add_rough_note(
     patients: PatientsDep,
     notes: NotesDep,
     queue: QueueDep,
+    request: Request,
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -69,6 +80,13 @@ async def add_rough_note(
         raise HeaderRefused("header.Idempotency-Key", "too long")
     patient = await patients.get_patient(patient_id)
     ensure_own_facility(nurse, patient)
+    daily_cap: int | None = request.app.state.settings.ai_daily_drafts_per_user
+    # Demo personas draft from replays at no cost, so only an invited nurse is capped. A repeat of
+    # an earlier request makes no new job, so it is answered even at the cap.
+    if daily_cap is not None and not nurse.user.persona:
+        used = await notes.jobs_since(nurse.user.id, clock.now() - DAILY_WINDOW)
+        if used >= daily_cap and not await notes.key_used(nurse.user.id, idempotency_key):
+            raise DailyDraftLimit
     rough = RoughNote(
         id=uuid4(),
         encounter_id=patient.encounter_id,

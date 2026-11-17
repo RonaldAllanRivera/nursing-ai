@@ -1,6 +1,8 @@
 """Which AI provider drafts a note: by `AI_MODE`, with the budget guard around the live one."""
 
 from collections.abc import Callable
+from decimal import Decimal
+from uuid import UUID
 
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import ReplayMissing
@@ -45,16 +47,58 @@ def _mock_provider_for() -> ProviderFor:
     return provider_for
 
 
+class DraftProviders:
+    """Chooses the provider for a draft. Called with a patient it gives the plain provider; the
+    worker asks `for_job`, which knows the job and whether its author is a demo persona.
+
+    A persona's job always gets a replayed draft, even in live mode (the demo's PIN is public, so
+    anyone can be one, and a replay costs nothing). Everyone else's live call goes through a
+    budget guard that holds its worst case against the monthly cap under a lock.
+    """
+
+    def __init__(
+        self,
+        inner: ProviderFor,
+        usage: PgUsageRepository,
+        clock: Clock,
+        live_cap: Decimal | None,
+        live: bool,
+    ) -> None:
+        self._inner = inner
+        self._usage = usage
+        self._clock = clock
+        self._cap = live_cap
+        self._live = live
+
+    def __call__(self, patient: PatientRecord) -> LlmProvider:
+        return self._guarded(patient, None)
+
+    def for_job(self, patient: PatientRecord, *, job_id: UUID, persona: bool) -> LlmProvider:
+        if self._live and persona:
+            return ReplayProvider(RECORDINGS_DIR)
+        return self._guarded(patient, job_id)
+
+    def _guarded(self, patient: PatientRecord, job_id: UUID | None) -> LlmProvider:
+        provider = self._inner(patient)
+        if not self._live:
+            return provider
+        # Live always gets the guard: a missing cap stops here, it never means "no limit".
+        if self._cap is None:
+            raise ValueError(LIVE_NEEDS)
+        return BudgetGuard(provider, self._usage, self._clock, self._cap, LIVE_MODEL, job_id=job_id)
+
+
 def provider_factory(
     settings: Settings,
     usage: PgUsageRepository,
     clock: Clock,
     override: ProviderFor | None = None,
-) -> ProviderFor:
-    """The provider for a patient's note.
+) -> DraftProviders:
+    """The providers for a patient's note.
 
     `override` replaces the inner provider (tests use it so nothing reaches the network). In live
-    mode the budget guard goes around the inner provider, whatever it is.
+    mode the budget guard goes around the inner provider, whatever it is; a demo persona's job
+    gets a replay instead, even when `override` is set.
     """
     check_live_settings(settings)
     if override is not None:
@@ -68,10 +112,7 @@ def provider_factory(
         if key is None:
             raise ValueError(LIVE_NEEDS)
         inner = _the_same(AnthropicProvider(key, model=LIVE_MODEL))
-    if settings.ai_mode != "live":
-        return inner
-    # Live always gets the guard: a missing cap stops here, it never means "no limit".
-    cap = settings.ai_monthly_cap_usd
-    if cap is None:
+    live = settings.ai_mode == "live"
+    if live and settings.ai_monthly_cap_usd is None:
         raise ValueError(LIVE_NEEDS)
-    return lambda patient: BudgetGuard(inner(patient), usage, clock, cap, LIVE_MODEL)
+    return DraftProviders(inner, usage, clock, settings.ai_monthly_cap_usd, live)

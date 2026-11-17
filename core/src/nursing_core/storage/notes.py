@@ -4,11 +4,11 @@ Every method is one transaction. Domain errors carry fixed messages: a database 
 echoes row values (note text, keys), so none is ever passed on.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import NoReturn
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -166,6 +166,44 @@ class PgNoteRepository:
         if row is None:
             raise NotFound("no such rough note")
         return _rough_note(row)
+
+    async def written_by_persona(self, rough_note_id: UUID) -> bool:
+        """Whether the rough note's author is a demo persona. Raises NotFound without the note."""
+        async with self._engine.begin() as conn:
+            persona = (
+                await conn.execute(
+                    select(tables.app_user.c.persona)
+                    .join(_ROUGH, _ROUGH.c.author_id == tables.app_user.c.id)
+                    .where(_ROUGH.c.id == rough_note_id)
+                )
+            ).scalar_one_or_none()
+        if persona is None:
+            raise NotFound("no such rough note")
+        return persona
+
+    async def jobs_since(self, author_id: UUID, since: datetime) -> int:
+        """How many draft jobs were created at or after `since` for this author's rough notes."""
+        async with self._engine.begin() as conn:
+            return (
+                await conn.execute(
+                    select(func.count())
+                    .select_from(_JOB.join(_ROUGH, _JOB.c.rough_note_id == _ROUGH.c.id))
+                    .where(_ROUGH.c.author_id == author_id, _JOB.c.created_at >= since)
+                )
+            ).scalar_one()
+
+    async def key_used(self, author_id: UUID, idempotency_key: str) -> bool:
+        """Whether this author already saved a rough note under the idempotency key."""
+        async with self._engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    select(_ROUGH.c.id).where(
+                        _ROUGH.c.author_id == author_id,
+                        _ROUGH.c.idempotency_key == idempotency_key,
+                    )
+                )
+            ).first()
+        return row is not None
 
     async def get_job(self, job_id: UUID) -> DraftJob:
         async with self._engine.begin() as conn:

@@ -489,3 +489,60 @@ async def test_a_succeeded_job_is_never_claimed_again(engine: AsyncEngine) -> No
         job = (await conn.execute(select(tables.draft_job.c.id))).scalars().first()
     assert job is not None
     assert await repo.claim_job(job) is None
+
+
+async def _invited_user(engine: AsyncEngine, world: World) -> UUID:
+    """A non-persona user (an invited nurse) with the demo nurse's role and facility."""
+    user_id = uuid4()
+    async with engine.begin() as conn:
+        nurse = (
+            await conn.execute(
+                select(tables.app_user).where(tables.app_user.c.id == world.nurse_id)
+            )
+        ).one()
+        await conn.execute(
+            tables.app_user.insert().values(
+                id=user_id,
+                display_name="Invited Nurse",
+                initials="IN",
+                role=nurse.role,
+                facility_id=nurse.facility_id,
+                email=f"invited-{user_id}@example.com",
+                persona=False,
+            )
+        )
+    return user_id
+
+
+@pytest.mark.asyncio
+async def test_written_by_persona_reads_the_notes_author(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    invited = await _invited_user(engine, world)
+    by_persona = rough_note(world)
+    by_invited = rough_note(world, author_id=invited)
+    await repo.add_rough_note(by_persona, "k1", HASH_A)
+    await repo.add_rough_note(by_invited, "k1", HASH_B)
+
+    assert await repo.written_by_persona(by_persona.id) is True
+    assert await repo.written_by_persona(by_invited.id) is False
+    with pytest.raises(NotFound):
+        await repo.written_by_persona(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_jobs_since_counts_one_authors_jobs_created_after_the_cutoff(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    invited = await _invited_user(engine, world)
+    early = PgNoteRepository(engine, FixedClock(NOW - timedelta(hours=30)))
+    late = PgNoteRepository(engine, FixedClock(NOW - timedelta(hours=2)))
+    await early.add_rough_note(rough_note(world, author_id=invited), "old", HASH_A)
+    await late.add_rough_note(rough_note(world, author_id=invited), "new-1", HASH_A)
+    await late.add_rough_note(rough_note(world, author_id=invited), "new-2", HASH_B)
+    await late.add_rough_note(rough_note(world), "someone-else", HASH_A)
+
+    assert await late.jobs_since(invited, NOW - timedelta(hours=24)) == 2
+    assert await late.jobs_since(invited, NOW - timedelta(hours=1)) == 0
+    assert await late.jobs_since(world.nurse_id, NOW - timedelta(hours=24)) == 1

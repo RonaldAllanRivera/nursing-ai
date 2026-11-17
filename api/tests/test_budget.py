@@ -4,8 +4,11 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
+from uuid import UUID, uuid4
 
 import pytest
+from argon2 import PasswordHasher
+from fastapi import FastAPI
 from nursing_api import budget
 from nursing_api.budget import BudgetGuard
 from nursing_core.clock import FixedClock
@@ -13,19 +16,55 @@ from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import AiBudgetReached
 from nursing_core.domain.facility import Locale, NoteFormat
 from nursing_core.domain.model_output import DraftRequest
+from nursing_core.domain.users import Role
 from nursing_core.prompts import FDAR_PROMPT_VERSION, load_prompt
 from nursing_core.providers import anthropic as provider
 from nursing_core.providers.fake import FakeProvider
 from nursing_core.providers.pricing import cost_usd
+from nursing_core.storage import tables
 from nursing_core.storage.repositories import PgUsageRepository
+from sqlalchemy import insert, select
 
 MODEL = "claude-opus-5-5"
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
 
 
-class _NothingSpent:
-    async def month_total(self, _now: datetime) -> tuple[Decimal, int]:
-        return Decimal(0), 0
+class _Holds:
+    """Stands in for the usage repository: refuses a hold that takes the total past the cap."""
+
+    def __init__(self) -> None:
+        self.held: list[tuple[UUID | None, Decimal, Decimal, datetime]] = []
+
+    async def hold(
+        self, job_id: UUID | None, amount_usd: Decimal, cap_usd: Decimal, now: datetime
+    ) -> None:
+        if amount_usd > cap_usd:
+            raise AiBudgetReached("the monthly AI cap would be passed")
+        self.held.append((job_id, amount_usd, cap_usd, now))
+
+
+async def add_invited_nurse(app: FastAPI, facility_key: str) -> UUID:
+    """A non-persona staff nurse (an invited one) at the facility, with a PIN already set."""
+    user_id = uuid4()
+    async with app.state.engine.begin() as conn:
+        facility_id = (
+            await conn.execute(
+                select(tables.facility.c.id).where(tables.facility.c.key == facility_key)
+            )
+        ).scalar_one()
+        await conn.execute(
+            insert(tables.app_user).values(
+                id=user_id,
+                display_name="Invited Nurse",
+                initials="IN",
+                role=Role.STAFF_NURSE.value,
+                facility_id=facility_id,
+                email=f"e2e-{uuid4()}@example.com",
+                persona=False,
+                pin_hash=PasswordHasher().hash(uuid4().hex),
+            )
+        )
+    return user_id
 
 
 def _request() -> DraftRequest:
@@ -37,10 +76,15 @@ def _request() -> DraftRequest:
     )
 
 
-def _guard(cap: Decimal) -> BudgetGuard:
-    usage = cast(PgUsageRepository, _NothingSpent())
+def _guard(cap: Decimal, holds: _Holds | None = None, job_id: UUID | None = None) -> BudgetGuard:
+    usage = cast(PgUsageRepository, holds or _Holds())
     return BudgetGuard(
-        FakeProvider(load_demo_cases()[0].model_output), usage, FixedClock(NOW), cap, MODEL
+        FakeProvider(load_demo_cases()[0].model_output),
+        usage,
+        FixedClock(NOW),
+        cap,
+        MODEL,
+        job_id=job_id,
     )
 
 
@@ -77,3 +121,13 @@ async def test_the_estimate_grows_with_the_schema(monkeypatch: pytest.MonkeyPatc
 def test_the_output_ceiling_is_the_providers_own() -> None:
     assert vars(budget)["MAX_OUTPUT_TOKENS"] == provider.MAX_OUTPUT_TOKENS
     assert provider.MAX_OUTPUT_TOKENS == 16000
+
+
+@pytest.mark.asyncio
+async def test_the_guard_holds_the_worst_case_for_its_job() -> None:
+    holds, job_id = _Holds(), uuid4()
+    cap = Decimal(5)
+
+    await _guard(cap, holds, job_id).draft_fdar(_request())
+
+    assert holds.held == [(job_id, _estimate(budget.SCHEMA_CHARS), cap, NOW)]

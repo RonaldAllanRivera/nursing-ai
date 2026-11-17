@@ -5,6 +5,8 @@ Nothing here logs note text, names or error messages: only the job id and the er
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import structlog
@@ -18,15 +20,15 @@ from nursing_core.domain.errors import (
 )
 from nursing_core.domain.jobs import JobFailure
 from nursing_core.domain.notes import Note, NoteStatus, RoughNote
+from nursing_core.domain.patient import PatientRecord
 from nursing_core.pipeline.fdar import run_fdar_pipeline
-from nursing_core.ports import Clock
+from nursing_core.ports import Clock, LlmProvider
 from nursing_core.storage.repositories import (
     PgNoteRepository,
     PgPatientRepository,
     PgUsageRepository,
 )
 
-from nursing_api.providers import ProviderFor
 from nursing_api.usage import UsageRecorder
 
 # Claim attempts in all while the database wakes. Each one already waits up to the connect
@@ -55,8 +57,18 @@ def failure_for(error: Exception) -> JobFailure:
     return JobFailure.PROVIDER_ERROR
 
 
+class JobProviders(Protocol):
+    """Gives the provider for one job; `DraftProviders` is the real one."""
+
+    def for_job(self, patient: PatientRecord, *, job_id: UUID, persona: bool) -> LlmProvider: ...
+
+
 class DraftWorker:
-    """Runs one draft job: claim it, run the pipeline, save the note."""
+    """Runs one draft job: claim it, run the pipeline, save the note.
+
+    `report_spend` (the worker role's metric) is called once after every job that ran, with what
+    the job's AI calls cost: nothing for a replay, a mock answer or a job that failed before a call.
+    """
 
     def __init__(
         self,
@@ -64,31 +76,48 @@ class DraftWorker:
         patients: PgPatientRepository,
         usage: PgUsageRepository,
         clock: Clock,
-        provider_for: ProviderFor,
+        providers: JobProviders,
+        report_spend: Callable[[Decimal], None] | None = None,
     ) -> None:
         self._notes = notes
         self._patients = patients
         self._usage = usage
         self._clock = clock
-        self._provider_for = provider_for
+        self._providers = providers
+        self._report_spend = report_spend
 
     async def run(self, job_id: UUID) -> None:
         rough = await self._claim(job_id)
         if rough is None:
             return  # another worker has it, or it is already done
+        recorder: UsageRecorder | None = None
         try:
-            note = await self._draft(job_id, rough)
-        except Exception as error:
-            log.warning("draft job failed", job_id=str(job_id), error_class=type(error).__name__)
-            await self._fail(job_id, failure_for(error))
-            return
-        try:
-            await self._notes.complete_job(job_id, note)
-        except NotFound:
-            return  # the job was failed or finished by someone else: nothing to do
-        except Exception as error:
-            log.error("draft not saved", job_id=str(job_id), error_class=type(error).__name__)
-            await self._fail(job_id, JobFailure.PROVIDER_ERROR)
+            try:
+                patient = await self._patients.get_patient_by_encounter(rough.encounter_id)
+                persona = await self._notes.written_by_persona(rough.id)
+                recorder = UsageRecorder(
+                    self._providers.for_job(patient, job_id=job_id, persona=persona),
+                    self._usage,
+                    self._clock,
+                    job_id,
+                )
+                note = await self._draft(rough, patient, recorder)
+            except Exception as error:
+                log.warning(
+                    "draft job failed", job_id=str(job_id), error_class=type(error).__name__
+                )
+                await self._fail(job_id, failure_for(error))
+                return
+            try:
+                await self._notes.complete_job(job_id, note)
+            except NotFound:
+                return  # the job was failed or finished by someone else: nothing to do
+            except Exception as error:
+                log.error("draft not saved", job_id=str(job_id), error_class=type(error).__name__)
+                await self._fail(job_id, JobFailure.PROVIDER_ERROR)
+        finally:
+            if self._report_spend is not None:
+                self._report_spend(recorder.cost_usd if recorder is not None else Decimal(0))
 
     async def _claim(self, job_id: UUID) -> RoughNote | None:
         for attempt in range(1, CLAIM_ATTEMPTS):
@@ -98,10 +127,8 @@ class DraftWorker:
                 log.warning("database waking", job_id=str(job_id), attempts=attempt)
         return await self._notes.claim_job(job_id)  # the last attempt: let the error go
 
-    async def _draft(self, job_id: UUID, rough: RoughNote) -> Note:
-        patient = await self._patients.get_patient_by_encounter(rough.encounter_id)
+    async def _draft(self, rough: RoughNote, patient: PatientRecord, provider: LlmProvider) -> Note:
         shift_notes = await self._notes.shift_rough_notes(rough.encounter_id, rough.shift)
-        provider = UsageRecorder(self._provider_for(patient), self._usage, self._clock, job_id)
         result = await run_fdar_pipeline(rough, patient, shift_notes, provider)
         return Note(
             id=uuid4(),
