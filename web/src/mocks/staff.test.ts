@@ -9,7 +9,7 @@ import { MOCK_EMAILS, MOCK_PIN } from "./staff";
 type User = components["schemas"]["UserOut"];
 
 const as = async (email: string) => {
-  server.use(...createHandlers(demoApi, { account: { user: email } }));
+  server.use(...createHandlers(demoApi, { account: { user: email, gate: "open" } }));
   await adoptSession();
 };
 const list = async () => (await raw("GET", "/api/v1/users")).body as unknown as User[];

@@ -22,6 +22,8 @@ interface Active {
   expiresAt: string;
   /** A persona's wrong tries count here, on the session; a Google user's count on the user. */
   failures: number;
+  /** When a request last showed someone at the screen; `Date.now()`, so fake clocks drive it. */
+  lastActive: number;
   shiftOverride: Schemas["ShiftRef"] | null;
 }
 
@@ -30,7 +32,8 @@ export type Guarded =
 
 /**
  * The mock's session: who is signed in, at which gate, with which CSRF token, and the checks every
- * route makes before its own. There is no idle clock here: the browser's timer drives the lock.
+ * route makes before its own. Like the server it keeps an idle clock: an open session untouched for
+ * `idle_lock_seconds` becomes `idle_locked` the next time anything reads it.
  */
 export function createSession(data: DemoApi, options: MockOptions, staff: MockUser[]) {
   let active: Active | null = null;
@@ -59,6 +62,9 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     const base =
       active.kind === "persona" ? data.sessions[active.userId] : googleBase(active.userId);
     if (!base) return undefined;
+    if (active.gate === "open" && Date.now() - active.lastActive >= base.idle_lock_seconds * 1000) {
+      active.gate = "idle_locked";
+    }
     const shift = active.shiftOverride ?? base.shift;
     return {
       ...base,
@@ -98,28 +104,42 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
       csrf: nextToken(),
       expiresAt: expiry(found.facility_key),
       failures: 0,
+      lastActive: Date.now(),
       shiftOverride: null,
     };
     return session();
   }
 
-  // The `account` option: start already signed in as a mock staff member.
+  // The `account` option: start already signed in as a mock staff member. A state the server
+  // could never be in is a mistake in the test or spec, so it fails here, loudly.
   if (options.account) {
-    const wanted = options.account.user.toLowerCase();
-    const found = staff.find((u) => u.id === options.account?.user || u.email === wanted);
-    if (found) {
-      const gate = options.account.gate ?? "open";
-      if (gate === "pin_locked") found.pin_locked = true;
-      active = {
-        kind: "google",
-        userId: found.id,
-        gate,
-        csrf: nextToken(),
-        expiresAt: expiry(found.facility_key),
-        failures: 0,
-        shiftOverride: null,
-      };
+    const { user, gate: asked } = options.account;
+    const fail = (why: string): never => {
+      throw new Error(`Mock option account (${user}): ${why}`);
+    };
+    const found = staff.find((u) => u.id === user || u.email === user.toLowerCase());
+    if (!found) return fail("no such mock staff member (use an id or an email from MOCK_EMAILS)");
+    if (found.status === "revoked") fail("a revoked user can't sign in");
+    if (found.pin_locked && asked !== undefined && asked !== "pin_locked") {
+      fail(`this user's PIN is locked, so the gate can only be pin_locked, not ${asked}`);
     }
+    const noPin = found.pin === null;
+    if (noPin && asked !== undefined && asked !== "set_pin") {
+      fail(`this user has no PIN yet, so the gate can only be set_pin, not ${asked}`);
+    }
+    if (!noPin && asked === "set_pin") fail("this user already has a PIN, so set_pin can't happen");
+    const gate: Gate = asked ?? (found.pin_locked ? "pin_locked" : noPin ? "set_pin" : "enter_pin");
+    if (gate === "pin_locked") found.pin_locked = true;
+    active = {
+      kind: "google",
+      userId: found.id,
+      gate,
+      csrf: nextToken(),
+      expiresAt: expiry(found.facility_key),
+      failures: 0,
+      lastActive: Date.now(),
+      shiftOverride: null,
+    };
   }
 
   /** The checks before any route's own: signed in (401), then for a change the token (403). */
@@ -132,12 +152,22 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     return { session: current };
   }
 
-  /** Every data route: the session checks, then 423 with the gate unless the session is open. */
-  function guard(request: Request): Guarded {
+  /** A request showed someone at the screen: the idle count starts again. */
+  function touch() {
+    if (active) active.lastActive = Date.now();
+  }
+
+  /**
+   * Every data route: the session checks, then 423 with the gate unless the session is open. An
+   * open request counts as activity, except the draft-job poll, which runs with nobody there.
+   */
+  function guard(request: Request, activity = true): Guarded {
     const checked = guardSession(request);
     if (checked.refusal) return checked;
     const gate = checked.session.gate;
-    return gate === "open" ? checked : { refusal: problem(423, gate) };
+    if (gate !== "open") return { refusal: problem(423, gate) };
+    if (activity) touch();
+    return checked;
   }
 
   /**
@@ -147,6 +177,9 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
    */
   function checkPin(pin: unknown): Response | null {
     if (!active) return problem(401, "not_signed_in");
+    const locked = active.kind === "google" ? staffOf(active.userId) : undefined;
+    // A locked PIN is never a pass, whatever is sent: only a reset frees it.
+    if (locked?.pin_locked) return problem(423, "pin_locked");
     if (!isPinFormat(pin)) return fieldProblem("body.pin", PIN_FORMAT_MESSAGE);
     const google = active.kind === "google" ? staffOf(active.userId) : undefined;
     if ((google ? google.pin : DEMO_PIN) === pin) {
@@ -176,6 +209,7 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     startPersona,
     guardSession,
     guard,
+    touch,
     checkPin,
     /** The signed-in Google staff member, for the rules that depend on who they are. */
     google: () => (active?.kind === "google" ? staffOf(active.userId) : undefined),
@@ -183,7 +217,9 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
       active = null;
     },
     setGate: (gate: Gate) => {
-      if (active) active.gate = gate;
+      if (!active) return;
+      active.gate = gate;
+      if (gate === "open") active.lastActive = Date.now();
     },
     setShift: (choice: Schemas["ShiftRef"]) => {
       if (active) active.shiftOverride = choice;

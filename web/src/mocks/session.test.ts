@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adoptSession, raw, signInAs } from "../test/mockSession";
 import { server } from "../test/setup";
 import { demoApi } from "./demo-api";
@@ -20,6 +20,8 @@ const head = (gate: "open" | "set_pin" | "enter_pin" | "pin_locked"): MockOption
 const nurse = (gate: "open" | "set_pin" | "enter_pin" | "pin_locked"): MockOptions => ({
   account: { user: MOCK_EMAILS.phStaff, gate },
 });
+/** A person with no PIN yet: the only one who can be at set_pin. */
+const newcomer: MockOptions = { account: { user: MOCK_EMAILS.phInvited, gate: "set_pin" } };
 const unlock = (pin: string) => raw("POST", "/api/v1/session/unlock", { body: { pin } });
 
 const DATA_ROUTES: [string, string, unknown?][] = [
@@ -46,7 +48,7 @@ const DATA_ROUTES: [string, string, unknown?][] = [
 describe("the session gates", () => {
   describe.each(["set_pin", "enter_pin", "pin_locked"] as const)("at %s", (gate) => {
     it.each(DATA_ROUTES)("%s %s answers 423 with the gate", async (method, path, body) => {
-      start(head(gate));
+      start(gate === "set_pin" ? newcomer : head(gate));
       await adoptSession();
       const answer = await raw(method, path, { body });
       expect(answer.status).toBe(423);
@@ -54,7 +56,7 @@ describe("the session gates", () => {
     });
 
     it("still answers GET and DELETE /session", async () => {
-      start(head(gate));
+      start(gate === "set_pin" ? newcomer : head(gate));
       const session = await adoptSession();
       expect(session.gate).toBe(gate);
       expect(session.kind).toBe("google");
@@ -120,7 +122,7 @@ describe("CSRF", () => {
   });
 
   it("holds DELETE /session and the PIN routes to it too", async () => {
-    start(nurse("set_pin"));
+    start(newcomer);
     await adoptSession();
     const pin = await raw("POST", "/api/v1/session/pin", { body: { pin: MOCK_PIN }, token: null });
     expect(pin.body.code).toBe("csrf_failed");
@@ -169,7 +171,7 @@ describe("POST /session/pin", () => {
   const set = (pin: string) => raw("POST", "/api/v1/session/pin", { body: { pin } });
 
   it("refuses a malformed or weak PIN with a field error on body.pin", async () => {
-    start(nurse("set_pin"));
+    start(newcomer);
     await adoptSession();
     for (const pin of ["12345", "1234567", "12345a", "١٢٣٤٥٦", ""]) {
       const answer = await set(pin);
@@ -182,7 +184,7 @@ describe("POST /session/pin", () => {
   });
 
   it("stores a good PIN, opens the session, and refuses a second one", async () => {
-    start(nurse("set_pin"));
+    start(newcomer);
     await adoptSession();
     const done = await set(MOCK_PIN);
     expect(done.status).toBe(200);
@@ -193,7 +195,7 @@ describe("POST /session/pin", () => {
   });
 
   it("takes the demo PIN as a new PIN", async () => {
-    start(nurse("set_pin"));
+    start(newcomer);
     await adoptSession();
     expect((await set(DEMO_PIN)).status).toBe(200);
   });
@@ -244,13 +246,19 @@ describe("POST /session/unlock", () => {
     await unlock("999999");
     await unlock("999999");
     expect((await unlock(MOCK_PIN)).status).toBe(200);
+    // Cleared: the next wrong PIN is the first of five again, not the third.
+    const next = await raw("POST", `/api/v1/notes/${NOTE}/sign`, {
+      body: { pin: "999999" },
+      headers: { "If-Match": '"v1"' },
+    });
+    expect([next.body.code, next.body.tries_left]).toEqual(["pin_wrong", 4]);
   });
 
   it("answers 409 at gate open or set_pin", async () => {
     start(nurse("open"));
     await adoptSession();
     expect((await unlock(MOCK_PIN)).status).toBe(409);
-    start(nurse("set_pin"));
+    start(newcomer);
     await adoptSession();
     expect((await unlock(MOCK_PIN)).status).toBe(409);
   });
@@ -369,5 +377,128 @@ describe("POST /facilities/{key}/reset", () => {
       headers: { "If-Match": '"f1"' },
     });
     expect(answer.status).toBe(404);
+  });
+});
+
+describe("the idle clock", () => {
+  const IDLE_MS = 300 * 1000;
+  const at = (ms: number) => vi.setSystemTime(Date.now() + ms);
+  const patients = () => raw("GET", "/api/v1/patients");
+  const gateNow = async () => (await raw("GET", "/api/v1/session")).body["gate"];
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("locks a session left alone for the idle time, and says so at GET /session", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    at(IDLE_MS);
+    const locked = await patients();
+    expect([locked.status, locked.body.code]).toEqual([423, "idle_locked"]);
+    expect(await gateNow()).toBe("idle_locked");
+  });
+
+  it("reports the lock at GET /session before any data route", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    at(IDLE_MS);
+    expect(await gateNow()).toBe("idle_locked");
+  });
+
+  it("stays open just under the limit, and a data request starts the count again", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    at(IDLE_MS - 1000);
+    expect((await patients()).status).toBe(200);
+    at(IDLE_MS - 1000);
+    expect((await patients()).status).toBe(200);
+  });
+
+  it("is not kept open by polling a draft job", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    for (let i = 0; i < 4; i += 1) {
+      at(IDLE_MS / 4);
+      await raw("GET", `/api/v1/draft-jobs/${ID}`);
+    }
+    expect((await patients()).body.code).toBe("idle_locked");
+  });
+
+  it("is kept open by GET /session while the session is open", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    for (let i = 0; i < 3; i += 1) {
+      at(IDLE_MS - 1000);
+      expect(await gateNow()).toBe("open");
+    }
+    expect((await patients()).status).toBe(200);
+  });
+
+  it("opens again on unlock from idle_locked, for a persona and a Google user", async () => {
+    start();
+    await signInAs("staff_nurse", "ph-demo");
+    at(IDLE_MS);
+    expect((await unlock(DEMO_PIN)).body["gate"]).toBe("open");
+    expect((await patients()).status).toBe(200);
+    start(nurse("open"));
+    await adoptSession();
+    at(IDLE_MS);
+    expect((await unlock(MOCK_PIN)).status).toBe(200);
+    at(IDLE_MS - 1000);
+    expect((await patients()).status).toBe(200);
+  });
+});
+
+describe("the account option", () => {
+  const start_ = (account: NonNullable<MockOptions["account"]>) => {
+    server.use(...createHandlers(demoApi, { account }));
+  };
+
+  it("does not let a PIN-locked user in, even with the right PIN", async () => {
+    start_({ user: MOCK_EMAILS.phLocked, gate: "pin_locked" });
+    await adoptSession();
+    const answer = await unlock(MOCK_PIN);
+    expect([answer.status, answer.body.code]).toEqual([423, "pin_locked"]);
+  });
+
+  it("derives the gate from the user when none is given", async () => {
+    for (const [email, gate] of [
+      [MOCK_EMAILS.phLocked, "pin_locked"],
+      [MOCK_EMAILS.phInvited, "set_pin"],
+      [MOCK_EMAILS.phStaff, "enter_pin"],
+    ] as const) {
+      start_({ user: email });
+      expect((await adoptSession()).gate).toBe(gate);
+    }
+  });
+
+  it("keeps an explicit open gate for an active user with a PIN", async () => {
+    start_({ user: MOCK_EMAILS.phStaff, gate: "open" });
+    expect((await adoptSession()).gate).toBe("open");
+  });
+
+  it("is found by id as well as by email, in any case", async () => {
+    start_({ user: MOCK_EMAILS.phStaff.toUpperCase(), gate: "open" });
+    const session = await adoptSession();
+    start_({ user: session.user_id, gate: "open" });
+    expect((await adoptSession()).user_id).toBe(session.user_id);
+  });
+
+  it.each([
+    ["an unknown user", { user: "nobody@example.com" }],
+    ["a revoked user", { user: MOCK_EMAILS.usRevoked }],
+    ["a PIN-locked user at another gate", { user: MOCK_EMAILS.phLocked, gate: "open" as const }],
+    [
+      "a user with no PIN at enter_pin",
+      { user: MOCK_EMAILS.phInvited, gate: "enter_pin" as const },
+    ],
+    ["a user with no PIN at open", { user: MOCK_EMAILS.phInvited, gate: "open" as const }],
+    ["a user with a PIN at set_pin", { user: MOCK_EMAILS.phStaff, gate: "set_pin" as const }],
+  ])("refuses %s, naming the option", (_name, account) => {
+    expect(() => createHandlers(demoApi, { account })).toThrow(/account/);
   });
 });

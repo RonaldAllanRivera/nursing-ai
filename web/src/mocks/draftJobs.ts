@@ -37,9 +37,9 @@ export function createDrafts(data: DemoApi, source: DemoApi, options: MockOption
   /** Who saved each rough note: only they can try again. */
   const authors = new Map<string, string>();
 
-  const newId = () => {
+  const newId = (kind = "07") => {
     made += 1;
-    return `00000000-0000-4000-8000-0000000007${String(made).padStart(2, "0")}`;
+    return `00000000-0000-4000-8000-0000000${kind}${String(made).padStart(3, "0")}`;
   };
   const store = (job: Job) => {
     data.jobs[job.id] = job;
@@ -53,7 +53,19 @@ export function createDrafts(data: DemoApi, source: DemoApi, options: MockOption
       if (failNext === undefined) return base;
       const failure = failNext;
       failNext = undefined;
-      return store(dressed({ ...base, id: newId(), status: "failed", failure, note_id: null }));
+      // The demo has one rough note per patient; a failed save is a rough note of its own, so a
+      // later save for the patient can't be mistaken for it.
+      const roughNoteId = newId("08");
+      return store(
+        dressed({
+          ...base,
+          id: newId(),
+          rough_note_id: roughNoteId,
+          status: "failed",
+          failure,
+          note_id: null,
+        }),
+      );
     },
     /** A new job for the patient's rough note, which then drafts like any job. */
     retryFor(patientId: string, base: Job): Job {

@@ -125,7 +125,7 @@ describe("POST /rough-notes/{id}/draft-jobs", () => {
     expect((await again("00000000-0000-4000-8000-0000000000aa")).status).toBe(404);
     server.use(
       ...createHandlers(demoApi, {
-        account: { user: MOCK_EMAILS.phStaff },
+        account: { user: MOCK_EMAILS.phStaff, gate: "open" },
         failDraft: "provider_error",
       }),
     );
@@ -134,5 +134,23 @@ describe("POST /rough-notes/{id}/draft-jobs", () => {
     await poll(mine.id);
     await signInAs("head_nurse", "ph-demo");
     expect((await again(mine.rough_note_id)).status).toBe(403);
+  });
+
+  it("retries the failed row even after a later save for the same patient succeeded", async () => {
+    await begin({ failDraft: "provider_error" });
+    const failed = await save();
+    await poll(failed.id);
+    const later = await save();
+    await poll(later.id);
+    expect(later.rough_note_id).not.toBe(failed.rough_note_id);
+    const retry = await again(failed.rough_note_id);
+    expect(retry.status).toBe(202);
+    expect(retry.body["id"]).not.toBe(failed.id);
+    const rows = await shown();
+    expect(rows.find((n) => n.rough_note_id === failed.rough_note_id)?.job.id).toBe(
+      retry.body["id"],
+    );
+    expect(rows.find((n) => n.rough_note_id === later.rough_note_id)?.job.id).toBe(later.id);
+    expect((await again(later.rough_note_id)).body.code).toBe("already_drafted");
   });
 });
