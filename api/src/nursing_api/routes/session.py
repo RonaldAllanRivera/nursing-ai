@@ -6,7 +6,13 @@ from nursing_core.demo import DEMO_PERSONAS
 from nursing_core.domain.errors import NotFound
 from nursing_core.domain.shifts import default_shift, shift_choices
 from nursing_core.domain.users import SessionGate
-from nursing_core.storage.repositories import SESSION_LIFETIME, StoredSession, StoredUser
+from nursing_core.storage.repositories import (
+    SESSION_LIFETIME,
+    PgFacilityRepository,
+    PgSessionRepository,
+    StoredSession,
+    StoredUser,
+)
 from starlette.concurrency import run_in_threadpool
 
 from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
@@ -56,6 +62,42 @@ def session_out(
     )
 
 
+async def begin_session(
+    user: StoredUser,
+    *,
+    now: datetime,
+    settings: Settings,
+    sessions: PgSessionRepository,
+    facilities: PgFacilityRepository,
+    response: Response,
+) -> StoredSession:
+    """Starts `user`'s session and sets its cookie on `response` (persona and Google sign-in).
+
+    The shift is the facility's current one and the length its `session_max_hours`; the admin has
+    no shift and 12 hours. The cookie lasts exactly as long as the session.
+    """
+    shift = None
+    max_hours = int(SESSION_LIFETIME.total_seconds() // 3600)  # the admin's
+    if user.facility_key is not None:
+        profile = (await facilities.get_facility(user.facility_key)).profile
+        shift = default_shift(now, profile)
+        max_hours = profile.session_max_hours
+    token = (await sessions.create(user.id, shift, now, max_hours)).token
+    session = await sessions.get(token, now)
+    if session is None:  # just created: only a clock that jumped could lose it
+        raise NotSignedIn
+    response.set_cookie(
+        COOKIE,
+        token,
+        max_age=int((session.expires_at - now).total_seconds()),
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=settings.app_env in {"demo", "prod"},
+    )
+    return session
+
+
 @router.get("/personas", response_model=list[PersonaOut], responses=problems(404))
 async def list_personas(facilities: FacilitiesDep) -> list[PersonaOut]:
     """The demo people a visitor can sign in as, each with their role."""
@@ -90,25 +132,14 @@ async def start_session(
         # like an unknown one.
         raise NotFound("no such persona")
     now = clock.now()
-    shift = None
-    max_hours = int(SESSION_LIFETIME.total_seconds() // 3600)  # the admin's
-    if user.facility_key is not None:
-        profile = (await facilities.get_facility(user.facility_key)).profile
-        shift = default_shift(now, profile)
-        max_hours = profile.session_max_hours
-    token = (await sessions.create(user.id, shift, now, max_hours)).token
-    session = await sessions.get(token, now)
-    if session is None:  # just created: only a clock that jumped could lose it
-        raise NotSignedIn
     settings: Settings = request.app.state.settings
-    response.set_cookie(
-        COOKIE,
-        token,
-        max_age=int((session.expires_at - now).total_seconds()),
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=settings.app_env in {"demo", "prod"},
+    session = await begin_session(
+        user,
+        now=now,
+        settings=settings,
+        sessions=sessions,
+        facilities=facilities,
+        response=response,
     )
     return session_out(user, session, gate_of(user, session, now, settings), settings)
 
