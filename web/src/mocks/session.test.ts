@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adoptSession, raw, signInAs } from "../test/mockSession";
+import { adoptSession, raw, signInAs, signInLocked } from "../test/mockSession";
 import { server } from "../test/setup";
 import { demoApi } from "./demo-api";
 import { createHandlers } from "./handlers";
@@ -65,16 +65,16 @@ describe("the session gates", () => {
     });
   });
 
-  it("locks a persona session at enter_pin when the option says so", async () => {
-    start({ personaGate: "enter_pin" });
-    const session = await signInAs("staff_nurse", "ph-demo");
+  it("starts a persona session at enter_pin by default, as the server does", async () => {
+    start();
+    const session = await signInLocked("staff_nurse", "ph-demo");
     expect(session.gate).toBe("enter_pin");
     expect((await raw("GET", "/api/v1/patients")).body.code).toBe("enter_pin");
   });
 
-  it("starts personas open by default", async () => {
-    start();
-    expect((await signInAs("staff_nurse", "ph-demo")).gate).toBe("open");
+  it("starts personas open when the option says so", async () => {
+    start({ personaGate: "open" });
+    expect((await signInLocked("staff_nurse", "ph-demo")).gate).toBe("open");
   });
 
   it("answers 401 before CSRF and CSRF before the gate", async () => {
@@ -264,17 +264,17 @@ describe("POST /session/unlock", () => {
   });
 
   it("ends only a persona's session on the fifth wrong try", async () => {
-    start({ personaGate: "enter_pin" });
-    await signInAs("staff_nurse", "ph-demo");
+    start();
+    await signInLocked("staff_nurse", "ph-demo");
     const left: unknown[] = [];
     for (let i = 0; i < 4; i += 1) left.push((await unlock("999999")).body.tries_left);
     expect(left).toEqual([4, 3, 2, 1]);
     const fifth = await unlock("999999");
     expect([fifth.status, fifth.body.code]).toEqual([401, "not_signed_in"]);
     expect((await raw("GET", "/api/v1/session")).status).toBe(401);
-    const again = await signInAs("staff_nurse", "ph-demo");
-    expect((await unlock(DEMO_PIN)).status).toBe(200);
+    const again = await signInLocked("staff_nurse", "ph-demo");
     expect(again.gate).toBe("enter_pin");
+    expect((await unlock(DEMO_PIN)).status).toBe(200);
   });
 });
 

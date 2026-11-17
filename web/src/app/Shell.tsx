@@ -3,7 +3,9 @@ import { useState } from "react";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
 import { Button } from "../components/ui/Button";
+import { GateScreen } from "../session/GateScreen";
 import { roleLabel } from "../session/personas";
+import { screenForGate } from "../session/pin";
 import { useSession, useSignOut } from "../session/session";
 import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
 import { ShellFrame } from "./RouteScreens";
@@ -103,9 +105,15 @@ export function Shell() {
       </header>
       <AidLine />
       <main className="mx-auto max-w-[1280px] px-4 pt-2 pb-12 sm:px-6">
-        <ShellFrame.Provider value={true}>
-          <Outlet />
-        </ShellFrame.Provider>
+        {/* A gate replaces the page (same address, header stays): nothing of a patient is left in
+            the page while someone has not proved who they are, and the page comes back as it was. */}
+        {screenForGate(session.gate) === null ? (
+          <ShellFrame.Provider value={true}>
+            <Outlet />
+          </ShellFrame.Provider>
+        ) : (
+          <GateScreen session={session} />
+        )}
       </main>
     </>
   );

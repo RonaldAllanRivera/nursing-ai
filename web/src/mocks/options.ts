@@ -14,7 +14,7 @@ export interface MockOptions {
   google?: boolean;
   /** The demo is on: personas, the demo PIN and "reset demo settings". Default true. */
   demo?: boolean;
-  /** The gate a persona session starts at. Default "open" until the PIN screen exists. */
+  /** The gate a persona session starts at. Default "enter_pin", as on the server: every sign-in meets the PIN. */
   personaGate?: "open" | "enter_pin";
   /**
    * Start signed in as this mock staff member (by id or email). The gate is derived from the user

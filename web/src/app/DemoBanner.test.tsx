@@ -1,9 +1,9 @@
 import { screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
 import { DEMO_BANNER } from "../session/signInOptions";
+import { chooseAndUnlock } from "../test/signIn";
 
 describe("the demo banner", () => {
   it("shows on the sign-in page when the demo is on", async () => {
@@ -13,9 +13,7 @@ describe("the demo banner", () => {
 
   it("stays on a signed-in page, outside the header", async () => {
     await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await screen.findByRole("heading", { name: "Patients on this ward" });
     const banner = screen.getByText(DEMO_BANNER);
     expect(banner).toBeVisible();

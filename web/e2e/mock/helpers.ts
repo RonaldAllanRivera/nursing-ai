@@ -131,9 +131,22 @@ export async function setMockOptions(page: Page, options: MockOptions) {
 
 export const DEMO_BANNER_TEXT = "Synthetic patients only. Never type real patient details.";
 
+export const DEMO_PIN = "135790";
+
+/**
+ * On the PIN screen that every sign-in ends at: the field already has the focus, so type the demo
+ * PIN and press Enter, with the keyboard only (a keyboard journey uses this too).
+ */
+export async function enterDemoPin(page: Page) {
+  await expect(page.getByLabel("PIN", { exact: true })).toBeFocused();
+  await page.keyboard.type(DEMO_PIN);
+  await page.keyboard.press("Enter");
+}
+
 export async function signInAs(page: Page, persona: string, landing: string) {
   await page.goto("/sign-in");
   await page.getByRole("button", { name: persona }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: landing })).toBeVisible();
 }
 

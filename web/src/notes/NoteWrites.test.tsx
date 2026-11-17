@@ -7,6 +7,7 @@ import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
 import { linesInOrder } from "./trace";
+import { chooseAndUnlock } from "../test/signIn";
 
 const NOTE_1 = "00000000-0000-4000-8000-000000000015";
 const NOTE_US = "00000000-0000-4000-8000-000000000035";
@@ -23,7 +24,7 @@ function demoNote(id: string): Note {
 
 async function openNote(noteId = NOTE_1, persona = SARAH) {
   const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await screen.findByRole("heading", { level: 1 });
   await act(() => app.router.navigate({ to: "/notes/$noteId", params: { noteId }, search: {} }));
   await screen.findByRole("heading", { name: "Your note" });
@@ -39,7 +40,7 @@ async function openChanged(
 ) {
   const app = await renderApp("/sign-in");
   before?.();
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await screen.findByRole("heading", { level: 1 });
   server.use(
     http.get("*/api/v1/notes/:id", () =>

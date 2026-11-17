@@ -7,6 +7,7 @@ import { renderApp } from "../test/render";
 import { linesInOrder } from "./trace";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
+import { chooseAndUnlock } from "../test/signIn";
 
 const NOTE_1 = "00000000-0000-4000-8000-000000000015";
 const NOTE_2 = "00000000-0000-4000-8000-000000000025";
@@ -16,7 +17,7 @@ const EMILY = "Staff nurse · Emily Carter, RN";
 
 async function signIn(persona = SARAH) {
   const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await screen.findByRole("heading", { level: 1 });
   return app;
 }

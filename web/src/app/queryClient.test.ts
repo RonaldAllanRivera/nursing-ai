@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { ApiError, type Problem } from "../api/errors";
 import { sessionKey, sessionQuery, type Session } from "../session/session";
 import { server } from "../test/setup";
-import { createQueryClient, retryQuery } from "./queryClient";
+import { retryQuery } from "../api/retry";
+import { createQueryClient } from "./queryClient";
 
 const problem = (status: number, code: Problem["code"]): Problem => ({
   status,

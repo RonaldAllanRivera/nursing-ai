@@ -1,0 +1,259 @@
+import { act, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { describe, expect, it } from "vitest";
+import { MOCK_EMAILS, MOCK_PIN } from "../mocks/staff";
+import { holdNote, readHeldNote } from "../notes/heldNote";
+import { renderApp } from "../test/render";
+import { server } from "../test/setup";
+import { chooseAndUnlock, DEMO_PIN, signInAsPersona, typePin } from "../test/signIn";
+import { DEMO_ENDED, PIN_LOCKED } from "./pin";
+import { sessionKey, type Session } from "./session";
+
+const SARAH = "Staff nurse · Sarah Navarro, RN";
+const head = (gate?: "open" | "set_pin" | "enter_pin" | "pin_locked") => ({
+  account: { user: MOCK_EMAILS.phHead, ...(gate ? { gate } : {}) },
+});
+const newcomer = { account: { user: MOCK_EMAILS.phInvited, gate: "set_pin" as const } };
+
+/** No patient's name, bed or note may be in the page while a gate is up. */
+function expectNoPatientData() {
+  expect(screen.queryByText(/Demo patient/)).toBeNull();
+  expect(within(screen.getByRole("main")).queryAllByRole("link")).toHaveLength(0);
+  expect(screen.queryByLabelText("Your note")).toBeNull();
+}
+
+describe("enter your PIN", () => {
+  it("meets a demo person after sign-in, names her, shows the demo PIN and no patient", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    expect(
+      await screen.findByRole("heading", { name: "Enter your PIN, Sarah Navarro, RN" }),
+    ).toBeVisible();
+    expect(screen.getByText("Demo PIN: 135790")).toBeVisible();
+    expect(screen.getByLabelText("PIN")).toHaveFocus();
+    expectNoPatientData();
+  });
+
+  it("keeps the header and replaces the page; a right PIN brings the page back", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await screen.findByLabelText("PIN");
+    expect(screen.getByRole("banner")).toHaveTextContent("Sarah Navarro, RN");
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    await typePin(DEMO_PIN);
+    expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
+    expect(screen.queryByLabelText("PIN")).toBeNull();
+  });
+
+  it("says how many tries are left after a wrong PIN, and empties the field", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin("999999");
+    expect(await screen.findByText("Wrong PIN. 4 tries left.")).toBeVisible();
+    const field = screen.getByLabelText("PIN");
+    expect(field).toHaveValue("");
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Wrong PIN. 4 tries left.");
+    expectNoPatientData();
+  });
+
+  it("is a masked, numeric, digits-only field of at most six", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    const field = await screen.findByLabelText("PIN");
+    expect(field).toHaveAttribute("type", "password");
+    expect(field).toHaveAttribute("inputmode", "numeric");
+    expect(field).toHaveAttribute("autocomplete", "off");
+    expect(field).toHaveAttribute("maxlength", "6");
+    await userEvent.type(field, "12ab34-5678");
+    expect(field).toHaveValue("123456");
+  });
+
+  it("asks for six digits without sending anything when fewer were typed", async () => {
+    let sent = 0;
+    await renderApp("/sign-in", {}, [
+      http.post("*/api/v1/session/unlock", () => {
+        sent += 1;
+        return HttpResponse.json({}, { status: 500 });
+      }),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    await typePin("12");
+    expect(await screen.findByText("A PIN is 6 digits, 0 to 9.")).toBeVisible();
+    expect(sent).toBe(0);
+  });
+
+  it("warns on the last try that another wrong PIN ends the demo session", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    for (let i = 0; i < 3; i += 1) await typePin("999999");
+    await screen.findByText("Wrong PIN. 2 tries left.");
+    await typePin("999999");
+    expect(
+      await screen.findByText("Wrong PIN. 1 try left. Another wrong PIN ends this demo session."),
+    ).toBeVisible();
+  });
+
+  it("sends a demo person back to sign-in, saying why, after the fifth wrong PIN", async () => {
+    await renderApp("/sign-in");
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    for (let i = 0; i < 5; i += 1) await typePin("999999");
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(screen.getByText(DEMO_ENDED)).toBeVisible();
+    expect(screen.queryByText(/999999/)).toBeNull();
+    // Choosing a person starts again and drops the explanation.
+    await userEvent.click(await screen.findByRole("button", { name: SARAH }));
+    expect(await screen.findByRole("heading", { name: /Enter your PIN/ })).toBeVisible();
+    expect(screen.queryByText(DEMO_ENDED)).toBeNull();
+  });
+
+  it("does not show the demo PIN to a Google user, and takes her own PIN", async () => {
+    await renderApp("/patients", head());
+    expect(await screen.findByRole("heading", { name: /^Enter your PIN, / })).toBeVisible();
+    expect(screen.queryByText(/Demo PIN/)).toBeNull();
+    await typePin(MOCK_PIN);
+    expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
+  });
+
+  it("locks a Google user's PIN on the fifth wrong try, with nothing left to type", async () => {
+    await renderApp("/patients", head());
+    await screen.findByLabelText("PIN");
+    await typePin("999999");
+    await screen.findByText("Wrong PIN. 4 tries left.");
+    for (let i = 0; i < 3; i += 1) await typePin("999999");
+    // A Google user's last try carries no demo warning.
+    expect(await screen.findByText("Wrong PIN. 1 try left.")).toBeVisible();
+    await typePin("999999");
+    expect(await screen.findByText(PIN_LOCKED)).toBeVisible();
+    expect(screen.queryByLabelText("PIN")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByRole("banner")).toBeVisible();
+    expectNoPatientData();
+  });
+});
+
+describe("the other gates", () => {
+  it("shows the locked screen for a PIN that was locked already", async () => {
+    await renderApp("/patients", head("pin_locked"));
+    expect(await screen.findByText(PIN_LOCKED)).toBeVisible();
+    expectNoPatientData();
+  });
+
+  it("words an idle lock with its minutes and takes the same PIN", async () => {
+    const { queryClient } = await renderApp("/patients", head("open"));
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    act(() => {
+      queryClient.setQueryData<Session | null>(sessionKey, (s) =>
+        s ? { ...s, gate: "idle_locked" } : s,
+      );
+    });
+    expect((await screen.findAllByText("Locked after 5 minutes without use.")).length).toBe(1);
+    expectNoPatientData();
+  });
+
+  it("sets a PIN typed twice: a mismatch is caught before anything is sent", async () => {
+    let sent = 0;
+    await renderApp("/patients", newcomer, [
+      http.post("*/api/v1/session/pin", () => {
+        sent += 1;
+        return HttpResponse.json({}, { status: 500 });
+      }),
+    ]);
+    expect(await screen.findByRole("heading", { name: /^Choose a PIN, / })).toBeVisible();
+    expectNoPatientData();
+    await userEvent.type(screen.getByLabelText("New PIN"), "135792");
+    await userEvent.type(screen.getByLabelText("Type it again"), "135793{Enter}");
+    expect(await screen.findByText("The two PINs don't match.")).toBeVisible();
+    expect(screen.getByLabelText("Type it again")).toHaveAccessibleDescription(
+      "The two PINs don't match.",
+    );
+    expect(sent).toBe(0);
+  });
+
+  it("shows the server's weak-PIN message on the first field and clears both", async () => {
+    await renderApp("/patients", newcomer);
+    await userEvent.type(await screen.findByLabelText("New PIN"), "111111");
+    await userEvent.type(screen.getByLabelText("Type it again"), "111111{Enter}");
+    const message = "Choose a PIN that isn't one digit repeated or a run like 123456.";
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.getByLabelText("New PIN")).toHaveAccessibleDescription(
+      expect.stringContaining(message),
+    );
+    expect(screen.getByLabelText("New PIN")).toHaveValue("");
+    expect(screen.getByLabelText("Type it again")).toHaveValue("");
+    expect(screen.getByLabelText("New PIN")).toHaveFocus();
+  });
+
+  it("saves a good PIN and shows the page", async () => {
+    await renderApp("/patients", newcomer);
+    await userEvent.type(await screen.findByLabelText("New PIN"), "135792");
+    await userEvent.type(screen.getByLabelText("Type it again"), "135792{Enter}");
+    expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
+  });
+});
+
+describe("the page comes back as it was", () => {
+  it("keeps the rough note she was typing while a gate replaced the page", async () => {
+    const { queryClient } = await signInAsPersona(SARAH);
+    expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
+    await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
+    const box = await screen.findByLabelText("Your note");
+    await userEvent.click(box);
+    await userEvent.paste("pt c/o hilo since 2am");
+    // Saving is refused: the server wants the PIN again (an idle lock).
+    server.use(
+      http.post("*/api/v1/patients/:id/rough-notes", () =>
+        HttpResponse.json(
+          { type: "about:blank", title: "Locked", status: 423, code: "idle_locked" },
+          { status: 423, headers: { "Content-Type": "application/problem+json" } },
+        ),
+      ),
+      http.post("*/api/v1/session/unlock", () =>
+        HttpResponse.json({ ...queryClient.getQueryData<Session>(sessionKey), gate: "open" }),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save note" }));
+    expect(await screen.findByRole("heading", { name: /^Enter your PIN/ })).toBeVisible();
+    expect(screen.queryByLabelText("Your note")).toBeNull();
+    expect(screen.queryByText(/pt c\/o hilo/)).toBeNull();
+    expectNoPatientData();
+    await typePin(DEMO_PIN);
+    expect(await screen.findByLabelText("Your note")).toHaveValue("pt c/o hilo since 2am");
+    expect(localStorage.length + sessionStorage.length).toBe(0);
+  });
+
+  it("drops a held note on sign-out and when a person signs in", async () => {
+    const { queryClient } = await signInAsPersona(SARAH);
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    holdNote(queryClient, "p1", "unsent");
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("heading", { name: "Sign in" });
+    expect(readHeldNote(queryClient, "p1")).toBe("");
+  });
+
+  it("drops a held note on a 401", async () => {
+    const { queryClient } = await signInAsPersona(SARAH);
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    holdNote(queryClient, "p1", "unsent");
+    server.use(
+      http.get("*/api/v1/facilities/:key", () =>
+        HttpResponse.json(
+          { type: "about:blank", title: "Not signed in", status: 401, code: "not_signed_in" },
+          { status: 401 },
+        ),
+      ),
+    );
+    await act(() => queryClient.invalidateQueries({ queryKey: ["facility"] }));
+    await waitFor(() => {
+      expect(readHeldNote(queryClient, "p1")).toBe("");
+    });
+  });
+
+  it("signs a second person in through the PIN too", async () => {
+    await renderApp("/sign-in");
+    await chooseAndUnlock("Staff nurse · Emily Carter, RN");
+    expect(await screen.findByRole("heading", { name: "Patients on this unit" })).toBeVisible();
+  });
+});

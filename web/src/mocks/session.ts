@@ -100,7 +100,7 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     active = {
       kind: "persona",
       userId: personaId,
-      gate: options.personaGate ?? "open",
+      gate: options.personaGate ?? "enter_pin",
       csrf: nextToken(),
       expiresAt: expiry(found.facility_key),
       failures: 0,

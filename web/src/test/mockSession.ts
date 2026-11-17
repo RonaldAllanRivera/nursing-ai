@@ -25,14 +25,30 @@ export function personaId(role: string, facility: string | null) {
   return found.id;
 }
 
-/** Signs in as a persona through the mock, and sends that session's token from now on. */
+/**
+ * Signs in as a persona through the mock, enters the demo PIN if the session starts at the PIN
+ * gate (as every sign-in does by default), and sends that session's token from now on.
+ */
 export async function signInAs(role: string, facility: string | null): Promise<Session> {
   const { data } = await api.POST("/api/v1/session", {
     body: { persona_id: personaId(role, facility) },
   });
   if (!data) throw new Error("sign-in failed");
   sendTokenOf(data);
-  return data;
+  if (data.gate !== "enter_pin") return data;
+  const unlocked = await api.POST("/api/v1/session/unlock", { body: { pin: "135790" } });
+  if (!unlocked.data) throw new Error("unlock failed");
+  sendTokenOf(unlocked.data);
+  return unlocked.data;
+}
+
+/** Signs in as a persona and stays at the PIN gate (for a test of the gate itself). */
+export async function signInLocked(role: string, facility: string | null): Promise<Session> {
+  const { data } = await api.POST("/api/v1/session", {
+    body: { persona_id: personaId(role, facility) },
+  });
+  if (!data) throw new Error("sign-in failed");
+  return sendTokenOf(data) ?? data;
 }
 
 export interface RawAnswer {

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { server } from "../test/setup";
 import { renderApp } from "../test/render";
 import { DEMO_BANNER } from "./signInOptions";
+import { chooseAndUnlock } from "../test/signIn";
 
 describe("sign-in screen", () => {
   it("groups the personas by facility and leads with the role", async () => {
@@ -27,29 +28,23 @@ describe("sign-in screen", () => {
 
   it("signs a nurse in and lands on the patient list", async () => {
     await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   });
 
   it("signs the admin in and lands on settings", async () => {
     await renderApp("/sign-in");
-    await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+    await chooseAndUnlock("Admin · Victor Lazaro");
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
   });
 
   it("never shows the last person's patients to the next person who signs in", async () => {
     const { router } = await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     expect(await screen.findAllByRole("link", { name: /Demo patient/ })).toHaveLength(2);
     // Back to sign-in while still signed in, then pick the US nurse straight away.
     await router.navigate({ to: "/sign-in" });
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Emily Carter, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Emily Carter, RN");
     expect(await screen.findByRole("heading", { name: "Patients on this unit" })).toBeVisible();
     await waitFor(() => {
       expect(screen.getAllByRole("link", { name: /Demo patient/ })).toHaveLength(1);
@@ -113,9 +108,7 @@ describe("sign-in screen", () => {
 
   it("clears the refusal when a person is chosen", async () => {
     const { router } = await renderApp("/sign-in?error=expired", { google: true });
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
     expect(router.state.location.search).not.toHaveProperty("error");
   });

@@ -4,17 +4,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
+import { chooseAndUnlock, signInAsPersona as signInAs } from "../test/signIn";
 
 afterEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
 });
-
-async function signInAs(name: string) {
-  const view = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name }));
-  return view;
-}
 
 describe("shell and guards", () => {
   it("sends you to sign-in when not signed in", async () => {
@@ -104,9 +99,7 @@ describe("shell and guards", () => {
         down ? HttpResponse.json({}, { status: 500 }) : undefined,
       ),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
     const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
     expect(await group.findByText("The shifts did not load.")).toBeVisible();
@@ -124,9 +117,7 @@ describe("shell and guards", () => {
         down ? HttpResponse.json({}, { status: 500 }) : undefined,
       ),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
     const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
     await group.findByText("The shifts did not load.");
@@ -151,9 +142,7 @@ describe("shell and guards", () => {
         return undefined;
       }),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     const toggle = await screen.findByRole("button", { name: "Change shift" });
     await userEvent.click(toggle);
     const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
@@ -174,9 +163,7 @@ describe("shell and guards", () => {
   it("announces again when Try again fails again", async () => {
     await renderApp("/sign-in");
     server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
     const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
     const first = await group.findByRole("alert");
@@ -199,9 +186,7 @@ describe("shell and guards", () => {
         return HttpResponse.json({}, { status: 500 });
       }),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
     const group = within(await screen.findByRole("group", { name: "Shifts you can work" }));
     const failed = await group.findByRole("button", { name: "Try again" });

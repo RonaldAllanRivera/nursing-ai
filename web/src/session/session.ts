@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ApiError, ensureOk, unwrap } from "../api/errors";
-import { retryQuery } from "../app/queryClient";
+import { retryOptions } from "../api/retry";
 import type { components } from "../api/schema";
 
 export type Session = components["schemas"]["SessionOut"];
@@ -42,8 +42,7 @@ export const personasQuery = queryOptions({
 export const signInOptionsQuery = queryOptions({
   queryKey: ["sign-in-options"],
   queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/sign-in-options", { signal })),
-  retry: (count, error) =>
-    !(error instanceof ApiError && error.status === 501) && retryQuery(count, error),
+  retry: retryOptions,
   staleTime: 5 * 60_000,
 });
 
@@ -70,6 +69,42 @@ export function useSignIn() {
     onSuccess: (session) => {
       clearPersonData(queryClient);
       queryClient.setQueryData(sessionKey, session);
+    },
+  });
+}
+
+/** Why the sign-in screen is showing after a demo session ended on its own (a fifth wrong PIN); it goes when a person is chosen. */
+export const demoEndedKey = ["sign-in-notice"] as const;
+
+/** Sets the first PIN of a Google user's first sign-in. Success answers the open session. */
+export function useSetPin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (pin: string) =>
+      unwrap(await api.POST("/api/v1/session/pin", { body: { pin } })),
+    onSuccess: (session) => {
+      // Not clearPersonData: the page under the gate, and the note she was typing, come back.
+      queryClient.setQueryData(sessionKey, session);
+    },
+  });
+}
+
+/**
+ * Proves who is at the keyboard (after sign-in, or after an idle lock). A demo person's fifth
+ * wrong PIN answers 401, which has already signed the app out; this says why on the sign-in screen.
+ */
+export function useUnlock(persona: boolean) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (pin: string) =>
+      unwrap(await api.POST("/api/v1/session/unlock", { body: { pin } })),
+    onSuccess: (session) => {
+      queryClient.setQueryData(sessionKey, session);
+    },
+    onError: (error) => {
+      if (persona && error instanceof ApiError && error.status === 401) {
+        queryClient.setQueryData(demoEndedKey, true);
+      }
     },
   });
 }

@@ -7,6 +7,7 @@ import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
+import { chooseAndUnlock } from "../test/signIn";
 
 afterEach(() => {
   server.events.removeAllListeners();
@@ -16,7 +17,7 @@ afterEach(() => {
 async function openSettings(before?: () => void) {
   const view = await renderApp("/sign-in");
   before?.();
-  await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+  await chooseAndUnlock("Admin · Victor Lazaro");
   await screen.findByRole("heading", { name: "Settings" });
   const name = await screen.findByRole("textbox", { name: "Facility name" });
   return { ...view, name };
@@ -182,7 +183,7 @@ describe("the settings screen", () => {
     server.use(
       http.get("*/api/v1/facilities/:key", () => refuse(404, "not_found"), { once: true }),
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+    await chooseAndUnlock("Admin · Victor Lazaro");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("This facility's settings did not load.");
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
@@ -309,7 +310,7 @@ describe("the settings screen", () => {
   it("says what to do when the facilities do not load, and shows no form", async () => {
     await renderApp("/sign-in");
     server.use(http.get("*/api/v1/facilities", () => refuse(404, "not_found")));
-    await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+    await chooseAndUnlock("Admin · Victor Lazaro");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The facilities did not load. Reload the page to try again.",
     );
@@ -320,9 +321,7 @@ describe("the settings screen", () => {
 describe("who sees Settings", () => {
   it("a nurse has no Settings link", async () => {
     await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     const header = await screen.findByRole("banner");
     expect(await within(header).findByRole("link", { name: "Patients" })).toBeVisible();
     expect(within(header).queryByRole("link", { name: "Settings" })).toBeNull();

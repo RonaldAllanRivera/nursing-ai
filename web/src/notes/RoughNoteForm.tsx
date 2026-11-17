@@ -5,6 +5,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { Button } from "../components/ui/Button";
 import { patientQuery } from "../patients/patients";
 import { failureMessage } from "./draft";
+import { holdNote, readHeldNote } from "./heldNote";
 import { createKeyKeeper } from "./idempotency";
 import { announceStep, draftJobQuery, isRefused, textState, useSaveRoughNote } from "./roughNote";
 
@@ -55,12 +56,15 @@ function Line({
 export function RoughNoteForm({ patientId }: { patientId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [text, setText] = useState("");
+  // What she had typed and not sent comes back after a gate screen replaced this page.
+  const [text, setText] = useState(() => readHeldNote(queryClient, patientId));
   const [sentText, setSentText] = useState<string | null>(null);
   const [keeper] = useState(() => createKeyKeeper());
   const save = useSaveRoughNote(patientId, (sent) => {
     keeper.done();
     setSentText(sent);
+    // Sent, so it is no longer unsent text to hold.
+    holdNote(queryClient, patientId, "");
   });
   const job = useQuery({ ...draftJobQuery(save.data?.id ?? ""), enabled: save.isSuccess });
 
@@ -150,6 +154,7 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         value={text}
         onChange={(event) => {
           setText(event.target.value);
+          holdNote(queryClient, patientId, event.target.value);
         }}
         readOnly={busy}
         aria-readonly={busy}

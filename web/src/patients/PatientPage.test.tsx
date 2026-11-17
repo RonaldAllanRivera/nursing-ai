@@ -8,6 +8,7 @@ import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
+import { chooseAndUnlock } from "../test/signIn";
 
 type Schemas = components["schemas"];
 
@@ -16,7 +17,7 @@ const ROUGH_URL = "*/api/v1/patients/:id/rough-notes";
 
 async function openPatientA(persona = "Staff nurse · Sarah Navarro, RN") {
   const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
   await screen.findByLabelText("Your note");
   return app;
@@ -60,9 +61,7 @@ describe("patient page", () => {
 
   it("uses the unit's words for a US patient", async () => {
     const app = await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Emily Carter, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Emily Carter, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient C/ }));
     expect(await screen.findByText("Room")).toBeVisible();
     expect(within(screen.getByRole("main")).getByText("Shift 7a-7p")).toBeVisible();
@@ -494,9 +493,7 @@ describe("patient page", () => {
     ];
     const app = await renderApp("/sign-in");
     server.use(http.get("*/api/v1/patients/:id", () => HttpResponse.json({ ...detail, notes })));
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
     const list = await screen.findByRole("list", { name: "Notes this shift" });
     const items = within(list).getAllByRole("listitem");
@@ -523,9 +520,7 @@ describe("patient page", () => {
   it("says so when the patient does not load", async () => {
     await renderApp("/sign-in");
     server.use(http.get("*/api/v1/patients/:id", () => HttpResponse.json({}, { status: 500 })));
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
     expect(
       await screen.findByText("This patient did not load. Go back and try again."),

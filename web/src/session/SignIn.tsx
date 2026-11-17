@@ -1,11 +1,12 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
 import { HealthStatus } from "../health/HealthStatus";
 import { groupPersonas, personaLabel } from "./personas";
-import { personasQuery, signInOptionsQuery, useSignIn } from "./session";
+import { DEMO_ENDED } from "./pin";
+import { demoEndedKey, personasQuery, signInOptionsQuery, useSignIn } from "./session";
 import { GOOGLE_START, SIGN_IN_MESSAGES, offeredFrom, signInErrorFrom } from "./signInOptions";
 
 /** The sign-in screen: Google for invited staff, then the demo people on a ruled sheet, role first on every button. */
@@ -16,6 +17,13 @@ export function SignIn() {
   const offered = offeredFrom(options.data);
   const personas = useQuery({ ...personasQuery, enabled: !options.isPending && offered.personas });
   const signIn = useSignIn();
+  const queryClient = useQueryClient();
+  // Set when a demo session ended on its own (a fifth wrong PIN); nothing fetches it.
+  const demoEnded = useQuery({
+    queryKey: demoEndedKey,
+    queryFn: () => Promise.resolve(false),
+    enabled: false,
+  });
   const navigate = useNavigate();
   // Choosing a way in answers the refusal, so it goes (the Google link then leaves the page).
   const clearError = () => void navigate({ to: "/sign-in", search: {}, replace: true });
@@ -33,13 +41,13 @@ export function SignIn() {
           {offered.personas ? " Everything in the demo is made-up data." : ""}
         </p>
 
-        {error ? (
+        {error || demoEnded.data ? (
           <p
             role="alert"
             className="mt-4 flex items-start gap-2 rounded-control border border-stop bg-stop-tint px-3 py-2 text-stop"
           >
             <Icon name="flag" className="mt-0.5" />
-            <span>{SIGN_IN_MESSAGES[error]}</span>
+            <span>{error ? SIGN_IN_MESSAGES[error] : DEMO_ENDED}</span>
           </p>
         ) : null}
 
@@ -99,6 +107,7 @@ export function SignIn() {
                               disabled={signIn.isPending}
                               onClick={() => {
                                 if (error) clearError();
+                                queryClient.setQueryData(demoEndedKey, false);
                                 signIn.mutate(persona.id, {
                                   onSuccess: () => void navigate({ to: "/" }),
                                 });

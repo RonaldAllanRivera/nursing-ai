@@ -4,6 +4,7 @@
 import { expect, test } from "@playwright/test";
 import {
   DEMO_BANNER_TEXT,
+  enterDemoPin,
   SARAH,
   checkScreen,
   expectHeaderAtMostTwoRows,
@@ -35,6 +36,7 @@ test("sign-in with Google on: refusal, Google link first, personas and PIN, by k
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: SARAH })).toBeFocused();
   await page.keyboard.press("Enter");
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retryQuery } from "../app/queryClient";
+import { retryQuery } from "./retry";
 import { ApiError, type Problem } from "./errors";
 import { isWaking, wakeRetryDelay } from "./waking";
 

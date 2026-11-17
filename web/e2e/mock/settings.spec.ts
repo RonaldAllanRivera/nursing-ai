@@ -4,6 +4,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   ADMIN,
+  enterDemoPin,
   SARAH,
   expectHeaderAtMostTwoRows,
   expectNoViolations,
@@ -56,6 +57,7 @@ test("a nurse who signs in after the save sees the new label", async ({ page }) 
   await expect(pageStatus(page)).toContainText("Saved.");
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.getByRole("button", { name: SARAH }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("banner").getByText("Shift Night")).toBeVisible();
 });
 

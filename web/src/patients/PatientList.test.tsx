@@ -4,12 +4,7 @@ import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
-
-async function signInAs(name: string) {
-  const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name }));
-  return app;
-}
+import { chooseAndUnlock, signInAsPersona as signInAs } from "../test/signIn";
 
 describe("patient list", () => {
   it("lists the ward's patients with bed, name, age and sex", async () => {
@@ -49,9 +44,7 @@ describe("patient list", () => {
   it("says so when the facility does not load, instead of a skeleton forever", async () => {
     await renderApp("/sign-in");
     server.use(http.get("*/api/v1/facilities/:key", () => HttpResponse.json({}, { status: 500 })));
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     expect(
       await screen.findByText("The ward details did not load. Reload the page to try again."),
     ).toBeVisible();

@@ -15,6 +15,7 @@ import {
   ADMIN,
   D2,
   EMILY,
+  enterDemoPin,
   FOCUS,
   PHYSICIAN,
   ROUGH_NOTE,
@@ -54,6 +55,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
 
   // The patient list, with the header.
   await page.getByRole("button", { name: SARAH }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   const header = page.getByRole("banner");
   await expect(header.getByText("Sarah Navarro, RN")).toBeVisible();
@@ -165,6 +167,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await header.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: EMILY })).toBeVisible();
   await page.getByRole("button", { name: EMILY }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this unit" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Demo patient C/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Demo patient/ })).toHaveCount(1);
@@ -183,6 +186,7 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   await checkScreen(page);
   await tabTo(page, sarah, 10);
   await page.keyboard.press("Enter");
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
 
   // The list: Tab to the patient row, Enter.
@@ -335,6 +339,7 @@ test.describe("admin path", () => {
     await expect(admin).toBeVisible();
     await tabTo(page, admin);
     await page.keyboard.press("Enter");
+    await enterDemoPin(page);
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     const header = page.getByRole("banner");
     await expect(header.getByText("Admin")).toBeVisible();
@@ -382,6 +387,7 @@ test.describe("admin path", () => {
     await expect(sarah).toBeVisible();
     await tabTo(page, sarah);
     await page.keyboard.press("Enter");
+    await enterDemoPin(page);
     await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
     await expect(header.getByText("Shift Night")).toBeVisible();
     await expectHeaderAtMostTwoRows(page);

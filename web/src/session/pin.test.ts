@@ -1,0 +1,96 @@
+import { describe, expect, it } from "vitest";
+import { ApiError, type Problem } from "../api/errors";
+import {
+  DEMO_ENDED,
+  PIN_CONNECTION,
+  PIN_LOCKED,
+  idleLockWords,
+  isPinTyped,
+  pinProblemMessage,
+  screenForGate,
+} from "./pin";
+
+const problem = (status: number, code: Problem["code"], extra: Partial<Problem> = {}): ApiError =>
+  new ApiError(status, { status, code, title: "x", type: "about:blank", ...extra });
+
+describe("screenForGate", () => {
+  it("routes each gate to its screen", () => {
+    expect(screenForGate("open")).toBeNull();
+    expect(screenForGate("set_pin")).toBe("set_pin");
+    expect(screenForGate("enter_pin")).toBe("enter_pin");
+    expect(screenForGate("idle_locked")).toBe("idle_locked");
+    expect(screenForGate("pin_locked")).toBe("pin_locked");
+  });
+});
+
+describe("pinProblemMessage", () => {
+  it("counts the tries left, in the plural", () => {
+    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 4 }), false)).toBe(
+      "Wrong PIN. 4 tries left.",
+    );
+    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 2 }), true)).toBe(
+      "Wrong PIN. 2 tries left.",
+    );
+  });
+
+  it("says 1 try left in the singular, and warns a demo person that the next one ends the session", () => {
+    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 1 }), false)).toBe(
+      "Wrong PIN. 1 try left.",
+    );
+    expect(pinProblemMessage(problem(403, "pin_wrong", { tries_left: 1 }), true)).toBe(
+      "Wrong PIN. 1 try left. Another wrong PIN ends this demo session.",
+    );
+  });
+
+  it("says just wrong when the server did not count", () => {
+    expect(pinProblemMessage(problem(403, "pin_wrong"), false)).toBe("Wrong PIN.");
+  });
+
+  it("shows the server's words for a bad PIN on the pin field", () => {
+    const error = problem(422, "invalid_request", {
+      errors: [{ field: "body.pin", message: "Choose a stronger PIN." }],
+    });
+    expect(pinProblemMessage(error, false)).toBe("Choose a stronger PIN.");
+  });
+
+  it("says the PIN is locked", () => {
+    expect(pinProblemMessage(problem(423, "pin_locked"), false)).toBe(PIN_LOCKED);
+    expect(PIN_LOCKED).toBe("Your PIN is locked. Ask a head nurse or the admin to reset it.");
+  });
+
+  it("falls back to a plain connection message for anything else", () => {
+    expect(pinProblemMessage(new Error("offline"), false)).toBe(PIN_CONNECTION);
+    expect(pinProblemMessage(problem(500, "invalid_request"), false)).toBe(PIN_CONNECTION);
+    expect(
+      pinProblemMessage(
+        problem(422, "invalid_request", { errors: [{ field: "body.other", message: "no" }] }),
+        false,
+      ),
+    ).toBe(PIN_CONNECTION);
+  });
+
+  it("explains the ended demo session", () => {
+    expect(DEMO_ENDED).toBe(
+      "That was the fifth wrong PIN, so the demo session ended. Choose a person to start again.",
+    );
+  });
+});
+
+describe("idleLockWords", () => {
+  it("says the wait in minutes, or seconds under a minute", () => {
+    expect(idleLockWords(300)).toBe("Locked after 5 minutes without use.");
+    expect(idleLockWords(60)).toBe("Locked after 1 minute without use.");
+    expect(idleLockWords(90)).toBe("Locked after 2 minutes without use.");
+    expect(idleLockWords(30)).toBe("Locked after 30 seconds without use.");
+    expect(idleLockWords(1)).toBe("Locked after 1 second without use.");
+  });
+});
+
+describe("isPinTyped", () => {
+  it("is true only for exactly six digits", () => {
+    expect(isPinTyped("246813")).toBe(true);
+    expect(isPinTyped("24681")).toBe(false);
+    expect(isPinTyped("2468130")).toBe(false);
+    expect(isPinTyped("24681a")).toBe(false);
+  });
+});
