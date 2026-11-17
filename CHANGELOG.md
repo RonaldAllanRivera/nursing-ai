@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-17
+
 ### Added
 
 - The core draft pipeline, which turns a rough note into an FDAR draft and checks every line
@@ -43,6 +45,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 - `make e2e-mock`, which runs the Playwright journeys (three screen widths, a keyboard path and axe
   accessibility checks) against the mock API with no database or API container. CI runs it after
   the web checks.
+- Replay mode with real drafts. `make record-replays` asks the live model once for each of the three
+  demo notes and saves its answers, so replay mode, the end-to-end journeys and CI show real drafts
+  at no cost. It refuses unless live mode, the key and the monthly cap are all set, checks the cap
+  before every call, never retries a billed call, and skips a note that is already recorded. The
+  three recordings are committed; recording them cost about $0.07.
+- End-to-end journeys against the real stack (Postgres, the API and the web app): write a note,
+  check every draft line, edit one, sign and see it locked, at three screen widths, by keyboard
+  alone, for the US facility and as the admin, with axe accessibility checks. `make e2e
+  AI_MODE=replay` runs them on the recorded drafts, and so does CI.
+- The database also refuses a record for a note that isn't signed, reopening a discarded draft and
+  changing a rough note (migration 0002).
+- README: a short demo GIF, screenshots and a "What works today" list; `make readme-media` makes
+  them from the real stack in replay mode.
 - The Terraform for the live demo on AWS in Sydney. Every module is tested against a mocked AWS
   provider, and nothing has been applied yet. It covers a private dual-stack network whose only way
   out is an IPv6 egress-only gateway, and Aurora Serverless v2 PostgreSQL 17 that pauses after 5
@@ -58,10 +73,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Commit me
 
 ### Changed
 
+- The line checks flag more, each at the cost of one confirm when the draft was right: a litre
+  amount; a rate the note writes after a bare number; per week, month and shift; long spelled-out
+  rates; a concentration such as g/dL against g/L; a line break inside a rate; a dose frequency or
+  duration the nurse didn't write (daily, BID, weekly, every 2 hours); a dose unit the nurse never
+  wrote; and a vital sign or intake/output value swapped between labels, even when the draft spells
+  the label out ("HR" as "heart rate"). "5 units / HR 88", a heart rate written after a dose, is
+  flagged both ways instead of being read as per hour.
+- A "Source found" line now says that code checked the quoted words and numbers, not the meaning.
+- `make spend` counts billed calls apart from the free mock and replay ones.
+- Settings names the note format "DAR" for a US facility.
+- CI runs once, not twice, for a branch with an open pull request.
+- Version 0.2.0 across the packages and the API.
 - README: the planned AWS design moves to Sydney (`ap-southeast-2`), with Aurora Serverless v2
   and auto-pause instead of RDS, SSM Parameter Store instead of Secrets Manager, and an IPv6
   egress-only internet gateway instead of NAT. Getting started adds mock mode and `make e2e-mock`,
   and the web stack lists what is built, with the PWA marked as planned.
+
+### Fixed
+
+- A billed AI answer that fails (refused, cut off, or not the draft's shape) now counts against
+  the monthly cap, and a call that times out is no longer retried, so it can't be billed twice.
+- Logging no longer breaks on unusual records, and a logging error never prints a record's values.
+- The dev server reaches the API by its address, so a failed `localhost` lookup can't break it.
+- The mock API refuses a write in the same order as the real API.
+- A room label such as "412-A" stays on one line inside its bed tab.
+
+### Security
+
+- The public-history and staged checks catch a private word in a file, or a file name, that isn't
+  UTF-8, without printing any part of it; gitleaks ignores git replace refs; `make private-words`
+  refuses a symlinked word list, saves it atomically and asks git before trusting a folder.
 
 ## [0.1.0] - 2026-11-13
 
