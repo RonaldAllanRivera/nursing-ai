@@ -91,7 +91,7 @@ test("a typed note is only replaced after a question, and a failure that repeats
   await checkScreen(page);
 });
 
-test("the shift list offers Try drafting again on a row, says Drafting, then offers the draft", async ({
+test("the shift list offers Try drafting again on a row, then offers the draft", async ({
   page,
 }) => {
   await setMockOptions(page, { failDraft: "invalid_output" });
@@ -109,12 +109,12 @@ test("the shift list offers Try drafting again on a row, says Drafting, then off
   await page.getByLabel("Your note").fill("next note, not saved yet");
 
   await rowButton.click();
-  await expect(list.getByText("Drafting")).toBeVisible();
-  await expect(rowButton).toHaveCount(0);
-  // While the list says Drafting, the form says so too: no old failure, no draft yet.
-  await expect(page.getByText("Your earlier note is being drafted again.")).toBeVisible();
-  await expect(page.getByText("Your earlier note has its draft.")).toHaveCount(0);
+  // The states in between (the list saying Drafting, the form saying the earlier note is being
+  // drafted again) last as long as one poll, so how long they are seen depends on the machine. They are
+  // pinned deterministically in notes/draftingEdited.test.tsx ("says it is being drafted again
+  // while that job runs, then that it has its draft"); here only where it ends up.
   await expect(list.getByRole("link", { name: "Draft ready" })).toBeVisible({ timeout: 10000 });
+  await expect(rowButton).toHaveCount(0);
   // The form drops the old failure and its button: the earlier note has its draft.
   await expect(page.getByText("Your earlier note has its draft.")).toBeVisible();
   await expect(page.getByRole("button", { name: AGAIN })).toHaveCount(0);
