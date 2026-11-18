@@ -196,9 +196,9 @@ describe("patient page", () => {
             id: String(params["id"]),
             rough_note_id: "00000000-0000-4000-8000-000000000013",
             status: "failed",
-            failure: "provider_error",
+            failure: "replay_missing",
             note_id: null,
-            retryable: true,
+            retryable: false,
           }),
         ),
       );
@@ -211,7 +211,7 @@ describe("patient page", () => {
       await typeNote("pt c/o hilo");
       await save();
       expect(
-        await screen.findByText("The AI service didn't answer. Your note is saved."),
+        await screen.findByText("No recorded draft matches this note. Your note is saved."),
       ).toBeVisible();
       expect(screen.getByText("To save a new note, change the text.")).toBeVisible();
       expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();

@@ -1,10 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "../components/Icon";
 import { Button } from "../components/ui/Button";
 import { patientQuery } from "../patients/patients";
+import { DemoNoteButton } from "./DemoNoteButton";
 import { failureMessage } from "./draft";
+import { draftAgainOutcome, useDraftAgain } from "./draftAgain";
 import { holdNote, readHeldNote } from "./heldNote";
 import { createKeyKeeper } from "./idempotency";
 import { announceStep, draftJobQuery, isRefused, textState, useSaveRoughNote } from "./roughNote";
@@ -53,7 +55,14 @@ function Line({
 }
 
 /** The nurse's rough note on ruled paper, one primary button, and the draft's progress after it. */
-export function RoughNoteForm({ patientId }: { patientId: string }) {
+export function RoughNoteForm({
+  patientId,
+  demoNote = null,
+}: {
+  patientId: string;
+  /** The demo case's rough note, for a demo patient: "Use the demo note" offers it. */
+  demoNote?: string | null;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // What she had typed and not sent comes back after a gate screen replaced this page.
@@ -66,14 +75,20 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
     // Sent, so it is no longer unsent text to hold.
     holdNote(queryClient, patientId, "");
   });
-  const job = useQuery({ ...draftJobQuery(save.data?.id ?? ""), enabled: save.isSuccess });
+  const box = useRef<HTMLTextAreaElement>(null);
+  // "Try drafting again" starts a new job for the same saved note; from then on that one is followed.
+  const again = useDraftAgain(patientId, save.data?.id ?? null);
+  const jobId = again.data?.id ?? save.data?.id ?? "";
+  const job = useQuery({ ...draftJobQuery(jobId), enabled: save.isSuccess });
 
   const { left, showCount, canSave } = textState(text);
   const failed = job.data?.status === "failed";
   // The job can't be followed any more (the server says it is not there): the note is still saved.
   const lost = job.data === undefined && isRefused(job.error);
   const drafting = save.isSuccess && !failed && !lost;
-  const busy = save.isPending || drafting;
+  const busy = save.isPending || drafting || again.isPending;
+  // Only a failure worth another try offers it; the same text would fail the same way otherwise.
+  const canDraftAgain = failed && job.data?.retryable === true && save.data !== undefined;
   // A note that was sent and saved is never sent again as it is: it needs a change first.
   const sameAsSent = save.isSuccess && text === sentText;
   const noteId = job.data?.status === "succeeded" ? job.data.note_id : null;
@@ -96,9 +111,15 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
     save.mutate({ text, key: keeper.keyFor(text) });
   };
 
+  const tryDraftingAgain = () => {
+    if (!save.data) return;
+    again.ask(save.data.rough_note_id);
+  };
+  const againWords = again.isError ? draftAgainOutcome(again.error) : null;
+
   const refused = isRefused(save.error);
   const step = announceStep(left);
-  const showAgainHint = (failed || lost) && sameAsSent;
+  const showAgainHint = (failed || lost) && sameAsSent && !canDraftAgain;
 
   // What a screen reader hears, in one region that is always on the page (a node that appears is
   // often not read; a change in a node that was there is). For the progress lines (waiting,
@@ -149,7 +170,21 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
       <p id="rough-note-hint" className="text-14 text-ink-2">
         Write it the way you would on a scrap of paper. The draft is made from it.
       </p>
+      {demoNote !== null ? (
+        <div className="mt-3">
+          <DemoNoteButton
+            hasTyped={text.trim().length > 0}
+            disabled={busy}
+            putInBox={() => {
+              setText(demoNote);
+              holdNote(queryClient, patientId, demoNote);
+            }}
+            focusBox={() => box.current?.focus()}
+          />
+        </div>
+      ) : null}
       <textarea
+        ref={box}
         id="rough-note"
         value={text}
         onChange={(event) => {
@@ -217,6 +252,11 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
             {failureMessage(job.data?.failure)}
           </Line>
         ) : null}
+        {againWords?.kind === "words" ? (
+          <Line icon="flag" tone="font-semibold text-stop" role="alert">
+            {againWords.words}
+          </Line>
+        ) : null}
         {showAgainHint ? (
           <p id="rough-note-again" className="text-ink-2">
             To save a new note, change the text.
@@ -224,10 +264,15 @@ export function RoughNoteForm({ patientId }: { patientId: string }) {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
+          {canDraftAgain ? (
+            <Button variant="primary" disabled={again.isPending} onClick={tryDraftingAgain}>
+              Try drafting again
+            </Button>
+          ) : null}
           <Button
             id="rough-note-save"
             type="submit"
-            variant="primary"
+            variant={canDraftAgain ? "quiet" : "primary"}
             disabled={!canSave || busy || sameAsSent}
           >
             Save note
