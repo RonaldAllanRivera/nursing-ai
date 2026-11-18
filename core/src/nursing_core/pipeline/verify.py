@@ -11,6 +11,19 @@ a day"), in place of any number or number-word mismatch it overlaps, so a one-cl
 number can't keep a wrong period; one the quotes give leaves those mismatches as they are. A time
 word right after a line's number ("every 2 hours") needs the same time, by meaning, right after a
 note number of that value ("q 2 hrs").
+
+A number's label is the word right before it, or a two-word label from the table of measures
+("heart rate", "pulse rate") as a whole, read past a joining word ("is", "was", "at", "of"), one
+":" or "=", one "~" or "(" and a comparator ("HR is 88", "HR ~88", "HR (>100)"); a joining word
+with no label before it ("at 0800") is itself the label. A number after an arrow ("HR 88->110")
+has the label of the number before the arrow. A label the quotes use says which of their numbers
+the line's number must be: under that label the line's value must be one of theirs. A measure
+spelled another way is the same measure ("Temp" for "T", "heart rate" for "HR"), so a value the
+quotes give that measure under another label is a swap. A comparator (">", "<", ">=", "<=", "≥",
+"≤") right before a number belongs to it and is compared by meaning (">=" is "≥"); an arrow ("->",
+"-->", "=>") and "~" are not comparators. A line number whose value matches must carry the
+comparator, or none, of a note number of that value: "HR 100" for "HR >100" is flagged, naming
+">100". Comparator words ("above", "over", "below") are not read, as "over" is also "120 over 80".
 """
 
 import re
@@ -47,10 +60,28 @@ from nursing_core.pipeline.unit_check import (
     written_unit,
 )
 
-# The word right before a number; spaces and one ":" or "=" may sit between.
-_LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
+# A comparator written right before a number; the "-" and "=" keep "->", "-->" and "=>" arrows out.
+_COMPARATOR = r"(?<![-=])(?:>=|<=|≥|≤|>|<)"
+# What may stand between a label and its number, each part optional and in this order: a joining
+# word, one ":" or "=", one "~" or "(", a comparator, with spaces or tabs between any of them.
+_JOINERS = (
+    r"(?:[ \t]+(?:is|was|at|of)(?![^\W_]))?"  # "HR is 88"
+    r"[ \t]*[:=]?"  # "HR: 88"
+    r"[ \t]*[~(]?"  # "HR ~88", "HR (88)"
+    rf"[ \t]*(?:{_COMPARATOR})?"  # "HR >100"
+    r"[ \t]*$"
+)
+# The word right before a number, read past the joiners.
+_LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*)" + _JOINERS, re.IGNORECASE)
 # The two words right before a number, for a label such as "heart rate".
-_TWO_WORD_LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*[ \t]+[^\W\d_][^\W_]*)[ \t]*[:=]?[ \t]*$")
+_TWO_WORD_LABEL = re.compile(
+    r"(?<!\w)([^\W\d_][^\W_]*[ \t]+[^\W\d_][^\W_]*)" + _JOINERS, re.IGNORECASE
+)
+# The text before a number that follows an arrow ("HR 88->110", "HR 88 => 110"): the value goes on
+# as the same thing, so the new number keeps the label of the one before the arrow.
+_BEFORE_ARROW = re.compile(r"(.*?)\d[\d.,/]*[ \t]*(?:-{1,2}>|=>)[ \t]*$", re.DOTALL)
+# A comparator right before a number, and the spaces between them.
+_COMPARATOR_BEFORE = re.compile(rf"({_COMPARATOR})[ \t]*$")
 # What a label measures, in the spellings a ward or the model uses, so "Temp 88, heart rate 37.8"
 # can't take its values from "T 37.8 HR 88".
 _MEASURES = {
@@ -80,7 +111,7 @@ class _NoteNumber:
     value: NumberValue
     text: str
     span: Span  # in the note as typed
-    label: str | None  # the word right before it, as spelled
+    label: str | None  # the label right before it, folded ("hr", "heart rate")
     measure: str | None  # what its label measures ("temp" for "T" and "Temperature")
     unit: WrittenUnit | None  # the unit written after it, if any
     bare_rate: tuple[str, ...]  # a rate written right after it with no unit ("100/hr")
@@ -89,6 +120,9 @@ class _NoteNumber:
     time: str | None  # the time word written right after it, by meaning ("hour" for "hrs")
     typed_with_time: str  # the number and that time word, as typed ("8 hrs")
     with_time: Span
+    comparator: str | None  # the comparator written right before it, by meaning ("≥" for ">=")
+    typed_with_comparator: str  # that comparator and the number, as typed (">= 100")
+    with_comparator: Span
 
 
 def check_line(
@@ -159,7 +193,20 @@ def _assess(
 
 
 def _label_before(text: str) -> str | None:
-    """The word right before a number, given the text up to it."""
+    """The label right before a number, given the text up to it, folded.
+
+    A two-word label from the measures table ("heart rate") is the label as a whole; any other
+    label is the one word right before the number. A number written after an arrow ("HR 88->110")
+    has the label of the number before the arrow.
+    """
+    arrowed = _BEFORE_ARROW.match(text)
+    if arrowed is not None:
+        return _label_before(arrowed.group(1))
+    two = _TWO_WORD_LABEL.search(text)
+    if two is not None:
+        words = " ".join(two.group(1).casefold().split())
+        if words in _MEASURES:
+            return words
     match = _LABEL.search(text)
     return None if match is None else match.group(1).casefold()
 
@@ -167,16 +214,21 @@ def _label_before(text: str) -> str | None:
 def _measure_before(text: str) -> str | None:
     """What the label right before a number measures, given the text up to it.
 
-    Two words are tried first ("heart rate"), then one. A label outside the table is its own
-    measure, as spelled.
+    A label outside the table is its own measure, as spelled.
     """
-    two = _TWO_WORD_LABEL.search(text)
-    if two is not None:
-        words = " ".join(two.group(1).casefold().split())
-        if words in _MEASURES:
-            return _MEASURES[words]
     label = _label_before(text)
     return None if label is None else _MEASURES.get(label, label)
+
+
+def _comparator_before(text: str) -> tuple[str, int] | None:
+    """The comparator right before a number, given the text up to it: its meaning and its start.
+
+    ">=" and "<=" mean "≥" and "≤".
+    """
+    match = _COMPARATOR_BEFORE.search(text)
+    if match is None:
+        return None
+    return {">=": "≥", "<=": "≤"}.get(match.group(1), match.group(1)), match.start(1)
 
 
 def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
@@ -197,6 +249,10 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
             before = raw[quote.start : span.start] if span.start >= quote.start else None
             time = time_after(raw, span)
             with_time = Span(start=span.start, end=span.end if time is None else time[1])
+            comparator = _comparator_before(raw[: span.start])
+            with_comparator = Span(
+                start=span.start if comparator is None else comparator[1], end=span.end
+            )
             out.append(
                 _NoteNumber(
                     value=number_value(written),
@@ -211,6 +267,9 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
                     time=None if time is None else time[0],
                     typed_with_time=raw[with_time.start : with_time.end],
                     with_time=with_time,
+                    comparator=None if comparator is None else comparator[0],
+                    typed_with_comparator=raw[with_comparator.start : with_comparator.end],
+                    with_comparator=with_comparator,
                 )
             )
     return out
@@ -303,6 +362,21 @@ def _mismatches(
                     draft_span=span,
                     note_text=None if paired is None else paired.text,
                     note_span=None if paired is None else paired.span,
+                )
+            )
+            continue
+        comparator = _comparator_before(before)
+        if all(n.comparator != (None if comparator is None else comparator[0]) for n in same_value):
+            # ">100" needs a 100 the note writes with ">", and "100" a 100 it writes with none.
+            named = same_value[0]
+            start = span.start if comparator is None else comparator[1]
+            out.append(
+                NumberMismatch(
+                    kind=MismatchKind.VALUE,
+                    draft_text=text[start : span.end],
+                    draft_span=Span(start=start, end=span.end),
+                    note_text=named.typed_with_comparator,
+                    note_span=named.with_comparator,
                 )
             )
             continue

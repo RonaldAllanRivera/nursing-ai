@@ -1655,3 +1655,80 @@ def test_a_count_before_everyday_and_every_other_night_is_a_count() -> None:
     assert (
         _frequency_findings("melatonin 3 mg twice a night", "Melatonin 3 mg twice a night.") == []
     )
+
+
+def test_label_with_is_at_tilde_or_paren_reads_the_number() -> None:
+    for form in ("HR is 88", "HR was 88", "HR at 88", "HR of 88", "HR ~88", "HR (88)"):
+        note = f"{form}, RR 20"
+        [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE, form
+        assert mismatch.note_text == "88", form
+        assert _check(note, "HR 88.", [note]).status is LineStatus.SOURCE_FOUND, form
+    [mismatch] = _check("HR 88 RR 20", "Heart rate is 20.", ["HR 88 RR 20"]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+    note = "pulse rate is 88, RR 20"
+    [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+
+
+def test_a_label_reads_past_every_joiner_in_order() -> None:
+    for form in ("HR ~ 88", "HR: ~88", "HR is >100", "HR (>100)", "HR >= 100", "heart rate (88)"):
+        note = f"{form}, RR 20"
+        line = _check(note, "HR 20.", [note])
+        assert _kinds(line) == [MismatchKind.VALUE], form
+        assert line.number_mismatches[0].note_text is not None, form
+
+
+def test_a_joining_word_with_no_label_before_it_stays_the_label() -> None:
+    note = "at 0800 HR 88"
+    line = _check(note, "HR 88 at 0800.", [note])
+    assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_lost_comparator_is_flagged() -> None:
+    note = "HR >100 sustained"
+    [mismatch] = _check(note, "HR 100.", [note]).number_mismatches
+    assert mismatch.kind is MismatchKind.VALUE
+    assert (mismatch.draft_text, mismatch.draft_span) == ("100", Span(start=3, end=6))
+    assert (mismatch.note_text, mismatch.note_span) == (">100", Span(start=3, end=7))
+    for faithful in ("HR >100.", "HR > 100."):
+        assert _check(note, faithful, [note]).status is LineStatus.SOURCE_FOUND, faithful
+    [mismatch] = _check(note, "HR <100.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "<100")
+    assert (mismatch.draft_span, mismatch.note_text) == (Span(start=3, end=7), ">100")
+    equal = "HR >=100"
+    assert _check(equal, "HR ≥100.", [equal]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR ≤100", "HR <=100.", ["HR ≤100"]).status is LineStatus.SOURCE_FOUND
+    [mismatch] = _check("HR 100", "HR >100.", ["HR 100"]).number_mismatches
+    assert (mismatch.draft_text, mismatch.draft_span) == (">100", Span(start=3, end=7))
+    assert (mismatch.note_text, mismatch.note_span) == ("100", Span(start=3, end=6))
+    arrow = "HR 88->110"
+    assert _check(arrow, "HR 110.", [arrow]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR 88-->110", "HR 110.", ["HR 88-->110"]).status is LineStatus.SOURCE_FOUND
+    assert _kinds(_check(arrow, "HR 20.", [arrow])) == [MismatchKind.VALUE]
+    assert _check("HR 88=>110", "HR 110.", ["HR 88=>110"]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR ~88", "HR 88.", ["HR ~88"]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR 88", "HR ~88.", ["HR 88"]).status is LineStatus.SOURCE_FOUND
+
+
+def test_a_lost_comparator_ends_that_numbers_checks() -> None:
+    note = "NS >100 mL/hr"
+    [mismatch] = _check(note, "NS 100 L/hr.", [note]).number_mismatches
+    assert mismatch.kind is MismatchKind.VALUE
+    assert (mismatch.draft_text, mismatch.note_text) == ("100", ">100")
+
+
+def test_a_two_word_label_from_the_table_is_the_label_as_a_whole() -> None:
+    cases = [
+        ("resp rate 20, pulse rate 88", "Pulse rate 22.", "88"),
+        ("pulse rate 88, resp rate 20", "Resp rate 22.", "20"),
+        ("resp rate 20, heart rate 88", "Pulse rate 22.", "88"),
+    ]
+    for note, text, expected in cases:
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, expected), text
+    note = "heart rate 88, RR 20"
+    assert _check(note, "Resp rate 20.", [note]).status is LineStatus.SOURCE_FOUND
+    note = "pulse rate 88, IV rate 100 mL/hr"
+    [mismatch] = _check(note, "IV rate 88 mL/hr.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "100")
