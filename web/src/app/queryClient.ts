@@ -27,7 +27,7 @@ export function mutationRetryDelay(failureCount: number, error: Error): number {
 }
 
 /**
- * One per app. Tests build their own with `retry: false`. A 401 from any query or mutation means the session
+ * One per app. Tests build their own with `retry: false`. A 401 that survived the API client's one check (see `api/client.ts`) means the session
  * is gone: the session query becomes "signed out", and the shell sends you to /sign-in. A 423 moves the cached
  * session to the gate it names, and nothing else: the page under it keeps what she typed. A 403 `csrf_failed`
  * fetches the session again, which brings a fresh token for the next write.

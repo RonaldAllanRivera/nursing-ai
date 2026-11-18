@@ -7,7 +7,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { cn } from "../lib/cn";
 import { HealthStatus } from "../health/HealthStatus";
 import { groupPersonas, personaLabel } from "./personas";
-import { DEMO_ENDED, DEMO_EXPIRED } from "./pin";
+import { DEMO_ENDED, DEMO_EXPIRED, PIN_WAIT_ENDED } from "./pin";
 import { sessionEndedWords } from "./expiry";
 import {
   signInNoticeKey,
@@ -23,6 +23,7 @@ function noticeWords(notice: SignInNotice | undefined): string | null {
   if (!notice) return null;
   if (notice === "fifth") return DEMO_ENDED;
   if (notice === "expired") return DEMO_EXPIRED;
+  if (notice === "pin_wait") return PIN_WAIT_ENDED;
   return sessionEndedWords(notice.hours);
 }
 

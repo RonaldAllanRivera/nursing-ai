@@ -36,6 +36,10 @@ export const DEMO_ENDED =
 /** Shown when a demo session ended for another reason (it ran out while she sat at the PIN screen). */
 export const DEMO_EXPIRED = "Your demo session ended. Choose a person to start again.";
 
+/** Shown on the sign-in screen when choosing a first PIN took longer than the session lasted. */
+export const PIN_WAIT_ENDED =
+  "Choosing your PIN took too long, so you were signed out. Sign in again.";
+
 /**
  * Why a demo session ended when the PIN request answered 401: the fifth wrong PIN only if the try
  * before it was the last one (`tries_left` 1), anything else is a session that ran out. `null`

@@ -90,10 +90,10 @@ export function useSignIn() {
 
 /**
  * Why the sign-in screen is showing after a session ended on its own: a demo session's `"fifth"`
- * (a fifth wrong PIN) or `"expired"`, or `{ hours }` for a session that reached its hard limit.
- * It goes when a person signs in.
+ * (a fifth wrong PIN) or `"expired"`, `"pin_wait"` for a first PIN chosen after the session ran
+ * out, or `{ hours }` for a session that reached its hard limit. It goes when a person signs in.
  */
-export type SignInNotice = "fifth" | "expired" | { hours: number } | false;
+export type SignInNotice = "fifth" | "expired" | "pin_wait" | { hours: number } | false;
 export const signInNoticeKey = ["sign-in-notice"] as const;
 
 /** A 409 at a PIN screen means the session moved on elsewhere (another window opened it or set the PIN): look again, and the right screen shows. */
@@ -113,6 +113,10 @@ export function useSetPin() {
       onSuccess: (session) => storeSession(queryClient, session),
       onError: (error) => {
         lookAgainOnConflict(queryClient, error);
+        // A 401 here is final (the PIN is never sent again): the wait to choose one outlived the session.
+        if (error instanceof ApiError && error.status === 401) {
+          queryClient.setQueryData<SignInNotice>(signInNoticeKey, "pin_wait");
+        }
       },
     },
   );
