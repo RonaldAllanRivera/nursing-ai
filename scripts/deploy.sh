@@ -15,6 +15,10 @@
 #                        script sets TF_VAR_environment itself; a tfvars file that sets `environment`
 #                        to another name is refused (DEPLOY_TFVARS names a different tfvars file).
 #   docker, terraform, pnpm, python3, git and the AWS CLI on PATH.
+# Optional:
+#   DEPLOY_APPLY_FIRST=yes  apply before migrating even though the ops function exists. For
+#                        recovering a first deploy whose apply failed part-way; it still needs
+#                        DEPLOY_APPROVED=yes and every environment and state check still runs.
 #
 # It never reads a secret: no SSM parameter, no Secrets Manager, no --with-decryption.
 # CI logs of this public repository are public: the script prints the image tag but not the registry
@@ -261,6 +265,12 @@ main() {
   check_tfvars_environment
   terraform_init
   check_first_deploy
+  if [[ "${DEPLOY_APPLY_FIRST:-}" == "yes" ]]; then
+    # Recovery for a first deploy whose apply failed after it made the ops function: the normal
+    # order would migrate before the database exists. Every check above has already run.
+    FIRST_DEPLOY="yes"
+    say "DEPLOY_APPLY_FIRST=yes: the apply runs before the migration"
+  fi
   build_and_push_image
   if [[ -n "$FIRST_DEPLOY" ]]; then
     terraform_apply

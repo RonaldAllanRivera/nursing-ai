@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -13,6 +13,7 @@ from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.ports import LlmProvider
 from nursing_core.providers.fake import FakeProvider
+from sqlalchemy import text
 
 from .helpers import (
     PH_STAFF,
@@ -220,3 +221,82 @@ async def test_shift_list_shows_the_newest_job(database_url: str, clock: Mutable
         assert [n["job"]["id"] for n in detail["notes"]] == [retry["id"]]
         assert detail["notes"][0]["job"]["status"] == "succeeded"
         assert detail["notes"][0]["note_status"] == "draft"
+
+
+class FlakyQueue:
+    """Stands in for SQS: the first send raises, every later one is recorded and never runs."""
+
+    def __init__(self) -> None:
+        self.sent: list[UUID] = []
+        self._failed = False
+
+    async def enqueue(self, job_id: UUID) -> None:
+        if not self._failed:
+            self._failed = True
+            raise RuntimeError("the send failed")
+        self.sent.append(job_id)
+
+    async def start(self, wait_seconds: float) -> None:
+        del wait_seconds
+
+    async def close(self) -> None:
+        return None
+
+
+async def mark_running(app: FastAPI, job_id: str) -> None:
+    async with app.state.engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE draft_job SET status = 'running' WHERE id = :id"),
+            {"id": UUID(job_id)},
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_replay_sends_the_message_a_failed_send_left_unsent(
+    database_url: str, clock: MutableClock
+) -> None:
+    async with (
+        running_app(database_url, clock) as app,
+        client_for(app) as client,
+    ):
+        queue = FlakyQueue()
+        app.state.queue = queue
+        await sign_in(client, PH_STAFF)
+        failed = await post_note(client, PH_CASE.patient_id, "pt resting", key="tap-1")
+        assert failed.status_code == 500
+        assert queue.sent == []
+
+        replay = await post_note(client, PH_CASE.patient_id, "pt resting", key="tap-1")
+        assert replay.status_code == 202, replay.text
+        assert queue.sent == [UUID(replay.json()["id"])]
+
+        await mark_running(app, replay.json()["id"])
+        again = await post_note(client, PH_CASE.patient_id, "pt resting", key="tap-1")
+        assert again.status_code == 202
+        assert len(queue.sent) == 1  # a running job is never sent again
+
+
+@pytest.mark.asyncio
+async def test_try_again_sends_the_message_a_failed_send_left_unsent(
+    database_url: str, clock: MutableClock
+) -> None:
+    async with (
+        running_app(database_url, clock) as app,
+        client_for(app) as client,
+    ):
+        queue = FlakyQueue()
+        app.state.queue = queue
+        await sign_in(client, PH_STAFF)
+        failed = await post_note(client, PH_CASE.patient_id, "pt resting", key="tap-1")
+        assert failed.status_code == 500
+        assert queue.sent == []
+        detail = (await client.get(f"/api/v1/patients/{PH_CASE.patient_id}")).json()
+        rough_id = detail["notes"][0]["job"]["rough_note_id"]
+
+        tapped = await client.post(draft_path(rough_id))
+        assert tapped.status_code == 202, tapped.text
+        assert queue.sent == [UUID(tapped.json()["id"])]
+
+        await mark_running(app, tapped.json()["id"])
+        await client.post(draft_path(rough_id))
+        assert len(queue.sent) == 1

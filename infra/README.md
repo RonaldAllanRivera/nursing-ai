@@ -208,6 +208,13 @@ In order, it:
 7. Checks the alarms: one in `ALARM`, or one watching the wrong HTTP API or queue, fails the
    deploy. One still in `INSUFFICIENT_DATA` (new alarms start there) prints a warning with its name.
 
+If a first deploy's apply fails after it made the ops function but before the database can be
+reached, the next run no longer looks like a first deploy, so it takes the normal path (migrate
+before apply) and stops at `migrate`. To recover, fix the cause, then run the script once with
+`DEPLOY_APPLY_FIRST=yes DEPLOY_APPROVED=yes scripts/deploy.sh <name>`. That forces the apply
+before the migration. It still needs the approval and still runs every environment and state
+check. Go back to the plain command afterwards.
+
 The script itself makes no SSM or Secrets Manager call and never decrypts anything. (The apply it
 runs refreshes the SSM parameters, which does decrypt them inside Terraform; nothing is printed.)
 CI logs of this public repository are public, so:
@@ -218,7 +225,7 @@ CI logs of this public repository are public, so:
 - The output of `terraform apply`, `terraform init` and the docker commands has every 12-digit
   number replaced, so an ARN's account ID is hidden.
 - `alert_email`, `image_uri` and the `queue_url` output (an SQS URL holds the account ID) are
-  `sensitive` in Terraform. The script still reads sensitive outputs with `terraform output -raw`.
+  `sensitive` in Terraform. The script could still read sensitive outputs with `terraform output -raw`.
 - Once a custom domain is set, the apply's plan and outputs show it. That is the public address of
   the site, and CI deploys start only after it is live, so it is not hidden.
 
@@ -352,6 +359,11 @@ alarms, but open CloudWatch too and check:
   receive count rise after a forced failure.
 - An ops invoke returns its JSON body as the payload even when the task fails. The deploy reads
   `ok` from it.
+- The API's 5xx alarm also counts the `database_waking` 503s the app sends while Aurora resumes.
+  After a long idle period a resume can take longer than the 20 s connect timeout, so a few
+  visitors waking it can trip the alarm (an ALARM email, then OK), and a deploy run in that window
+  stops at its alarm check. Watch the alarm through one cold wake; if it fires, raise its threshold
+  or alarm on 500/502/504 only.
 
 Also confirm the alarm-topic email subscription and the budget emails (each must be accepted from
 the link in its first email).

@@ -1,4 +1,4 @@
-"""scripts/deploy.sh runs P2-19's steps in order, only when approved, and never reads a secret.
+"""scripts/deploy.sh runs the deploy steps in order, only when approved, and never reads a secret.
 
 Nothing real runs: `aws`, `docker`, `terraform` and `pnpm` are one small stand-in script, linked
 under those four names in a folder that is the whole of PATH (plus links to the plain tools the
@@ -297,6 +297,28 @@ def test_first_deploy_applies_before_it_migrates(sandbox: Path) -> None:
     run = run_deploy(sandbox, "demo", extra={"FAKE_FIRST_DEPLOY": "1"})
     assert run.result.returncode == 0, run.result.stderr
     assert steps(run) == FIRST_DEMO
+
+
+def test_the_apply_first_override_applies_before_it_migrates_on_a_normal_run(
+    sandbox: Path,
+) -> None:
+    run = run_deploy(sandbox, "demo", extra={"DEPLOY_APPLY_FIRST": "yes"})
+    assert run.result.returncode == 0, run.result.stderr
+    assert steps(run) == [step for step in FIRST_DEMO if step != "first-deploy check"]
+
+
+def test_the_apply_first_override_still_needs_approval(sandbox: Path) -> None:
+    run = run_deploy(sandbox, "demo", approved=False, extra={"DEPLOY_APPLY_FIRST": "yes"})
+    assert run.result.returncode != 0
+    assert steps(run) == []
+
+
+def test_the_apply_first_override_still_refuses_another_environments_state(
+    sandbox: Path,
+) -> None:
+    run = run_deploy(sandbox, "demo", extra={"DEPLOY_APPLY_FIRST": "yes", "FAKE_STATE_ENV": "prod"})
+    assert run.result.returncode != 0
+    assert steps(run) == ["terraform init"]
 
 
 def test_state_without_the_ops_function_and_a_live_function_is_not_a_first_deploy(

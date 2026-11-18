@@ -81,8 +81,13 @@ below the cap" before each call is racy: two workers can both check, both pass, 
   - A job can also be left `running` when its outcome cannot be saved and the redelivery
     never comes (for example the message already used its five receives). The lease lets the next
     delivery reclaim it, but nothing sends one.
-  - If sending the SQS message fails after the job row has been saved, the job stays `queued` and,
-    in SQS mode, nothing recovers it, because the startup recovery exists only in process.
+  - If sending the SQS message fails after the job row has been saved (or the API times out
+    first), the job stays `queued` and the startup recovery, which exists only in process, does
+    not help. It recovers on the next replay of the same request or the next "try drafting again",
+    which send the message again while the job is still `queued` (a duplicate message is a no-op,
+    because the claim is conditional). Until then the note shows "drafting" and the job counts
+    toward the daily cap. The clients' short timeouts (5 s to connect, 10 s to read) keep a
+    hanging send well inside the API's 29 s.
 
 ## Alternatives considered
 

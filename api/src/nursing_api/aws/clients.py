@@ -1,7 +1,8 @@
 """boto3 clients for the Lambda VPC, which has IPv6 egress only.
 
-Every client uses the dual-stack endpoints (`*.api.aws`), which resolve over IPv6, and standard
-retries. boto3 is synchronous: callers in async code run its calls through `asyncio.to_thread`.
+Every client uses the dual-stack endpoints (`*.api.aws`), which resolve over IPv6, standard
+retries and short timeouts. boto3 is synchronous: callers in async code run its calls through
+`asyncio.to_thread`.
 """
 
 from __future__ import annotations
@@ -16,7 +17,14 @@ if TYPE_CHECKING:  # the stubs are a dev dependency: never imported at run time
     from types_boto3_sqs import SQSClient
     from types_boto3_ssm import SSMClient
 
-CONFIG = Config(use_dualstack_endpoint=True, retries={"mode": "standard"})
+# Short timeouts keep a hanging call well inside the API's 29 s (botocore's default is 60 s to
+# connect, three attempts).
+CONFIG = Config(
+    use_dualstack_endpoint=True,
+    retries={"mode": "standard"},
+    connect_timeout=5,
+    read_timeout=10,
+)
 
 
 @overload

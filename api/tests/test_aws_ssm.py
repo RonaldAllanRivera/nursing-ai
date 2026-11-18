@@ -115,3 +115,4 @@ def test_clients_use_dual_stack_endpoints(service: str) -> None:
     assert host.endswith(".api.aws")
     config: Any = client.meta.config  # botocore's stubs don't declare the Config attributes
     assert config.retries["mode"] == "standard"
+    assert (config.connect_timeout, config.read_timeout) == (5, 10)

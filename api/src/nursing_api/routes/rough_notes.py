@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, Request, Response
+from nursing_core.domain.jobs import JobStatus
 from nursing_core.domain.notes import RoughNote
 from nursing_core.storage.notes import DailyCapReached
 
@@ -105,7 +106,10 @@ async def add_rough_note(
         )
     except DailyCapReached:
         raise DailyDraftLimit from None
-    if stored.id == rough.id:  # a repeat of an earlier request gets that request's job, once
+    # A new request sends its message. A repeat sends it again only while the job is still
+    # `queued`, which is what an earlier failed or timed-out send leaves behind; a duplicate
+    # message is harmless, because the claim lets one run win.
+    if stored.id == rough.id or job.status == JobStatus.QUEUED:
         await queue.enqueue(job.id)
     response.headers["Location"] = f"/api/v1/draft-jobs/{job.id}"
     return job_out(job)
@@ -137,7 +141,7 @@ async def draft_again(
         )
     except DailyCapReached:
         raise DailyDraftLimit from None
-    if is_new:
+    if is_new or job.status == JobStatus.QUEUED:  # a queued open job may never have been sent
         await queue.enqueue(job.id)
     response.headers["Location"] = f"/api/v1/draft-jobs/{job.id}"
     return job_out(job)
