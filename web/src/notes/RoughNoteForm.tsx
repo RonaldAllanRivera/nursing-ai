@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "../components/Icon";
 import { Button } from "../components/ui/Button";
 import { patientQuery } from "../patients/patients";
 import { DemoNoteButton } from "./DemoNoteButton";
 import { failureMessage } from "./draft";
-import { draftAgainOutcome, useDraftAgain } from "./draftAgain";
+import { draftAgainOutcome, isAlreadyDrafted, useDraftAgain } from "./draftAgain";
 import { holdNote, readHeldNote } from "./heldNote";
 import { createKeyKeeper } from "./idempotency";
 import { announceStep, draftJobQuery, isRefused, textState, useSaveRoughNote } from "./roughNote";
@@ -71,6 +71,8 @@ export function RoughNoteForm({
   const [keeper] = useState(() => createKeyKeeper());
   // The draft job being followed: the newest one this form started (a save, or a try again).
   const [jobId, setJobId] = useState("");
+  // The job the server said was already drafted somewhere else (another tab, the list's button).
+  const [draftedElsewhereFor, setDraftedElsewhereFor] = useState("");
   const again = useDraftAgain(patientId);
   const save = useSaveRoughNote(patientId, (sent, started) => {
     keeper.done();
@@ -92,18 +94,28 @@ export function RoughNoteForm({
   const lost = job.data === undefined && isRefused(job.error);
   const drafting = save.isSuccess && !failed && !lost;
   const busy = save.isPending || drafting || again.isPending;
-  // Only a failure worth another try offers it; the same text would fail the same way otherwise.
-  const canDraftAgain = failed && job.data?.retryable === true;
   // A note that was sent and saved is never sent again as it is: it needs a change first.
   const sameAsSent = save.isSuccess && text === sentText;
   const noteId = job.data?.status === "succeeded" ? job.data.note_id : null;
-  const newest = detail.data?.notes.find((n) => n.rough_note_id === job.data?.rough_note_id)?.job
-    .id;
+  const newest = detail.data?.notes.find((n) => n.rough_note_id === job.data?.rough_note_id)?.job;
   // The list was read after this job was last seen, and names a newer job for the same note: follow
   // that one, unless she has gone on to other text.
   const listIsNewer = detail.dataUpdatedAt > job.dataUpdatedAt;
-  const followTarget = failed && sameAsSent && listIsNewer && newest !== jobId ? newest : undefined;
+  const hasNewer = newest !== undefined && newest.id !== jobId;
+  const followTarget = failed && sameAsSent && listIsNewer && hasNewer ? newest.id : undefined;
   if (followTarget !== undefined) setJobId(followTarget);
+  // She has gone on to other text, and the earlier note was drafted somewhere else: its failure is
+  // history, and trying again would only be refused.
+  const elsewhere =
+    failed &&
+    !sameAsSent &&
+    (draftedElsewhereFor === jobId || (listIsNewer && hasNewer && newest.status !== "failed"));
+  // While a new note saves the last one's failure is not the news.
+  const showFailure = failed && !elsewhere && !save.isPending;
+  // Only a failure worth another try offers it; the same text would fail the same way otherwise.
+  const canDraftAgain = showFailure && job.data?.retryable === true;
+  // One primary at a time: re-drafting the saved note while its text is as sent, Save note once she has edited it.
+  const savePrimary = !canDraftAgain || !sameAsSent;
 
   useEffect(() => {
     if (noteId === null) return;
@@ -128,9 +140,13 @@ export function RoughNoteForm({
     if (roughNoteId === undefined) return;
     // The button goes once the new job starts: the cursor goes to the note, where the progress is read out.
     box.current?.focus();
+    const followed = jobId;
     again.ask(roughNoteId, {
       onSuccess: (started) => {
         setJobId(started.id);
+      },
+      onError: (error) => {
+        if (isAlreadyDrafted(error)) setDraftedElsewhereFor(followed);
       },
     });
   };
@@ -266,9 +282,26 @@ export function RoughNoteForm({
             Couldn't find the draft. Your note is saved. Reload the page to see where it is.
           </Line>
         ) : null}
-        {failed ? (
+        {showFailure ? (
           <Line icon="flag" tone="font-semibold text-stop" role="alert">
             {failureMessage(job.data?.failure)}
+          </Line>
+        ) : null}
+        {elsewhere ? (
+          <Line icon="check" tone="text-ink-2">
+            Your earlier note has its draft.
+            {newest?.status === "succeeded" && newest.note_id !== null ? (
+              <>
+                {" "}
+                <Link
+                  to="/notes/$noteId"
+                  params={{ noteId: newest.note_id }}
+                  className="inline-flex min-h-11 items-center text-pen underline underline-offset-4"
+                >
+                  Open it
+                </Link>
+              </>
+            ) : null}
           </Line>
         ) : null}
         {againWords?.kind === "words" ? (
@@ -284,14 +317,18 @@ export function RoughNoteForm({
 
         <div className="flex flex-wrap items-center gap-3">
           {canDraftAgain ? (
-            <Button variant="primary" disabled={again.isPending} onClick={tryDraftingAgain}>
+            <Button
+              variant={savePrimary ? "quiet" : "primary"}
+              disabled={again.isPending}
+              onClick={tryDraftingAgain}
+            >
               Try drafting again
             </Button>
           ) : null}
           <Button
             id="rough-note-save"
             type="submit"
-            variant={canDraftAgain ? "quiet" : "primary"}
+            variant={savePrimary ? "primary" : "quiet"}
             disabled={!canSave || busy || sameAsSent}
           >
             Save note

@@ -7,6 +7,13 @@ import { patientQuery } from "../patients/patients";
 export const DAILY_DRAFT_LIMIT = "You've reached today's draft limit. Try again tomorrow.";
 export const DRAFT_AGAIN_FAILED = "Couldn't start the draft. Check your connection and try again.";
 
+/** The server says this rough note already has its draft (a 409 `already_drafted`). */
+export function isAlreadyDrafted(error: unknown): boolean {
+  return (
+    error instanceof ApiError && error.status === 409 && error.problem?.code === "already_drafted"
+  );
+}
+
 /**
  * What a refused "Try drafting again" means for the screen: `stale` (someone already drafted it, or
  * it can't be retried: look at the list again, no error), or words to show.
