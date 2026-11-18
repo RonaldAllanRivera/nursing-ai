@@ -3,7 +3,6 @@ import { useRef } from "react";
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
 import { patientQuery } from "../patients/patients";
-import { draftJobQuery } from "./roughNote";
 
 export const DAILY_DRAFT_LIMIT = "You've reached today's draft limit. Try again tomorrow.";
 export const DRAFT_AGAIN_FAILED = "Couldn't start the draft. Check your connection and try again.";
@@ -32,7 +31,7 @@ export function draftAgainOutcome(
  * job (or the one already running: a double tap is harmless), which is then followed like a first
  * draft. A refusal because someone else already acted refreshes what the screen shows.
  */
-export function useDraftAgain(patientId: string, jobId: string | null = null) {
+export function useDraftAgain(patientId: string) {
   const queryClient = useQueryClient();
   // Set the moment a request leaves, before React has drawn the busy button: a fast second tap is ignored.
   const out = useRef(false);
@@ -50,7 +49,6 @@ export function useDraftAgain(patientId: string, jobId: string | null = null) {
     onError: (error) => {
       if (draftAgainOutcome(error).kind !== "stale") return;
       void queryClient.invalidateQueries({ queryKey: patientQuery(patientId).queryKey });
-      if (jobId) void queryClient.invalidateQueries({ queryKey: draftJobQuery(jobId).queryKey });
     },
     onSettled: () => {
       out.current = false;

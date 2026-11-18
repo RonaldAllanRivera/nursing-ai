@@ -105,9 +105,27 @@ test("the shift list offers Try drafting again on a row, says Drafting, then off
   await checkScreen(page, { night: true });
   await shot(page, "row-try-again");
 
+  // She has gone on to other words, so the form leaves this draft to the list.
+  await page.getByLabel("Your note").fill("next note, not saved yet");
+
   await rowButton.click();
   await expect(list.getByText("Drafting")).toBeVisible();
   await expect(rowButton).toHaveCount(0);
   await expect(list.getByRole("link", { name: "Draft ready" })).toBeVisible({ timeout: 10000 });
   await checkScreen(page);
+});
+
+test("a draft started from the shift list is followed by the form that saved the note", async ({
+  page,
+}) => {
+  await setMockOptions(page, { failDraft: "provider_error" });
+  await openPatient(page);
+  await page.getByLabel("Your note").fill("pt c/o hilo since 2am, BP 90/60 HR 112");
+  await page.getByRole("button", { name: "Save note" }).click();
+  const list = page.getByRole("region", { name: "Notes this shift" });
+  await expect(list.getByRole("button", { name: AGAIN })).toBeVisible({ timeout: 8000 });
+  await list.getByRole("button", { name: AGAIN }).click();
+  // The row takes the focus the button leaves, and the form follows the same draft to its note.
+  await expect(list.getByRole("listitem").first()).toBeFocused();
+  await expect(page).toHaveURL(NOTE_URL, { timeout: 8000 });
 });

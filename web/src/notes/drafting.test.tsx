@@ -2,46 +2,19 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { delay, http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
-import type { components } from "../api/schema";
 import { demoApi } from "../mocks/demo-api";
-import type { MockOptions } from "../mocks/options";
-import { renderApp } from "../test/render";
-import { chooseAndUnlock } from "../test/signIn";
 import { server } from "../test/setup";
-
-type Schemas = components["schemas"];
-
-const PATIENT_A = "00000000-0000-4000-8000-000000000011";
-const AGAIN_URL = "*/api/v1/rough-notes/:id/draft-jobs";
-const SARAH = "Staff nurse · Sarah Navarro, RN";
-const AGAIN = "Try drafting again";
-const HINT = "To save a new note, change the text.";
-const SLOW = { timeout: 5000 };
-
-async function openPatientA(
-  options: MockOptions = {},
-  overrides: Parameters<typeof renderApp>[2] = [],
-) {
-  const app = await renderApp("/sign-in", options, overrides);
-  await chooseAndUnlock(SARAH);
-  await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
-  await screen.findByLabelText("Your note");
-  return app;
-}
-
-const form = () => {
-  const found = screen.getByLabelText("Your note").closest("form");
-  if (!found) throw new Error("no form");
-  return within(found);
-};
-
-async function saveAFailedDraft(failure: NonNullable<MockOptions["failDraft"]>) {
-  const app = await openPatientA({ failDraft: failure });
-  await userEvent.click(screen.getByLabelText("Your note"));
-  await userEvent.paste("pt c/o hilo");
-  await userEvent.click(screen.getByRole("button", { name: "Save note" }));
-  return app;
-}
+import {
+  AGAIN,
+  AGAIN_URL,
+  HINT,
+  PATIENT_A,
+  SLOW,
+  form,
+  openPatientA,
+  saveAFailedDraft,
+  type Schemas,
+} from "./draftingKit";
 
 describe("Try drafting again, in the write form", () => {
   it("is the action next to a failure worth another try, with no change-the-text hint", async () => {
@@ -258,7 +231,12 @@ describe("Use the demo note", () => {
     expect(box).toHaveValue("pt c/o hilo since 2am");
     expect(box).toHaveFocus();
     expect(screen.getByRole("button", { name: "Save note" })).toBeEnabled();
+    // Nothing is saved, then or later: let the screen settle first, a save would be asynchronous.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(saves).toBe(0);
+    expect(
+      screen.getByText("No notes yet this shift. Write the first one in Your note."),
+    ).toBeVisible();
   });
 
   it("asks before replacing what she typed, and keeps it on Keep my note", async () => {

@@ -69,17 +69,22 @@ export function RoughNoteForm({
   const [text, setText] = useState(() => readHeldNote(queryClient, patientId));
   const [sentText, setSentText] = useState<string | null>(null);
   const [keeper] = useState(() => createKeyKeeper());
-  const save = useSaveRoughNote(patientId, (sent) => {
+  // The draft job being followed: the newest one this form started (a save, or a try again).
+  const [jobId, setJobId] = useState("");
+  const again = useDraftAgain(patientId);
+  const save = useSaveRoughNote(patientId, (sent, started) => {
     keeper.done();
     setSentText(sent);
+    setJobId(started.id);
+    // A refused try again (the daily limit) was about the note before this one.
+    again.reset();
     // Sent, so it is no longer unsent text to hold.
     holdNote(queryClient, patientId, "");
   });
   const box = useRef<HTMLTextAreaElement>(null);
-  // "Try drafting again" starts a new job for the same saved note; from then on that one is followed.
-  const again = useDraftAgain(patientId, save.data?.id ?? null);
-  const jobId = again.data?.id ?? save.data?.id ?? "";
-  const job = useQuery({ ...draftJobQuery(jobId), enabled: save.isSuccess });
+  const job = useQuery({ ...draftJobQuery(jobId), enabled: jobId !== "" });
+  // What the shift list says is the newest job of this rough note (another tab, or the list's own button, may have started one).
+  const detail = useQuery({ ...patientQuery(patientId), enabled: false });
 
   const { left, showCount, canSave } = textState(text);
   const failed = job.data?.status === "failed";
@@ -88,10 +93,17 @@ export function RoughNoteForm({
   const drafting = save.isSuccess && !failed && !lost;
   const busy = save.isPending || drafting || again.isPending;
   // Only a failure worth another try offers it; the same text would fail the same way otherwise.
-  const canDraftAgain = failed && job.data?.retryable === true && save.data !== undefined;
+  const canDraftAgain = failed && job.data?.retryable === true;
   // A note that was sent and saved is never sent again as it is: it needs a change first.
   const sameAsSent = save.isSuccess && text === sentText;
   const noteId = job.data?.status === "succeeded" ? job.data.note_id : null;
+  const newest = detail.data?.notes.find((n) => n.rough_note_id === job.data?.rough_note_id)?.job
+    .id;
+  // The list was read after this job was last seen, and names a newer job for the same note: follow
+  // that one, unless she has gone on to other text.
+  const listIsNewer = detail.dataUpdatedAt > job.dataUpdatedAt;
+  const followTarget = failed && sameAsSent && listIsNewer && newest !== jobId ? newest : undefined;
+  if (followTarget !== undefined) setJobId(followTarget);
 
   useEffect(() => {
     if (noteId === null) return;
@@ -112,8 +124,15 @@ export function RoughNoteForm({
   };
 
   const tryDraftingAgain = () => {
-    if (!save.data) return;
-    again.ask(save.data.rough_note_id);
+    const roughNoteId = job.data?.rough_note_id;
+    if (roughNoteId === undefined) return;
+    // The button goes once the new job starts: the cursor goes to the note, where the progress is read out.
+    box.current?.focus();
+    again.ask(roughNoteId, {
+      onSuccess: (started) => {
+        setJobId(started.id);
+      },
+    });
   };
   const againWords = again.isError ? draftAgainOutcome(again.error) : null;
 

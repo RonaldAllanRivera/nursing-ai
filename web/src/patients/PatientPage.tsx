@@ -88,6 +88,7 @@ export function PatientPage() {
           <ShiftNotes
             patientId={patientId}
             notes={notes}
+            listReadAt={patient.dataUpdatedAt}
             timeZone={shift.timezone}
             locale={locale}
             clock={clock}
