@@ -65,14 +65,14 @@ describe("the order the server checks a staff action in", () => {
     expect((await act(`/api/v1/users/${staff}/revoke`, WRONG)).body["tries_left"]).toBe(4);
   });
 
-  it("tells a head nurse 403, not 404, about the admin, and counts no try", async () => {
+  it("answers 404 to a head nurse about the admin (no facility is not hers), and counts no try", async () => {
     await as(MOCK_EMAILS.admin);
     const admin = await idOf(MOCK_EMAILS.admin);
     await as(MOCK_EMAILS.phHead);
     const staff = await idOf(MOCK_EMAILS.phStaff);
     expect(outcome(await act(`/api/v1/users/${admin}/pin-reset`, WRONG))).toEqual([
-      403,
-      "forbidden",
+      404,
+      "not_found",
     ]);
     expect((await act(`/api/v1/users/${staff}/pin-reset`, WRONG)).body["tries_left"]).toBe(4);
   });

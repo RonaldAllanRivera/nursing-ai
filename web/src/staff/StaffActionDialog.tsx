@@ -1,8 +1,6 @@
 import { PinDialog } from "../settings/PinDialog";
-import { isPinRefusal } from "../session/pin";
-import type { StaffAction } from "./StaffRow";
-import type { StaffRow } from "./staffApi";
-import { useResetPin, useRevoke } from "./staffApi";
+import { failureKind } from "./failure";
+import { useStaffAction, type StaffAction, type StaffRow } from "./staffApi";
 import { DONE, resetWords, revokeWords } from "./words";
 
 export interface Acting {
@@ -14,65 +12,59 @@ export interface Acting {
 
 /**
  * The PIN dialog for revoking someone or resetting their PIN. `acting` stays set after the dialog
- * closes, so the person it was about is still named while it closes. A wrong PIN stays here with the tries
- * left; any other failure closes it and the page says so (`onFailed`).
+ * closes (`open` says whether it is up). A wrong PIN stays here with the tries left, and so does a
+ * connection or server failure (with the connection words); a person who is gone or an action no
+ * longer allowed closes it and the page looks at its list again (`onStale`).
  */
 export function StaffActionDialog({
   acting,
   open,
   onClose,
   onDone,
-  onFailed,
+  onStale,
 }: {
   acting: Acting | null;
   open: boolean;
   onClose: () => void;
   onDone: (words: string) => void;
-  onFailed: (error: unknown) => void;
+  onStale: () => void;
 }) {
-  const who = () => acting?.row.id ?? "";
-  const failed = (error: unknown) => {
-    if (isPinRefusal(error)) return;
-    onClose();
-    onFailed(error);
-  };
-  const revoke = useRevoke(who, {
-    onSuccess: (row) => {
-      onClose();
-      onDone(DONE.revoked(row));
+  const revoking = acting?.action === "revoke";
+  const request = useStaffAction(
+    () => ({ id: acting?.row.id ?? "", action: acting?.action ?? "reset" }),
+    {
+      onSuccess: (row) => {
+        onClose();
+        onDone(revoking ? DONE.revoked(row) : DONE.reset(row));
+      },
+      onError: (error) => {
+        const kind = failureKind(error);
+        if (kind === "gate" || kind === "stale") onClose();
+        if (kind === "stale") onStale();
+      },
     },
-    onError: failed,
-  });
-  const reset = useResetPin(who, {
-    onSuccess: (row) => {
-      onClose();
-      onDone(DONE.reset(row));
-    },
-    onError: failed,
-  });
+  );
 
-  const shown = acting;
-  const revoking = shown?.action === "revoke";
   return (
     <PinDialog
       open={open}
       onCancel={onClose}
       words={
-        shown
+        acting
           ? revoking
-            ? revokeWords(shown.row)
-            : resetWords(shown.row)
+            ? revokeWords(acting.row)
+            : resetWords(acting.row)
           : { title: "", question: "", confirm: "", busy: "" }
       }
-      request={revoking ? revoke : reset}
+      request={request}
       persona={false}
       safeFirst={revoking}
+      showFailure
       onCloseAutoFocus={(event) => {
         // Back to the button that was pressed; if it is gone (a revoked row has none), the row.
         event.preventDefault();
-        const opener = shown?.opener;
-        if (opener?.isConnected) opener.focus();
-        else if (shown) document.getElementById(`staff-row-${shown.row.id}`)?.focus();
+        if (acting?.opener.isConnected) acting.opener.focus();
+        else if (acting) document.getElementById(`staff-row-${acting.row.id}`)?.focus();
       }}
     />
   );

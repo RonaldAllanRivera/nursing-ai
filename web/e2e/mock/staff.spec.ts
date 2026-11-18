@@ -4,6 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   checkDialog,
   checkScreen,
+  expectHeaderAtMostTwoRows,
   noSidewaysScroll,
   pageStatus,
   setMockOptions,
@@ -47,6 +48,7 @@ test("the admin's list puts the locked PIN first, and fits at every width, day a
   await expect(rowOf(page, "Rita Moore")).toContainText("Revoked");
   await expect(rowOf(page, "Irene Lim")).toContainText("Invited");
   await expect(rowOf(page, "Dana Admin").getByRole("button")).toHaveCount(0);
+  await expectHeaderAtMostTwoRows(page);
   await checkScreen(page, { night: true });
   await shot(page, "staff-admin");
 });
@@ -65,7 +67,10 @@ test("the admin invites someone by keyboard only", async ({ page }) => {
 
   const facility = page.getByLabel("Facility");
   await tabTo(page, facility);
-  await facility.selectOption("us-demo");
+  // The keyboard picks the option: two Down arrows from "Choose a facility" reach the second facility.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(facility).toHaveValue("us-demo");
   await tabTo(page, page.getByRole("button", { name: "Invite" }));
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog", { name: "Invite New.Nurse@Example.com?" })).toBeVisible();
@@ -119,6 +124,11 @@ test("a revoke asks with the safe choice focused, and a wrong PIN says the tries
   await expect(rowOf(page, "Paolo Cruz").getByRole("button")).toHaveCount(0);
   // The pressed button is gone with the action: the row takes the focus.
   await expect(rowOf(page, "Paolo Cruz")).toBeFocused();
+  // ...and shows it: a visible outline, not the browser default removed for nothing.
+  const outline = await rowOf(page, "Paolo Cruz").evaluate(
+    (el) => getComputedStyle(el).outlineStyle,
+  );
+  expect(outline).not.toBe("none");
   await noSidewaysScroll(page);
 });
 
@@ -132,6 +142,7 @@ test("a head nurse sees her facility, no invite and no revoke, and resets a PIN"
   await expect(page.getByText("Sam Porter")).toHaveCount(0);
   await expect(rowOf(page, "Hana Reyes").getByRole("button")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Patients" })).toBeVisible();
+  await expectHeaderAtMostTwoRows(page);
   await checkScreen(page, { night: true });
   await shot(page, "staff-head");
 

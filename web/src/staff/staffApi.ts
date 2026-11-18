@@ -25,38 +25,30 @@ interface Handlers {
   onError: (error: unknown) => void;
 }
 
-/** The admin ends someone's access, with their PIN. `who` is read when the PIN is sent. */
-export function useRevoke(who: () => string, handlers: Handlers) {
-  const queryClient = useQueryClient();
-  return usePinRequest(
-    async (pin: string) =>
-      unwrap(
-        await api.POST("/api/v1/users/{user_id}/revoke", {
-          params: { path: { user_id: who() } },
-          body: { pin },
-        }),
-      ),
-    {
-      onSuccess: (row) => {
-        keepRow(queryClient, row);
-        handlers.onSuccess(row);
-      },
-      onError: handlers.onError,
-    },
-  );
-}
+/** The two changes to one person: the admin ends their access, or clears their PIN. */
+export type StaffAction = "revoke" | "reset";
 
-/** The admin or a head nurse clears someone's PIN, with their own PIN. */
-export function useResetPin(who: () => string, handlers: Handlers) {
+const ROUTES = {
+  revoke: "/api/v1/users/{user_id}/revoke",
+  reset: "/api/v1/users/{user_id}/pin-reset",
+} as const;
+
+/**
+ * Revoke someone's access, or reset their PIN, with the actor's PIN. `target` is read when the
+ * PIN is sent: who, and which of the two.
+ */
+export function useStaffAction(
+  target: () => { id: string; action: StaffAction },
+  handlers: Handlers,
+) {
   const queryClient = useQueryClient();
   return usePinRequest(
-    async (pin: string) =>
-      unwrap(
-        await api.POST("/api/v1/users/{user_id}/pin-reset", {
-          params: { path: { user_id: who() } },
-          body: { pin },
-        }),
-      ),
+    async (pin: string) => {
+      const { id, action } = target();
+      return unwrap(
+        await api.POST(ROUTES[action], { params: { path: { user_id: id } }, body: { pin } }),
+      );
+    },
     {
       onSuccess: (row) => {
         keepRow(queryClient, row);

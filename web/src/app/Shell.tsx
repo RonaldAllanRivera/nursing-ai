@@ -9,6 +9,7 @@ import { screenForGate } from "../session/pin";
 import { useSession, useSignOut } from "../session/session";
 import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
 import { canSeeStaff } from "../staff/permissions";
+import { cn } from "../lib/cn";
 import { useFacility } from "../facility/useFacility";
 import { useIdleLock, useLookAgainWhenSeen } from "../session/useIdleLock";
 import { useSessionExpiry } from "../session/useSessionExpiry";
@@ -19,7 +20,7 @@ import { ShiftControl } from "./ShiftControl";
 const NAV_LINK =
   "inline-flex min-h-11 items-center rounded-full px-2 font-semibold sm:px-3 text-ink [&.active]:bg-sunk [&.active]:underline [&.active]:underline-offset-4 hover:bg-sunk";
 
-function ThemeToggle() {
+function ThemeToggle({ className }: { className?: string }) {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const night = theme === "night";
   return (
@@ -32,7 +33,10 @@ function ThemeToggle() {
         saveTheme(next);
         applyTheme(next);
       }}
-      className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-rule-strong bg-transparent font-semibold hover:bg-sunk max-sm:px-0 sm:px-4 aria-pressed:border-pen aria-pressed:bg-pen-tint aria-pressed:text-pen"
+      className={cn(
+        "inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-rule-strong bg-transparent font-semibold hover:bg-sunk max-sm:px-0 sm:px-4 aria-pressed:border-pen aria-pressed:bg-pen-tint aria-pressed:text-pen",
+        className,
+      )}
     >
       <Icon name="moon" />
       <span className="max-sm:sr-only">Night theme</span>
@@ -72,7 +76,14 @@ export function Shell() {
     <>
       <header className="border-b border-rule bg-sheet">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 sm:gap-x-4 sm:px-6">
-          <div className="flex min-w-0 flex-[1_1_14rem] items-center gap-3 sm:flex-none">
+          <div
+            className={cn(
+              "flex min-w-0 items-center gap-3 sm:flex-none",
+              // Open: the first row holds who is signed in, Sign out and the theme toggle, so the
+              // name may be narrow. During a gate the row holds the name and "Not you?" instead.
+              gateUp ? "flex-[1_1_14rem]" : "flex-[1_1_9rem]",
+            )}
+          >
             <div
               aria-hidden="true"
               className="grid size-12 flex-none place-items-center rounded-control rounded-bl-[2px] bg-primary font-bold text-primary-ink"
@@ -108,6 +119,9 @@ export function Shell() {
               <Button className="sm:order-last" disabled={signOut.isPending} onClick={endSession}>
                 Sign out
               </Button>
+              {/* Third in the page order, as it is on a phone's first row; from `sm` up it sits
+                  just before Sign out, at the end of the row. */}
+              <ThemeToggle className="sm:order-9998" />
               {session.shift && session.facility_key !== null ? (
                 <ShiftControl shift={session.shift} facilityKey={session.facility_key} />
               ) : null}
@@ -129,7 +143,7 @@ export function Shell() {
               </nav>
             </>
           )}
-          <ThemeToggle />
+          {gateUp ? <ThemeToggle /> : null}
           {signOut.isError ? (
             <p role="alert" className="order-last basis-full text-14 text-stop">
               Signing out did not work. Try again.

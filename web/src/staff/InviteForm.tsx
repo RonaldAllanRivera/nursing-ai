@@ -2,34 +2,37 @@ import { useRef, useState } from "react";
 import type { components } from "../api/schema";
 import { ApiError } from "../api/errors";
 import { Button } from "../components/ui/Button";
-import { isPinRefusal } from "../session/pin";
 import { roleLabel } from "../session/personas";
 import { Field, INPUT } from "../settings/fields";
 import { PinDialog } from "../settings/PinDialog";
 import {
   EMAIL_PROBLEM,
   EMAIL_TAKEN,
+  FACILITY_PROBLEM,
   validateInvite,
   type InviteProblems,
   type InviteValues,
 } from "./invite";
+import { failureKind } from "./failure";
 import { useInvite } from "./staffApi";
 import { DONE, inviteWords } from "./words";
 
 const ROLES: components["schemas"]["Role"][] = ["staff_nurse", "head_nurse", "admin"];
 const EMPTY: InviteValues = { email: "", role: "staff_nurse", facility: "" };
 
-/** What a refused invitation says about the form, when it is about the form (else `null`). */
+/**
+ * What a refused invitation says about the form, in the screen's own words (never the server's),
+ * or `null` when the refusal is not about a field the form has.
+ */
 function problemsFrom(error: unknown): InviteProblems | null {
   if (!(error instanceof ApiError)) return null;
   if (error.status === 409 && error.problem?.code === "email_taken") return { email: EMAIL_TAKEN };
   if (error.status !== 422) return null;
+  const fields = (error.problem?.errors ?? []).map((e) => e.field);
   const found: InviteProblems = {};
-  for (const field of error.problem?.errors ?? []) {
-    if (field.field === "body.email") found.email = field.message;
-    if (field.field === "body.facility_key") found.facility = field.message;
-  }
-  return found.email || found.facility ? found : { email: EMAIL_PROBLEM };
+  if (fields.includes("body.email")) found.email = EMAIL_PROBLEM;
+  if (fields.includes("body.facility_key")) found.facility = FACILITY_PROBLEM;
+  return found.email || found.facility ? found : null;
 }
 
 /**
@@ -39,11 +42,11 @@ function problemsFrom(error: unknown): InviteProblems | null {
 export function InviteForm({
   facilities,
   onDone,
-  onFailed,
+  onStale,
 }: {
   facilities: { key: string; name: string }[];
   onDone: (words: string) => void;
-  onFailed: (error: unknown) => void;
+  onStale: () => void;
 }) {
   const [values, setValues] = useState<InviteValues>(EMPTY);
   const [problems, setProblems] = useState<InviteProblems>({});
@@ -51,7 +54,7 @@ export function InviteForm({
   const email = useRef<HTMLInputElement>(null);
   const facility = useRef<HTMLSelectElement>(null);
   const submit = useRef<HTMLButtonElement>(null);
-  const landing = useRef<"email" | "invite">("invite");
+  const landing = useRef<"email" | "facility" | "invite">("invite");
 
   const change = (next: Partial<InviteValues>) => {
     setValues((v) => ({ ...v, ...next }));
@@ -66,12 +69,19 @@ export function InviteForm({
       onDone(DONE.invited(row.email));
     },
     onError: (error) => {
-      if (isPinRefusal(error)) return;
-      landing.current = "email";
-      setAsking(false);
+      const kind = failureKind(error);
+      if (kind === "wrong_pin") return;
       const about = problemsFrom(error);
-      if (about) setProblems(about);
-      else onFailed(error);
+      if (about) {
+        // The first field with a problem, in the order the form shows them, takes the focus.
+        landing.current = about.email ? "email" : "facility";
+        setAsking(false);
+        setProblems(about);
+      } else if (kind === "gate" || kind === "stale") {
+        setAsking(false);
+        if (kind === "stale") onStale();
+      }
+      // Anything else (no connection, a server error): the dialog stays, with its own words.
     },
   });
 
@@ -175,9 +185,11 @@ export function InviteForm({
         words={inviteWords(asked, roleLabel(values.role).toLowerCase(), facilityName)}
         request={request}
         persona={false}
+        showFailure
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          (landing.current === "email" ? email : submit).current?.focus();
+          const target = { email, facility, invite: submit }[landing.current];
+          target.current?.focus();
           landing.current = "invite";
         }}
       />

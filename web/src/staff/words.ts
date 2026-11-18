@@ -47,3 +47,10 @@ export const DONE = {
     `${person.display_name}'s PIN is reset. They will choose a new one at their next sign-in.`,
   invited: (email: string) => `${email} is invited. They can now sign in with Google.`,
 };
+
+/** The line above the list when PINs are locked (they sort to the top). */
+export function lockedWords(count: number): string {
+  return count === 1
+    ? "1 PIN is locked. It's at the top."
+    : `${String(count)} PINs are locked. They're at the top.`;
+}

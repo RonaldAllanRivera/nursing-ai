@@ -3,15 +3,13 @@ import { Button } from "../components/ui/Button";
 import { cn } from "../lib/cn";
 import { roleLabel } from "../session/personas";
 import { canResetPin, canRevoke, type StaffActor } from "./permissions";
-import type { StaffRow as Row } from "./staffApi";
+import type { StaffAction, StaffRow as Row } from "./staffApi";
 
 const STATUS: Record<Row["status"], { icon: IconName; words: string; tone: string }> = {
   active: { icon: "check", words: "Active", tone: "text-ok" },
   invited: { icon: "box", words: "Invited", tone: "text-ink-2" },
   revoked: { icon: "removed", words: "Revoked", tone: "text-ink-2" },
 };
-
-export type StaffAction = "revoke" | "reset";
 
 /**
  * One person on the list: name (their email says who an invited person is until they sign in),
@@ -36,7 +34,7 @@ export function StaffListRow({
       id={`staff-row-${row.id}`}
       tabIndex={-1}
       className={cn(
-        "grid gap-x-4 gap-y-2 border-b border-ruled px-3 py-3 outline-none last:border-b-0 sm:grid-cols-2 sm:items-center lg:grid-cols-[minmax(0,1fr)_14rem_14rem_14rem]",
+        "grid gap-x-4 gap-y-2 border-b border-ruled px-3 py-3 focus-visible:outline-3 focus-visible:-outline-offset-3 focus-visible:outline-pen last:border-b-0 sm:grid-cols-2 sm:items-center lg:grid-cols-[minmax(0,1fr)_14rem_14rem_14rem]",
         row.status === "revoked" && "bg-sunk text-ink-2",
       )}
     >

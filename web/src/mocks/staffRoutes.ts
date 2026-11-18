@@ -23,7 +23,7 @@ export function staffRoutes(state: MockSession, data: DemoApi, staff: MockUser[]
 
   /**
    * The server's order for a change to one person: the person is there and the actor can see them
-   * (404 otherwise: an unknown id, and for a head nurse another facility's person), the actor may
+   * (404 otherwise: an unknown id, and for a head nurse anyone outside her facility, the admin too), the actor may
    * act on them (403: themselves, and whatever `allowed` adds), and only then the PIN. A refused
    * action counts no wrong try.
    */
@@ -34,10 +34,9 @@ export function staffRoutes(state: MockSession, data: DemoApi, staff: MockUser[]
     allowed: (found: MockUser) => boolean,
   ) {
     const found = staff.find((u) => u.id === id);
-    const hidden =
-      me.role === "head_nurse" &&
-      found?.facility_key != null &&
-      found.facility_key !== me.facility_key;
+    // The server's own rule: an actor with a facility sees only that facility's people, so the
+    // admin (no facility) is not visible to a head nurse either.
+    const hidden = me.facility_key !== null && found?.facility_key !== me.facility_key;
     if (!found || hidden) return { refusal: problem(404, "not_found") };
     if (found.id === me.id || !allowed(found)) return { refusal: problem(403, "forbidden") };
     const { pin } = (await request.json()) as Schemas["PinIn"];

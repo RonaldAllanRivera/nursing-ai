@@ -2,37 +2,17 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { MOCK_EMAILS, MOCK_PIN } from "../mocks/staff";
-import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
 import { signInAsPersona } from "../test/signIn";
+import { giveThePin, open, rowOf } from "./staffTestKit";
 
 afterEach(() => {
   server.events.removeAllListeners();
 });
 
-const open = (user: string, path = "/staff") =>
-  renderApp(path, { account: { user, gate: "open" } });
-
-const rowOf = async (name: string) => {
-  // The header names the signed-in person too, so look only inside the list.
-  const list = await screen.findByRole("list", { name: "Staff", hidden: true });
-  return within(
-    await within(list)
-      .findByText(name, { selector: "p" })
-      .then((p) => p.closest("li") as HTMLElement),
-  );
-};
-
-async function giveThePin(dialogName: string | RegExp, confirm: string, pin = MOCK_PIN) {
-  const dialog = await screen.findByRole("dialog", { name: dialogName });
-  await userEvent.type(within(dialog).getByLabelText("Your PIN"), pin);
-  await userEvent.click(within(dialog).getByRole("button", { name: confirm }));
-  return dialog;
-}
-
 describe("who gets to the Staff screen", () => {
-  it("shows the Staff link to a Google admin and head nurse, not to a staff nurse", async () => {
+  it("shows the Staff link to a Google admin", async () => {
     await open(MOCK_EMAILS.admin, "/settings");
     expect(await screen.findByRole("link", { name: "Staff" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Settings" })).toBeVisible();

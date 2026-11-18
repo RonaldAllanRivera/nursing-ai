@@ -9,8 +9,11 @@ import { canInvite, canSeeStaff, sortStaff } from "./permissions";
 import { StaffActionDialog, type Acting } from "./StaffActionDialog";
 import { StaffListRow } from "./StaffRow";
 import { staffQuery } from "./staffApi";
+import { lockedWords } from "./words";
 
-const FAILED = "That didn't work. The list is up to date now. Check it, then try again.";
+const REFRESHED = "That didn't work. The list has been refreshed. Check it, then try again.";
+const NOT_REFRESHED =
+  "That didn't work, and the list did not refresh. Reload the page to try again.";
 
 /** The admin's and head nurses' list of people: invite, end access, clear a locked PIN. */
 export function StaffPage() {
@@ -21,7 +24,7 @@ export function StaffPage() {
   const [acting, setActing] = useState<Acting | null>(null);
   const [open, setOpen] = useState(false);
   const [said, setSaid] = useState("");
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
 
   if (!session || !canSeeStaff(session)) return null;
   const admin = canInvite(session);
@@ -32,14 +35,17 @@ export function StaffPage() {
       : (facilities.data?.find((f) => f.profile.key === key)?.profile.name ?? key);
 
   const done = (words: string) => {
-    setFailed(false);
+    setFailed(null);
     setSaid(words);
   };
-  // Another person changed the list, or the action is no longer allowed: show the list as it is.
-  const failure = () => {
+  // The person is gone or the action is no longer allowed: the list was out of date. Look at it
+  // again, and say so only once it has been.
+  const stale = async () => {
     setSaid("");
-    setFailed(true);
-    void queryClient.invalidateQueries({ queryKey: staffQuery.queryKey });
+    setFailed(null);
+    await queryClient.invalidateQueries({ queryKey: staffQuery.queryKey });
+    const state = queryClient.getQueryState(staffQuery.queryKey);
+    setFailed(state?.status === "error" ? NOT_REFRESHED : REFRESHED);
   };
   const rows = staff.data ? sortStaff(staff.data) : [];
   const locked = rows.filter((r) => r.status === "active" && r.pin_locked).length;
@@ -64,10 +70,10 @@ export function StaffPage() {
           </>
         ) : null}
       </p>
-      {failed ? (
+      {failed !== null ? (
         <p role="alert" className="mt-2 flex items-start gap-2 text-stop">
           <Icon name="flag" className="mt-0.5" />
-          <span>{FAILED}</span>
+          <span>{failed}</span>
         </p>
       ) : null}
 
@@ -78,7 +84,7 @@ export function StaffPage() {
             name: f.profile.name,
           }))}
           onDone={done}
-          onFailed={failure}
+          onStale={() => void stale()}
         />
       ) : null}
 
@@ -106,10 +112,7 @@ export function StaffPage() {
             {locked > 0 ? (
               <p className="flex items-center gap-2 border-b border-rule bg-review-tint px-3 py-2 font-semibold text-review">
                 <Icon name="lock" />
-                <span>
-                  {locked === 1 ? "1 PIN is locked." : `${String(locked)} PINs are locked.`} They
-                  are at the top.
-                </span>
+                <span>{lockedWords(locked)}</span>
               </p>
             ) : null}
             <ul aria-label="Staff" className="m-0 list-none p-0">
@@ -121,7 +124,7 @@ export function StaffPage() {
                   facilityName={nameOf(row.facility_key)}
                   onAct={(action, picked, opener) => {
                     setSaid("");
-                    setFailed(false);
+                    setFailed(null);
                     setActing({ action, row: picked, opener });
                     setOpen(true);
                   }}
@@ -139,7 +142,7 @@ export function StaffPage() {
           setOpen(false);
         }}
         onDone={done}
-        onFailed={failure}
+        onStale={() => void stale()}
       />
     </section>
   );

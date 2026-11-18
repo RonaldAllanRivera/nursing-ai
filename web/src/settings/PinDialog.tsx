@@ -3,6 +3,7 @@ import { Button } from "../components/ui/Button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
 import { PinField } from "../session/PinField";
 import { DemoPinChip, useDemoPin } from "../session/DemoPin";
+import { pinProblemMessage } from "../session/pin";
 import { usePinEntry, type PinRequest } from "../session/usePinEntry";
 
 /** What the dialog asks and what its buttons say. */
@@ -29,6 +30,7 @@ export function PinDialog({
   persona,
   onCloseAutoFocus,
   safeFirst = false,
+  showFailure = false,
 }: {
   open: boolean;
   onCancel: () => void;
@@ -39,6 +41,11 @@ export function PinDialog({
   onCloseAutoFocus: (event: Event) => void;
   /** For a destructive action: the focus starts on Cancel, the safe choice, not on the PIN field. */
   safeFirst?: boolean;
+  /**
+   * Say a failure that is not a wrong PIN (no connection, a server error) under the field too. For
+   * a dialog that stays open on those so the person can try again; the others explain their own.
+   */
+  showFailure?: boolean;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
   const hold = (event: Event) => {
@@ -83,6 +90,7 @@ export function PinDialog({
         <PinForm
           request={request}
           persona={persona}
+          showFailure={showFailure}
           confirm={words.confirm}
           busy={words.busy}
           cancelRef={cancel}
@@ -102,6 +110,7 @@ const FIELD_ID = "action-pin";
 function PinForm({
   request,
   persona,
+  showFailure,
   confirm,
   busy,
   cancelRef,
@@ -109,6 +118,7 @@ function PinForm({
 }: {
   request: PinRequest;
   persona: boolean;
+  showFailure: boolean;
   confirm: string;
   busy: string;
   cancelRef: RefObject<HTMLButtonElement | null>;
@@ -134,7 +144,10 @@ function PinForm({
         label="Your PIN"
         value={entry.pin}
         onChange={entry.onChange}
-        message={entry.message}
+        message={
+          entry.message ??
+          (showFailure && request.error ? pinProblemMessage(request.error, persona) : null)
+        }
         readOnly={request.pending}
         onKeyDown={entry.onKeyDown}
       />

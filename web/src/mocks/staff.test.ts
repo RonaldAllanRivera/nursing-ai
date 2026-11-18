@@ -139,7 +139,7 @@ describe("resetting a PIN", () => {
     expect((await act(`/api/v1/users/${self.id}/pin-reset`)).status).toBe(403);
   });
 
-  it("lets a head nurse reset staff of her facility, never herself or the admin, and does not see another facility's person", async () => {
+  it("lets a head nurse reset staff of her facility, never herself, and does not see another facility's person or the admin", async () => {
     await as(MOCK_EMAILS.admin);
     const ids = {
       us: (await byEmail(MOCK_EMAILS.usStaff)).id,
@@ -151,7 +151,7 @@ describe("resetting a PIN", () => {
     expect((await act(`/api/v1/users/${mine.id}/pin-reset`)).status).toBe(200);
     expect((await act(`/api/v1/users/${self.id}/pin-reset`)).status).toBe(403);
     expect((await act(`/api/v1/users/${ids.us}/pin-reset`)).status).toBe(404);
-    expect((await act(`/api/v1/users/${ids.admin}/pin-reset`)).status).toBe(403);
+    expect((await act(`/api/v1/users/${ids.admin}/pin-reset`)).status).toBe(404);
   });
 });
 
