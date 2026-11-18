@@ -14,7 +14,12 @@ function entryKey(noteId: string) {
   return noteQuery(noteId).queryKey;
 }
 
-/** Every write to one note shares this scope, so TanStack runs them one after the other. */
+/**
+ * Every write to one note shares this scope, so TanStack runs them one after the other. A scope
+ * runs one mutation at a time, so no write in it may pause offline (`networkMode: "always"`): a
+ * sign queued behind a paused write would wait with the PIN in the mutation cache and go out by
+ * itself on reconnect. Offline, each write fails at once with the connection words.
+ */
 function noteScope(noteId: string) {
   return `note:${noteId}`;
 }
@@ -39,6 +44,7 @@ export function useActOnLine(noteId: string) {
   return useMutation({
     // One write to a note at a time: the next one waits, and then sends the version the last returned.
     scope: { id: noteScope(noteId) },
+    networkMode: "always",
     mutationFn: async ({ lineId, body }: { lineId: string; body: LineBody }) => {
       const answer = await api.PATCH("/api/v1/notes/{note_id}/lines/{line_id}", {
         params: {
@@ -72,6 +78,7 @@ export function useDiscardNote(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     scope: { id: noteScope(noteId) },
+    networkMode: "always",
     mutationFn: async () => {
       const answer = await api.POST("/api/v1/notes/{note_id}/discard", {
         params: {

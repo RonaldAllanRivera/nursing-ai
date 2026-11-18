@@ -436,7 +436,7 @@ describe("what a failed PIN request says and does", () => {
     expect(screen.queryByText(DEMO_ENDED)).toBeNull();
   });
 
-  it("looks at the session again on a 409 instead of stranding her", async () => {
+  it("opens the page when another window already opened the session and the right PIN is typed", async () => {
     const { queryClient } = await renderApp("/sign-in");
     await userEvent.click(await screen.findByRole("button", { name: SARAH }));
     await screen.findByLabelText("PIN");
@@ -444,7 +444,7 @@ describe("what a failed PIN request says and does", () => {
     const other = await api.POST("/api/v1/session/unlock", { body: { pin: DEMO_PIN } });
     expect(other.response.status).toBe(200);
     expect(queryClient.getQueryData<Session>(sessionKey)?.gate).toBe("enter_pin");
-    // So this unlock is a conflict (409), and the page looks at the session again.
+    // The server answers the right PIN with 200 at an open session too, so the page opens.
     await typePin(DEMO_PIN);
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   });
