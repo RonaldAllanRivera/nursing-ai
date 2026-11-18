@@ -6,9 +6,11 @@ number counts for a quote when it overlaps the quote and is compared whole; labe
 inside the quote, and a unit is read right after the number even past the quote's end. A word
 whose number can't be compared by value ("q4h", "D5W", "two") must appear whole in a found quote.
 A frequency ("daily", "every day", "twice a day", "BID") is read by meaning and needs a frequency
-of the same meaning in a found quote; one that overlaps a mismatch the line already has is not
-flagged again. A time word right after a line's number ("every 2 hours") needs the same time, by
-meaning, right after a note number of that value ("q 2 hrs").
+of the same meaning in a found quote. One that no quote gives is flagged whole, as typed ("3 times
+a day"), in place of any number or number-word mismatch it overlaps, so a one-click fix of a
+number can't keep a wrong period; one the quotes give leaves those mismatches as they are. A time
+word right after a line's number ("every 2 hours") needs the same time, by meaning, right after a
+note number of that value ("q 2 hrs").
 """
 
 import re
@@ -348,34 +350,38 @@ def _mismatches(
                 note_span=first.with_unit,
             )
         )
-    out.extend(_frequency_mismatches(text, quote_texts, out))
-    return sorted(out, key=lambda mismatch: mismatch.draft_span.start)
+    return sorted(_with_frequencies(text, quote_texts, out), key=lambda m: m.draft_span.start)
 
 
-def _frequency_mismatches(
+def _with_frequencies(
     text: str, quote_texts: list[str], found: list[NumberMismatch]
 ) -> list[NumberMismatch]:
-    """The frequencies of the line that no found quote gives by meaning.
+    """The line's findings, where a frequency no found quote gives by meaning replaces them.
 
-    A frequency that overlaps a mismatch the line already has ("twice" missing from the quotes,
-    the "3" of "3 times a day") is not flagged again.
+    That frequency becomes one finding over the whole frequency as typed, in place of every
+    finding it overlaps ("twice" missing from the quotes, the "3" of "3 times a day" with the
+    note's "2" beside it), so no one-click fix to a number can keep a wrong period. A frequency
+    the quotes do give leaves the findings as they are.
     """
     in_the_quotes = {
         frequency.meaning for quote in quote_texts for frequency in frequencies_in(quote)
     }
-    return [
+    wrong = [f for f in frequencies_in(text) if f.meaning not in in_the_quotes]
+    kept = [
+        mismatch
+        for mismatch in found
+        if not any(
+            f.span.start < mismatch.draft_span.end and mismatch.draft_span.start < f.span.end
+            for f in wrong
+        )
+    ]
+    return kept + [
         NumberMismatch(
             kind=MismatchKind.VALUE,
-            draft_text=frequency.text,
-            draft_span=frequency.span,
+            draft_text=f.text,
+            draft_span=f.span,
             note_text=None,
             note_span=None,
         )
-        for frequency in frequencies_in(text)
-        if frequency.meaning not in in_the_quotes
-        and not any(
-            frequency.span.start < mismatch.draft_span.end
-            and mismatch.draft_span.start < frequency.span.end
-            for mismatch in found
-        )
+        for f in wrong
     ]

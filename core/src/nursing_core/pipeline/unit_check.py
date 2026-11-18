@@ -43,16 +43,17 @@ one-letter "m" and "d".
 A frequency is read by meaning, in any case, each word whole, words separated by spaces, a line
 break or a hyphen ("once-a-day"); the longest reading wins, left to right, so "once daily" is one
 frequency and not "daily" inside it. "daily", "every day", "everyday", "each day", "once a day",
-"once per day" and "once daily" are one a day; the same with week, month and hour ("hourly",
-"once an hour"), and "nightly", "every night", "each night" and "every shift", "each shift" are one
-a night and one a shift. "twice", "thrice" and a number (digits, read by value so "3" and "3.0"
-are one, or a number word from two to ten) before "times" or "x" are a count, written with "daily",
-"weekly", "monthly", "hourly" or "a" or "per" and a day, week, month or hour: "twice a day",
-"twice daily", "2 times a day" and "2x daily" are two a day, and "3 times a week" is not "3 times
-a day". "every other day", "every other week" and "every other month" are their own meanings. The
-abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN, STAT) each mean only their own spelling: "OD"
-is also the right eye, so it is never "daily". "once" alone is no frequency ("vomited once"), and
-"per day" with no count before it is not one ("15 mg per day" is a rate).
+"once per day" and "once daily" are one a day; the same with week, month and hour ("hourly", "once
+an hour"), and "nightly", "every night", "each night" and "every shift", "each shift" are one a
+night and one a shift. "twice", "thrice" and a number (digits, read by value so "3" and "3.0" are
+one, or a number word from two to ten) before "times" or "x" are a count, written with "daily",
+"weekly", "monthly", "hourly" or "a", "per", "every" or "each" and a day, week, month or hour:
+"twice a day", "twice daily", "2 times every day", "2 times a day" and "2x daily" are two a day, and
+"3 times a week" is not "3 times a day". "every other day", "every other week" and "every other
+month" are their own meanings. The abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN, STAT) each
+mean only their own spelling: "OD" is also the right eye, so it is never "daily". "once" alone is no
+frequency ("vomited once"), and "per day" with no count before it is not one ("15 mg per day" is a
+rate).
 """
 
 import re
@@ -105,7 +106,10 @@ _SMALL_NUMBERS = {
 _WHOLE_WORD = r"(?<![^\W_])(?:{})(?![^\W_])"
 _SEP = r"[\s\-]+"
 _COUNT = rf"(?P<count>\d+(?:\.\d+)?|{'|'.join(_SMALL_NUMBERS)})"
-_EACH = rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})|(?:an|a|per){_SEP}(?P<period>day|week|month|hour))"
+_EACH = (
+    rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})"
+    rf"|(?:an|a|per|every|each){_SEP}(?P<period>day|week|month|hour))"
+)
 # One pattern for each family of spellings; each match is a frequency, read with `_meaning`.
 _FREQUENCY_PATTERNS = tuple(
     re.compile(_WHOLE_WORD.format(body), re.IGNORECASE)

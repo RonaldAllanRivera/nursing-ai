@@ -1467,7 +1467,7 @@ def test_a_different_count_or_period_is_flagged_on_the_frequency() -> None:
         ("once a day", Span(start=5, end=15))
     ]
     assert _frequency_findings("amox once a day", "Amox twice daily.") == [
-        ("twice", Span(start=5, end=10))
+        ("twice daily", Span(start=5, end=16))
     ]
 
 
@@ -1488,19 +1488,48 @@ def test_od_is_not_daily_and_an_abbreviation_is_not_a_phrase() -> None:
     assert _frequency_findings("enox 40 mg OD", "Enox 40 mg daily.") == [
         ("daily", Span(start=11, end=16))
     ]
-    assert _frequency_findings("enox 40 mg BID", "Enox 40 mg twice a day.")[0][0] == "twice"
+    assert _frequency_findings("enox 40 mg BID", "Enox 40 mg twice a day.") == [
+        ("twice a day", Span(start=11, end=22))
+    ]
     assert _frequency_findings("enox 40 mg QOD", "Enox 40 mg every other day.") == [
         ("every other day", Span(start=11, end=26))
     ]
 
 
-def test_a_frequency_that_overlaps_a_finding_is_not_flagged_again() -> None:
+def test_a_frequency_the_quotes_lack_replaces_the_findings_it_overlaps() -> None:
     assert _frequency_findings("amox daily", "Amox twice daily.") == [
-        ("twice", Span(start=5, end=10))
+        ("twice daily", Span(start=5, end=16))
     ]
     assert _frequency_findings("amox 500 mg", "Amox 500 mg 3 times a day.") == [
-        ("3", Span(start=12, end=13))
+        ("3 times a day", Span(start=12, end=25))
     ]
+    # A one-click "use the numbers from your note" must not keep a wrong period.
+    assert _frequency_findings("amox 2 times a week", "Amox 3 times a day.") == [
+        ("3 times a day", Span(start=5, end=18))
+    ]
+
+
+def test_a_frequency_the_quotes_give_leaves_the_number_findings_standing() -> None:
+    assert [d for d, _ in _frequency_findings("amox 2x daily", "Amox twice daily.")] == ["twice"]
+    assert [d for d, _ in _frequency_findings("amox twice daily", "Amox 2x daily.")] == ["2"]
+
+
+def test_a_count_before_every_or_each_is_a_count() -> None:
+    note = "metformin 500 mg daily, 2 tabs"
+    assert _frequency_findings(note, "Metformin 500 mg 2 times every day.") == [
+        ("2 times every day", Span(start=17, end=34))
+    ]
+    assert _frequency_findings(note, "Metformin 500 mg 2x every day.") == [
+        ("2x every day", Span(start=17, end=29))
+    ]
+    note = "metformin 500 mg daily, vomited twice"
+    assert _frequency_findings(note, "Metformin 500 mg twice every day.") == [
+        ("twice every day", Span(start=17, end=32))
+    ]
+    assert _frequency_findings("MTX 15 mg weekly, 3 tabs", "MTX 15 mg 3 times each week.") == [
+        ("3 times each week", Span(start=10, end=27))
+    ]
+    assert _frequency_findings("amox twice a day", "Amox twice every day.") == []
 
 
 def test_a_frequency_is_read_in_any_case_and_with_hyphens() -> None:

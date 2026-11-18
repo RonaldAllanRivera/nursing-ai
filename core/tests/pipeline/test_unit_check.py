@@ -493,3 +493,9 @@ def test_synonyms_have_equal_meanings() -> None:
 def test_a_frequency_needs_whole_words_and_a_count_or_period() -> None:
     for text in ("dailies", "weekday", "everything", "vomited once", "15 mg per day", "15 mg/day"):
         assert frequencies_in(text) == [], text
+
+
+def test_a_count_before_every_or_each_is_read_as_a_count() -> None:
+    assert _meanings("2 times every day") == [("2 times every day", (0, 17), (2, "day"))]
+    assert _meanings("twice each week") == [("twice each week", (0, 15), (2, "week"))]
+    assert _meanings("3x each month") == [("3x each month", (0, 13), (3, "month"))]
