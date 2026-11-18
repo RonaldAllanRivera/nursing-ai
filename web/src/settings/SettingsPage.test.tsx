@@ -189,6 +189,16 @@ describe("the settings screen", () => {
     });
   });
 
+  it("says a save refused for a stale token was not made, and to try again", async () => {
+    await openSettings();
+    server.use(http.put("*/api/v1/facilities/:key", () => refuse(403, "csrf_failed")));
+    await saveWithPin();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The settings were not saved. Try again.",
+    );
+    expect(screen.queryByText(/sign in as the admin/)).toBeNull();
+  });
+
   it("offers Try again when one facility's settings do not load", async () => {
     await renderApp("/sign-in");
     server.use(
@@ -650,6 +660,18 @@ describe("Reset demo settings", () => {
     await userEvent.type(within(dialog).getByLabelText("Your PIN"), "999999{Enter}");
     expect(await within(dialog).findByText("Wrong PIN. 4 tries left.")).toBeVisible();
     expect(within(dialog).getByLabelText("Your PIN")).toHaveValue("");
+  });
+
+  it("says a reset refused for a stale token was not made, and to try again", async () => {
+    await openSettings();
+    server.use(http.post("*/api/v1/facilities/:key/reset", () => refuse(403, "csrf_failed")));
+    await userEvent.click(screen.getByRole("button", RESET));
+    const dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), `${DEMO_PIN}{Enter}`);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The settings were not put back. Try again.",
+    );
+    expect(screen.queryByText(/demo's admin/)).toBeNull();
   });
 
   it("shows a Google admin no demo PIN in the save question", async () => {

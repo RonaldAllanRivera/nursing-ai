@@ -83,6 +83,31 @@ describe("when an action fails", () => {
     expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
   });
 
+  it("keeps the dialog, saying nothing changed, when the token was stale", async () => {
+    await open(MOCK_EMAILS.admin, "/staff", [
+      http.post("*/api/v1/users/:id/revoke", () => problemAnswer(403, "csrf_failed")),
+    ]);
+    await userEvent.click(await revokeButton());
+    const dialog = await giveThePin("Revoke Paolo Cruz's access?", "Revoke access");
+    expect(
+      await within(dialog).findByText("That change was not saved. Enter your PIN and try again."),
+    ).toBeVisible();
+    expect(screen.queryByText(/list has been refreshed/)).toBeNull();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
+  });
+
+  it("keeps the invite dialog with the same words when the token was stale", async () => {
+    await open(MOCK_EMAILS.admin, "/staff", [
+      http.post("*/api/v1/users", () => problemAnswer(403, "csrf_failed")),
+    ]);
+    await fillInvite();
+    const dialog = await giveThePin(/^Invite /, "Send invite");
+    expect(
+      await within(dialog).findByText("That change was not saved. Enter your PIN and try again."),
+    ).toBeVisible();
+    expect(screen.queryByText(/list has been refreshed/)).toBeNull();
+  });
+
   it("keeps the dialog for a server error too", async () => {
     await open(MOCK_EMAILS.admin, "/staff", [
       http.post("*/api/v1/users/:id/pin-reset", () => problemAnswer(500, "internal_error")),

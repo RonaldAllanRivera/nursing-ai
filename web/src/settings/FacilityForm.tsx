@@ -44,6 +44,11 @@ const CLOCKS = [
   { value: "12h", label: "12-hour" },
 ] as const;
 
+/** The refusal's problem code, when the server named one. */
+function problemCode(error: unknown): string | undefined {
+  return error instanceof ApiError ? error.problem?.code : undefined;
+}
+
 /** A card on the ruled page: a heading and what belongs under it. */
 function Sheet({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -174,7 +179,7 @@ function Editor({
       focusAfterRender(mapped.fields.length > 0 ? "field" : "table");
     } else {
       // Nothing to put next to a field: a plain line says what happened and what to do.
-      setOtherText(saveFailureText(status));
+      setOtherText(saveFailureText(status, problemCode(error)));
       setFailure("other");
     }
   };
@@ -218,7 +223,7 @@ function Editor({
       if (status === 412) {
         setFailure("stale");
       } else {
-        setOtherText(resetFailureText(status));
+        setOtherText(resetFailureText(status, problemCode(error)));
         setFailure("other");
       }
     },

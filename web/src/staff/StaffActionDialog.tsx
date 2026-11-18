@@ -1,6 +1,5 @@
-import { pinProblemMessage } from "../session/pin";
 import { PinDialog } from "../settings/PinDialog";
-import { failureKind } from "./failure";
+import { failureKind, staffFailureWords } from "./failure";
 import { useStaffAction, type StaffAction, type StaffRow } from "./staffApi";
 import { DONE, resetWords, revokeWords } from "./words";
 
@@ -60,7 +59,7 @@ export function StaffActionDialog({
       request={request}
       persona={false}
       safeFirst={revoking}
-      failureWords={(error) => pinProblemMessage(error, false)}
+      failureWords={staffFailureWords}
       onCloseAutoFocus={(event) => {
         // Back to the button that was pressed; if it is gone (a revoked row has none), the row.
         event.preventDefault();

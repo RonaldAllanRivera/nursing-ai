@@ -13,8 +13,7 @@ import {
   type InviteProblems,
   type InviteValues,
 } from "./invite";
-import { pinProblemMessage } from "../session/pin";
-import { failureKind } from "./failure";
+import { failureKind, staffFailureWords } from "./failure";
 import { useInvite } from "./staffApi";
 import { DONE, inviteWords } from "./words";
 
@@ -29,7 +28,7 @@ export const INVITE_UNSAVED =
 function inviteFailureWords(error: unknown): string {
   return error instanceof ApiError && error.status === 422
     ? INVITE_UNSAVED
-    : pinProblemMessage(error, false);
+    : staffFailureWords(error);
 }
 
 /**

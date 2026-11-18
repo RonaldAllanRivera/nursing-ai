@@ -40,6 +40,15 @@ export class SignInRefreshedError extends Error {
   }
 }
 
+/**
+ * A change refused because the CSRF token it carried was out of date (a 403 `csrf_failed`).
+ * Nothing was done, and nobody is to blame: the session is fetched again (the query client does
+ * it), which brings a fresh token, so the person can simply try again.
+ */
+export function isCsrfFailure(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.problem?.code === "csrf_failed";
+}
+
 /** Turns an openapi-fetch answer into its data, or throws an `ApiError` for TanStack Query. */
 export function unwrap<D>(answer: Answer<D>): D {
   if (answer.response.ok && answer.data !== undefined) return answer.data;

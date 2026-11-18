@@ -184,8 +184,12 @@ export function mapProblems(errors: readonly Schemas["FieldError"][]): MappedPro
   return mapped;
 }
 
-/** Why putting the demo's settings back was refused (a 412 has its own line in the form). */
-export function resetFailureText(status: number | null): string {
+/**
+ * Why putting the demo's settings back was refused (a 412 has its own line in the form). `code` is
+ * the problem's: a stale token (`csrf_failed`) is not about who is signed in.
+ */
+export function resetFailureText(status: number | null, code?: string): string {
+  if (code === "csrf_failed") return "The settings were not put back. Try again.";
   if (status === null) {
     return "The settings were not put back. Check your connection and try again.";
   }
@@ -196,8 +200,12 @@ export function resetFailureText(status: number | null): string {
   return "The server did not accept the reset. Reload the page, then try again.";
 }
 
-/** Why a save was refused, in words that say what to do next. 412 and a mapped 422 have their own lines. */
-export function saveFailureText(status: number | null): string {
+/**
+ * Why a save was refused, in words that say what to do next. 412 and a mapped 422 have their own
+ * lines. `code` is the problem's: a stale token (`csrf_failed`) is not about who is signed in.
+ */
+export function saveFailureText(status: number | null, code?: string): string {
+  if (code === "csrf_failed") return "The settings were not saved. Try again.";
   if (status === null) return "The settings were not saved. Check your connection and try again.";
   if (status === 403)
     return "This account can't change settings. Sign out, then sign in as the admin.";
