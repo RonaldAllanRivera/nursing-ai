@@ -87,5 +87,9 @@ class NotRetryable(DomainError):
     """The draft failed in a way a new attempt would repeat (a refusal, no recording, no budget)."""
 
 
+class DailyCapReached(DomainError):
+    """The author already has the capped number of draft jobs in the last 24 hours."""
+
+
 class DatabaseWaking(DomainError):
     """The database is resuming from a pause (or didn't answer in time): try again shortly."""

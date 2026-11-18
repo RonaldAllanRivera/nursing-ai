@@ -4,9 +4,9 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, Request, Response
+from nursing_core.domain.errors import DailyCapReached
 from nursing_core.domain.jobs import JobStatus
 from nursing_core.domain.notes import RoughNote
-from nursing_core.storage.notes import DailyCapReached
 
 from nursing_api.deps import (
     ClockDep,

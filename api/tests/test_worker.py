@@ -40,12 +40,12 @@ from .helpers import (
     PH_STAFF,
     STAFF_NURSE,
     MutableClock,
+    add_invited_nurse,
     client_for,
     post_note,
     running_app,
     sign_in,
 )
-from .test_budget import add_invited_nurse
 
 CASES = load_demo_cases()
 PH_CASE = next(case for case in CASES if case.facility_key == "ph-demo")

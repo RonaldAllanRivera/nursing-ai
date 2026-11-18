@@ -9,6 +9,7 @@ import pytest
 from nursing_core.clock import FixedClock
 from nursing_core.domain.errors import (
     AlreadyDrafted,
+    DailyCapReached,
     Forbidden,
     IdempotencyConflict,
     NoteLocked,
@@ -21,7 +22,7 @@ from nursing_core.domain.jobs import JobFailure, JobStatus
 from nursing_core.domain.notes import Discard, Note, NoteStatus, RoughNote, Signature
 from nursing_core.storage import notes as notes_module
 from nursing_core.storage import tables
-from nursing_core.storage.notes import JOB_LEASE, MAX_JOB_ATTEMPTS, DailyCapReached
+from nursing_core.storage.notes import JOB_LEASE, MAX_JOB_ATTEMPTS
 from nursing_core.storage.repositories import PgNoteRepository
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine

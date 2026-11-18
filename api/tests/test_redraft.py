@@ -9,49 +9,22 @@ import pytest
 from fastapi import FastAPI
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import AiBudgetReached, ProviderUnavailable
-from nursing_core.domain.model_output import DraftRequest, ProviderResult
-from nursing_core.domain.patient import PatientRecord
-from nursing_core.ports import LlmProvider
-from nursing_core.providers.fake import FakeProvider
 from sqlalchemy import text
 
 from .helpers import (
     PH_STAFF,
     US_STAFF,
     MutableClock,
+    SwitchableProvider,
+    add_invited_nurse,
     client_for,
+    draft_path,
     post_note,
     running_app,
     sign_in,
 )
-from .test_budget import add_invited_nurse
 
 PH_CASE = next(case for case in load_demo_cases() if case.facility_key == "ph-demo")
-
-
-class SwitchableProvider:
-    """Fails with `error` until a test clears it, then drafts the demo case; can wait on a gate."""
-
-    def __init__(self, error: Exception | None = None) -> None:
-        self.error = error
-        self.gate: asyncio.Event | None = None
-        self.calls = 0
-        self._inner = FakeProvider(PH_CASE.model_output)
-
-    async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
-        self.calls += 1
-        if self.gate is not None:
-            await self.gate.wait()
-        if self.error is not None:
-            raise self.error
-        return await self._inner.draft_fdar(request)
-
-    def for_patient(self, _patient: PatientRecord) -> LlmProvider:
-        return self
-
-
-def draft_path(rough_note_id: object) -> str:
-    return f"/api/v1/rough-notes/{rough_note_id}/draft-jobs"
 
 
 async def failed_note(

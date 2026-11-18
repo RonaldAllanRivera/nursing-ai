@@ -7,8 +7,6 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from argon2 import PasswordHasher
-from fastapi import FastAPI
 from nursing_api import budget
 from nursing_api.budget import BudgetGuard
 from nursing_core.clock import FixedClock
@@ -16,14 +14,11 @@ from nursing_core.demo import load_demo_cases
 from nursing_core.domain.errors import AiBudgetReached
 from nursing_core.domain.facility import Locale, NoteFormat
 from nursing_core.domain.model_output import DraftRequest
-from nursing_core.domain.users import Role
 from nursing_core.prompts import FDAR_PROMPT_VERSION, load_prompt
 from nursing_core.providers import anthropic as provider
 from nursing_core.providers.fake import FakeProvider
 from nursing_core.providers.pricing import cost_usd
-from nursing_core.storage import tables
 from nursing_core.storage.repositories import PgUsageRepository
-from sqlalchemy import insert, select
 
 MODEL = "claude-opus-5-5"
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
@@ -41,30 +36,6 @@ class _Holds:
         if amount_usd > cap_usd:
             raise AiBudgetReached("the monthly AI cap would be passed")
         self.held.append((job_id, amount_usd, cap_usd, now))
-
-
-async def add_invited_nurse(app: FastAPI, facility_key: str) -> UUID:
-    """A non-persona staff nurse (an invited one) at the facility, with a PIN already set."""
-    user_id = uuid4()
-    async with app.state.engine.begin() as conn:
-        facility_id = (
-            await conn.execute(
-                select(tables.facility.c.id).where(tables.facility.c.key == facility_key)
-            )
-        ).scalar_one()
-        await conn.execute(
-            insert(tables.app_user).values(
-                id=user_id,
-                display_name="Invited Nurse",
-                initials="IN",
-                role=Role.STAFF_NURSE.value,
-                facility_id=facility_id,
-                email=f"e2e-{uuid4()}@example.com",
-                persona=False,
-                pin_hash=PasswordHasher().hash(uuid4().hex),
-            )
-        )
-    return user_id
 
 
 def _request() -> DraftRequest:

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from nursing_core.domain.errors import (
     AlreadyDrafted,
-    DomainError,
+    DailyCapReached,
     Forbidden,
     IdempotencyConflict,
     NoteLocked,
@@ -49,10 +49,6 @@ MAX_JOB_ATTEMPTS = 3
 
 # The daily draft cap counts the jobs created in this long.
 DAILY_WINDOW = timedelta(hours=24)
-
-
-class DailyCapReached(DomainError):
-    """The author already has the capped number of draft jobs in the last 24 hours."""
 
 
 async def _lock_author(conn: AsyncConnection, author_id: UUID) -> None:

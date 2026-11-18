@@ -1,25 +1,31 @@
-"""Helpers the API tests share: a clock the test can move, signing in, and the privacy check."""
+"""Helpers the API tests share: a clock the test can move, signing in, an invited nurse, a
+provider a test can fail on demand, and the privacy check."""
 
+import asyncio
 import hashlib
 import secrets
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
+from argon2 import PasswordHasher
 from fastapi import FastAPI
 from nursing_api.app import create_app
 from nursing_api.auth.oidc import GoogleOidc
 from nursing_api.routes import SESSION_COOKIE
 from nursing_api.settings import Settings
-from nursing_core.demo import DemoCase
+from nursing_core.demo import DemoCase, load_demo_cases
+from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.domain.shifts import default_shift
+from nursing_core.domain.users import Role
 from nursing_core.ports import LlmProvider
+from nursing_core.providers.fake import FakeProvider
 from nursing_core.storage import tables
 from nursing_core.storage.rows import shift_columns
-from sqlalchemy import insert, update
+from sqlalchemy import insert, select, update
 
 # The demo night: 08:00 in Manila (the 6-2 shift) and 16:00 the day before in Los Angeles (7a-7p).
 NOW = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
@@ -152,6 +158,57 @@ async def post_note(
 async def drain(app: FastAPI) -> None:
     """Wait for every draft job the app has started."""
     await app.state.queue.drain()
+
+
+def draft_path(rough_note_id: object) -> str:
+    """The "Try drafting again" route of a rough note."""
+    return f"/api/v1/rough-notes/{rough_note_id}/draft-jobs"
+
+
+async def add_invited_nurse(app: FastAPI, facility_key: str) -> UUID:
+    """A non-persona staff nurse (an invited one) at the facility, with a PIN already set."""
+    user_id = uuid4()
+    async with app.state.engine.begin() as conn:
+        facility_id = (
+            await conn.execute(
+                select(tables.facility.c.id).where(tables.facility.c.key == facility_key)
+            )
+        ).scalar_one()
+        await conn.execute(
+            insert(tables.app_user).values(
+                id=user_id,
+                display_name="Invited Nurse",
+                initials="IN",
+                role=Role.STAFF_NURSE.value,
+                facility_id=facility_id,
+                email=f"e2e-{uuid4()}@example.com",
+                persona=False,
+                pin_hash=PasswordHasher().hash(uuid4().hex),
+            )
+        )
+    return user_id
+
+
+class SwitchableProvider:
+    """Raises `error` until a test clears it, then drafts the PH demo case; can wait on a gate."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.gate: asyncio.Event | None = None
+        self.calls = 0
+        case = next(case for case in load_demo_cases() if case.facility_key == "ph-demo")
+        self._inner = FakeProvider(case.model_output)
+
+    async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
+        self.calls += 1
+        if self.gate is not None:
+            await self.gate.wait()
+        if self.error is not None:
+            raise self.error
+        return await self._inner.draft_fdar(request)
+
+    def for_patient(self, _patient: PatientRecord) -> LlmProvider:
+        return self
 
 
 def _words(*names: str | None) -> set[str]:
