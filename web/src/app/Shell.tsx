@@ -8,6 +8,7 @@ import { roleLabel } from "../session/personas";
 import { screenForGate } from "../session/pin";
 import { useSession, useSignOut } from "../session/session";
 import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
+import { canSeeStaff } from "../staff/permissions";
 import { useFacility } from "../facility/useFacility";
 import { useIdleLock, useLookAgainWhenSeen } from "../session/useIdleLock";
 import { useSessionExpiry } from "../session/useSessionExpiry";
@@ -120,6 +121,11 @@ export function Shell() {
                     Patients
                   </Link>
                 )}
+                {canSeeStaff(session) ? (
+                  <Link to="/staff" className={NAV_LINK}>
+                    Staff
+                  </Link>
+                ) : null}
               </nav>
             </>
           )}

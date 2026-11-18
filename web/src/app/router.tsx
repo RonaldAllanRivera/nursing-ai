@@ -13,6 +13,7 @@ import { PatientList } from "../patients/PatientList";
 import { PatientPage } from "../patients/PatientPage";
 import { SignIn } from "../session/SignIn";
 import { sessionQuery } from "../session/session";
+import { canSeeStaff } from "../staff/permissions";
 import { signInErrorFrom, type SignInError } from "../session/signInOptions";
 import { DemoBanner } from "./DemoBanner";
 import { ErrorScreen, NotFoundScreen, PendingScreen } from "./RouteScreens";
@@ -121,10 +122,22 @@ const settingsRoute = createRoute({
   component: lazyRouteComponent(() => import("../settings/SettingsPage"), "SettingsPage"),
 });
 
+const staffRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/staff",
+  beforeLoad: async ({ context }) => {
+    const session = await requireSession(context.queryClient);
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
+    if (!canSeeStaff(session)) throw redirect({ to: "/" });
+  },
+  // Only a few people have this screen, so a nurse never downloads it.
+  component: lazyRouteComponent(() => import("../staff/StaffPage"), "StaffPage"),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  appRoute.addChildren([patientsRoute, patientRoute, noteRoute, settingsRoute]),
+  appRoute.addChildren([patientsRoute, patientRoute, noteRoute, settingsRoute, staffRoute]),
 ]);
 
 /** Tests pass a memory history to mount any path; the app passes none (the browser's). */

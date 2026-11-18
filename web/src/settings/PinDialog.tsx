@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type RefObject } from "react";
 import { Button } from "../components/ui/Button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
 import { PinField } from "../session/PinField";
@@ -28,6 +28,7 @@ export function PinDialog({
   request,
   persona,
   onCloseAutoFocus,
+  safeFirst = false,
 }: {
   open: boolean;
   onCancel: () => void;
@@ -36,7 +37,10 @@ export function PinDialog({
   persona: boolean;
   /** Where the focus goes when the dialog closes (the form's own button, or a field to fix). */
   onCloseAutoFocus: (event: Event) => void;
+  /** For a destructive action: the focus starts on Cancel, the safe choice, not on the PIN field. */
+  safeFirst?: boolean;
 }) {
+  const cancel = useRef<HTMLButtonElement>(null);
   const hold = (event: Event) => {
     if (request.pending) event.preventDefault();
   };
@@ -50,7 +54,16 @@ export function PinDialog({
       }}
     >
       <DialogContent
-        // The PIN field is the first thing to focus in the dialog, so it takes the focus by itself.
+        // The PIN field is the first thing to focus in the dialog, so it takes the focus by itself
+        // (unless the action is destructive: then Cancel does).
+        onOpenAutoFocus={
+          safeFirst
+            ? (event) => {
+                event.preventDefault();
+                cancel.current?.focus();
+              }
+            : undefined
+        }
         onCloseAutoFocus={onCloseAutoFocus}
         onEscapeKeyDown={hold}
         onPointerDownOutside={hold}
@@ -72,6 +85,7 @@ export function PinDialog({
           persona={persona}
           confirm={words.confirm}
           busy={words.busy}
+          cancelRef={cancel}
           onCancel={() => {
             request.clear();
             onCancel();
@@ -90,12 +104,14 @@ function PinForm({
   persona,
   confirm,
   busy,
+  cancelRef,
   onCancel,
 }: {
   request: PinRequest;
   persona: boolean;
   confirm: string;
   busy: string;
+  cancelRef: RefObject<HTMLButtonElement | null>;
   onCancel: () => void;
 }) {
   const field = useRef<HTMLInputElement>(null);
@@ -134,6 +150,7 @@ function PinForm({
           {request.pending ? busy : confirm}
         </Button>
         <Button
+          ref={cancelRef}
           aria-disabled={request.pending || undefined}
           onClick={() => {
             if (!request.pending) onCancel();

@@ -21,13 +21,28 @@ export function staffRoutes(state: MockSession, data: DemoApi, staff: MockUser[]
     return allowed ? { me } : { refusal: problem(403, "forbidden") };
   }
 
-  /** The actor's PIN, then the person the change is for (404 when there is no such person). */
-  async function target(request: Request, id: string) {
+  /**
+   * The server's order for a change to one person: the person is there and the actor can see them
+   * (404 otherwise: an unknown id, and for a head nurse another facility's person), the actor may
+   * act on them (403: themselves, and whatever `allowed` adds), and only then the PIN. A refused
+   * action counts no wrong try.
+   */
+  async function target(
+    request: Request,
+    id: string,
+    me: MockUser,
+    allowed: (found: MockUser) => boolean,
+  ) {
+    const found = staff.find((u) => u.id === id);
+    const hidden =
+      me.role === "head_nurse" &&
+      found?.facility_key != null &&
+      found.facility_key !== me.facility_key;
+    if (!found || hidden) return { refusal: problem(404, "not_found") };
+    if (found.id === me.id || !allowed(found)) return { refusal: problem(403, "forbidden") };
     const { pin } = (await request.json()) as Schemas["PinIn"];
     const refusal = state.checkPin(pin);
-    if (refusal) return { refusal };
-    const found = staff.find((u) => u.id === id);
-    return found ? { found } : { refusal: problem(404, "not_found") };
+    return refusal ? { refusal } : { found };
   }
 
   return [
@@ -81,9 +96,8 @@ export function staffRoutes(state: MockSession, data: DemoApi, staff: MockUser[]
     http.post<{ id: string }>("*/api/v1/users/:id/revoke", async ({ params, request }) => {
       const checked = actor(request, true);
       if (checked.refusal) return checked.refusal;
-      const picked = await target(request, params.id);
+      const picked = await target(request, params.id, checked.me, () => true);
       if (picked.refusal) return picked.refusal;
-      if (picked.found.id === checked.me.id) return problem(403, "forbidden");
       picked.found.status = "revoked";
       return HttpResponse.json(rowOf(picked.found));
     }),
@@ -92,13 +106,15 @@ export function staffRoutes(state: MockSession, data: DemoApi, staff: MockUser[]
       const checked = actor(request, false);
       if (checked.refusal) return checked.refusal;
       const { me } = checked;
-      const picked = await target(request, params.id);
+      // A head nurse resets the staff and head nurses of her own facility, never the admin.
+      const picked = await target(
+        request,
+        params.id,
+        me,
+        (found) => me.role === "admin" || found.role !== "admin",
+      );
       if (picked.refusal) return picked.refusal;
       const { found } = picked;
-      const mine = found.facility_key === me.facility_key && found.role !== "admin";
-      if (found.id === me.id || (me.role === "head_nurse" && !mine)) {
-        return problem(403, "forbidden");
-      }
       // A reset PIN is gone: the person sets a new one at their next sign-in.
       found.pin = null;
       found.failures = 0;
