@@ -1659,6 +1659,43 @@ def test_a_count_before_everyday_and_every_other_night_is_a_count() -> None:
     )
 
 
+def test_a_dose_then_a_or_an_and_a_period_is_checked_as_a_frequency() -> None:
+    for note in ("MTX 15 mg weekly", "MTX 15 mg once a week"):
+        assert _frequency_findings(note, "MTX 15 mg a day.") == [
+            ("a day", Span(start=10, end=15))
+        ], note
+    for note, text in (
+        ("metformin 500 mg daily", "Metformin 500 mg a day."),
+        ("MTX 15 mg weekly", "MTX 15 mg a week."),
+        ("MTX 15 mg a week", "MTX 15 mg weekly."),
+        ("metformin 500 mg once a day", "Metformin 500 mg a day."),
+        ("metformin 500 mg a day", "Metformin 500 mg once a day."),
+    ):
+        assert _frequency_findings(note, text) == [], (note, text)
+    # "a day" after no dose is no frequency, so it can't stand for "daily".
+    note = "fever for a day, MTX 15 mg weekly"
+    assert _frequency_findings(note, "MTX 15 mg daily.") == [("daily", Span(start=10, end=15))]
+
+
+def test_a_count_then_a_slash_and_a_period_is_checked_as_a_frequency() -> None:
+    # The "2" of "SpO2" can't make "2x/day" pass for a once-daily dose.
+    note = "SpO2 95%, metformin 500 mg daily"
+    assert _frequency_findings(note, "Metformin 500 mg 2x/day.") == [
+        ("2x/day", Span(start=17, end=23))
+    ]
+    note = "metformin 500 mg daily, 2 tabs"
+    assert _frequency_findings(note, "Metformin 500 mg 2 times/day.") == [
+        ("2 times/day", Span(start=17, end=28))
+    ]
+    for note, text in (
+        ("metformin 500 mg 2x daily", "Metformin 500 mg 2x/day."),
+        ("metformin 500 mg 2 times a day", "Metformin 500 mg 2 times / day."),
+        ("metformin 500 mg twice a day", "Metformin 500 mg twice/day."),
+        ("metformin 500 mg 2x/day", "Metformin 500 mg 2 times daily."),
+    ):
+        assert _frequency_findings(note, text) == [], (note, text)
+
+
 def test_label_with_is_at_tilde_or_paren_reads_the_number() -> None:
     for form in ("HR is 88", "HR was 88", "HR at 88", "HR of 88", "HR ~88", "HR (88)"):
         note = f"{form}, RR 20"

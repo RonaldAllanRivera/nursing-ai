@@ -49,15 +49,20 @@ frequency and not "daily" inside it. One list of periods serves every spelling: 
 hour, night and shift. "daily", "every day", "everyday", "each day", "once a day", "once per day"
 and "once daily" are one a day, and the same for each other period ("hourly", "nightly", "every
 shift", "each night", "once an hour"). "every other day" (or any period) is its own meaning, not
-"daily". "twice", "thrice" and a number (digits, read by value so "3" and "3.0" are one, or a number
-word from two to ten) before "times" or "x" are a count, followed by an adverb ("daily", "nightly")
-or by "a", "an", "per", "every", "each", "every other" or "everyday" and a period: "twice a day",
-"twice daily", "2 times every day", "2 times everyday" and "2x daily" are two a day, "2 times every
-night" is two a night, "twice each shift" is two a shift, "2 times every other day" is its own
-counted meaning, and "3 times a week" is not "3 times a day". "a", "an" and "per" with no count are
-no frequency ("15 mg per day" is a rate). The abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN,
-STAT) each mean only their own spelling: "OD" is also the right eye, so it is never "daily". "once"
-alone is no frequency ("vomited once").
+"daily". A count is "twice" or "thrice", or a number (digits, read by value so "3" and "3.0" are
+one, or a number word from two to ten) before "times" or "x". It is followed by an adverb
+("daily", "nightly"), by "everyday", by "a", "an", "per", "every", "each" or "every other" and a
+period, or by "/" and a period (spaces around the "/" are fine): "twice a day", "twice daily",
+"2 times every day", "2 times everyday", "2x daily", "2x/day" and "2 times / day" are two a day,
+"2 times every night" is two a night, "twice each shift" is two a shift, "2 times every other day"
+is its own counted meaning, and "3 times a week" is not "3 times a day". With no "once" or count
+before it, "per" or "/" and a period is no frequency ("15 mg per day" and "15 mg/day" are rates),
+and "a" or "an" and a period is a frequency only right after a dose, volume or drop unit written
+with no rate, and then is one per that period: "15 mg a day" is one a day, while "fever for a
+day" has no frequency. That reading takes day, week, month, night and shift but not hour:
+"1000 units an hour" has no frequency, as it is a rate in practice. The abbreviations (OD, QD,
+BID, TID, QID, QOD, HS, PRN, STAT) each mean only their own spelling: "OD" is also the right eye,
+so it is never "daily". "once" alone is no frequency ("vomited once").
 """
 
 import re
@@ -125,8 +130,10 @@ _EVERY_OTHER = rf"every{_SEP}other{_SEP}(?P<other>{_PERIODS})"
 # Read alone, "every" and "each" take a period; after a count "a", "an" and "per" do too.
 _EVERY = f"{_EVERYDAY}|{_connected('every|each')}|{_EVERY_OTHER}"
 _COUNTED_EACH = (
-    rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per|every|each')}"
+    rf"(?:{_SEP}(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per|every|each')}"
     rf"|{_EVERYDAY}|{_EVERY_OTHER})"
+    # After a count, "/" (spaces around it are fine) and a period too: "2x/day", "twice / week".
+    rf"|[ \t]*/[ \t]*(?P<slashed>{_PERIODS}))"
 )
 # One pattern for each family of spellings; each match is a frequency, read with `_meaning`.
 _FREQUENCY_PATTERNS = tuple(
@@ -136,9 +143,18 @@ _FREQUENCY_PATTERNS = tuple(
         rf"(?P<adverb>{'|'.join(_ADVERBS)})",
         _EVERY,
         rf"once{_SEP}(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per')})",
-        rf"(?P<times>twice|thrice){_SEP}{_COUNTED_EACH}",
-        rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_SEP}{_COUNTED_EACH}",
+        rf"(?P<times>twice|thrice){_COUNTED_EACH}",
+        rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_COUNTED_EACH}",
     )
+)
+# The periods "a" or "an" takes with no count, right after a dose, volume or drop unit: not hour
+# or minute, as "1000 units an hour" is a rate in practice.
+_DOSE_PERIODS = "day|week|month|night|shift"
+# "a" or "an" and one of those periods, whole words: whether a text has any, and the reading
+# right after a unit ("15 mg a day"), its span starting at the "a".
+_A_PERIOD = re.compile(_WHOLE_WORD.format(rf"an?{_SEP}(?:{_DOSE_PERIODS})"), re.IGNORECASE)
+_A_PERIOD_AFTER_A_UNIT = re.compile(
+    rf"{_SEP}(?P<reading>an?{_SEP}(?P<period>{_DOSE_PERIODS}))(?![^\W_])", re.IGNORECASE
 )
 
 # Longest first, so "lbs" is tried before "lb". These short spellings are read in the case shown;
@@ -306,16 +322,39 @@ def frequencies_in(text: str) -> list[WrittenFrequency]:
     Where two readings start at the same place the longer wins, and a reading that starts inside
     an earlier one is dropped, so "once daily" is one frequency.
     """
-    matches = sorted(
-        (match for pattern in _FREQUENCY_PATTERNS for match in pattern.finditer(text)),
-        key=lambda match: (match.start(), -match.end()),
-    )
+    readings = [
+        WrittenFrequency(match.group(), Span(start=match.start(), end=match.end()), _meaning(match))
+        for pattern in _FREQUENCY_PATTERNS
+        for match in pattern.finditer(text)
+    ]
+    readings.extend(_after_a_unit(text))
+    readings.sort(key=lambda reading: (reading.span.start, -reading.span.end))
     out: list[WrittenFrequency] = []
-    for match in matches:
-        if out and match.start() < out[-1].span.end:
+    for reading in readings:
+        if out and reading.span.start < out[-1].span.end:
             continue
-        span = Span(start=match.start(), end=match.end())
-        out.append(WrittenFrequency(match.group(), span, _meaning(match)))
+        out.append(reading)
+    return out
+
+
+def _after_a_unit(text: str) -> list[WrittenFrequency]:
+    """Each "a" or "an" and a period right after a dose, volume or drop unit written with no rate
+    ("15 mg a day"), as typed from the "a": one per that period.
+
+    The numbers and their units are read only when the text has "a" or "an" and such a period.
+    """
+    if _A_PERIOD.search(text) is None:
+        return []
+    out: list[WrittenFrequency] = []
+    for _, span in numbers_in(text):
+        unit = written_unit(text, span)
+        if unit is None or unit.compared is None or unit.rate:
+            continue
+        found = _A_PERIOD_AFTER_A_UNIT.match(text, unit.end)
+        if found is not None:
+            start, end = found.span("reading")
+            meaning = (Decimal(1), found["period"].casefold())
+            out.append(WrittenFrequency(found["reading"], Span(start=start, end=end), meaning))
     return out
 
 
@@ -337,6 +376,8 @@ def _meaning(match: re.Match[str]) -> FrequencyMeaning:
         return (count, "day")
     if groups.get("period"):
         return (count, match["period"].casefold())
+    if groups.get("slashed"):
+        return (count, match["slashed"].casefold())
     raise ValueError(f"a frequency pattern matched without a reading: {match.group()!r}")
 
 

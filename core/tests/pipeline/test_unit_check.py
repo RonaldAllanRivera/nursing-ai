@@ -550,3 +550,51 @@ def _only_meaning(text: str) -> object:
     [found] = frequencies_in(text)
     assert found.text == text
     return found.meaning
+
+
+def test_a_or_an_and_a_period_right_after_a_dose_is_one_per_period() -> None:
+    for period in ("day", "week", "month", "night", "shift"):
+        text = f"MTX 15 mg a {period}"
+        assert _meanings(text) == [(f"a {period}", (10, len(text)), (1, period))], text
+    assert _meanings("IVF 1 L a shift, 2 gtts a day, 8 oz A-DAY") == [
+        ("a shift", (8, 15), (1, "shift")),
+        ("a day", (24, 29), (1, "day")),
+        ("A-DAY", (36, 41), (1, "day")),
+    ]
+    assert _only_meaning("daily") == _meanings("15 mg a day")[0][2]
+    # "once a day" and "twice a day" after a dose are still read whole.
+    assert _meanings("15 mg once a day") == [("once a day", (6, 16), (1, "day"))]
+    assert _meanings("15 mg twice a day") == [("twice a day", (6, 17), (2, "day"))]
+
+
+def test_a_or_an_and_a_period_is_no_frequency_after_anything_but_a_dose_with_no_rate() -> None:
+    for text in (
+        "fever for a day",
+        "HR 88 a day",
+        "15 a day",
+        "2 tabs a day",
+        "1000 units an hour",
+        "1 mg a minute",
+        "15 mg/kg a day",
+        "15 mg a days",
+        "15 mg per day",
+    ):
+        assert frequencies_in(text) == [], text
+    rate = _written("15 mg per day", "15")
+    assert rate is not None
+    assert rate.rate == ("day",)
+
+
+def test_a_count_then_a_slash_and_a_period_is_a_counted_frequency() -> None:
+    assert _meanings("2x/day") == [("2x/day", (0, 6), (2, "day"))]
+    assert _meanings("give 2 times / week") == [("2 times / week", (5, 19), (2, "week"))]
+    for period in ("day", "week", "month", "hour", "night", "shift"):
+        assert _only_meaning(f"2x/{period}") == (2, period)
+        assert _only_meaning(f"3 times/{period}") == (3, period)
+        assert _only_meaning(f"twice/{period}") == (2, period)
+    assert _only_meaning("2x/day") == _only_meaning("2 times/day") == _only_meaning("twice a day")
+    # With no count before it, "/" and a period is a rate, not a frequency.
+    assert frequencies_in("15 mg/day") == []
+    rate = _written("15 mg/day", "15")
+    assert rate is not None
+    assert rate.rate == ("day",)
