@@ -8,7 +8,7 @@ import { MOCK_EMAILS } from "../mocks/staff";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
-import { chooseAndUnlock, DEMO_PIN } from "../test/signIn";
+import { chooseAndUnlock, DEMO_PIN, demoPinHint } from "../test/signIn";
 
 afterEach(() => {
   server.events.removeAllListeners();
@@ -391,7 +391,7 @@ describe("saving with your own PIN", () => {
     await openSettings();
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+    expect(within(dialog).getByText(demoPinHint())).toBeVisible();
     expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
       expect.stringContaining(`Demo PIN: ${DEMO_PIN}`),
     );
@@ -647,7 +647,7 @@ describe("Reset demo settings", () => {
     await userEvent.type(name, "!");
     await userEvent.click(screen.getByRole("button", RESET));
     const dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
-    expect(within(dialog).getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+    expect(within(dialog).getByText(demoPinHint())).toBeVisible();
     expect(dialog).toHaveAccessibleDescription(
       "Put this facility's settings back to how the demo started? Changes you haven't saved are dropped.",
     );

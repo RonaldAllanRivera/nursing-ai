@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { server } from "../test/setup";
 import { renderApp } from "../test/render";
 import { DEMO_BANNER } from "./signInOptions";
-import { chooseAndUnlock } from "../test/signIn";
+import { chooseAndUnlock, demoPinHint } from "../test/signIn";
 
 describe("sign-in screen", () => {
   it("groups the personas by facility and leads with the role", async () => {
@@ -68,14 +68,14 @@ describe("sign-in screen", () => {
     await renderApp("/sign-in", { google: true });
     const link = await screen.findByRole("link", { name: "Sign in with Google" });
     expect(link).toHaveAttribute("href", "/api/v1/auth/google/start");
-    expect(screen.getByText("Demo PIN: 135790")).toBeVisible();
+    expect(screen.getByText(demoPinHint())).toBeVisible();
     const button = await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" });
     expect(link.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows the demo PIN with the people, and no Google link, when Google is off", async () => {
     await renderApp("/sign-in");
-    expect(await screen.findByText("Demo PIN: 135790")).toBeVisible();
+    expect(await screen.findByText(demoPinHint())).toBeVisible();
     expect(screen.queryByRole("link", { name: "Sign in with Google" })).not.toBeInTheDocument();
   });
 

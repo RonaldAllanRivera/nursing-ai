@@ -1,19 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
-import { DemoPinChip } from "./DemoPin";
+import { DemoPinChip, useDemoPin } from "./DemoPin";
 import { GateFrame, IDLE_ID, WHO_ID, WhoLine } from "./GateFrame";
 import { PIN_SHORT, idleLockWords, isPinTyped, pinProblemMessage } from "./pin";
 import { PinField } from "./PinField";
-import { signInOptionsQuery, useUnlock, type Session } from "./session";
-import { offeredFrom } from "./signInOptions";
+import { useUnlock, type Session } from "./session";
+
+const DEMO_PIN_ID = "unlock-demo-pin";
 
 /** Enter the PIN after signing in, or after the idle lock. A demo person is shown the demo PIN. */
 export function UnlockScreen({ session }: { session: Session }) {
   const persona = session.kind === "persona";
   const unlock = useUnlock(persona);
-  const options = useQuery({ ...signInOptionsQuery, enabled: persona });
-  const demoPin = persona ? offeredFrom(options.data).demoPin : null;
+  const demoPin = useDemoPin();
   const [pin, setPin] = useState("");
   const [short, setShort] = useState(false);
   const field = useRef<HTMLInputElement>(null);
@@ -38,7 +37,7 @@ export function UnlockScreen({ session }: { session: Session }) {
           {idleLockWords(session.idle_lock_seconds)}
         </p>
       ) : null}
-      {demoPin ? <DemoPinChip pin={demoPin} className="mt-3" /> : null}
+      {demoPin ? <DemoPinChip pin={demoPin} id={DEMO_PIN_ID} className="mt-3" /> : null}
       <form
         className="mt-4 grid gap-4"
         onSubmit={(event) => {
@@ -66,7 +65,9 @@ export function UnlockScreen({ session }: { session: Session }) {
             setPin(value);
             setShort(false);
           }}
-          describedBy={idle ? `${WHO_ID} ${IDLE_ID}` : WHO_ID}
+          describedBy={[WHO_ID, idle ? IDLE_ID : null, demoPin ? DEMO_PIN_ID : null]
+            .filter(Boolean)
+            .join(" ")}
           message={message}
           readOnly={unlock.pending}
         />

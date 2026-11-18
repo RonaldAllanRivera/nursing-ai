@@ -9,6 +9,7 @@ import {
   noSidewaysScroll,
   setMockOptions,
   shot,
+  shotNight,
   tabTo,
 } from "./helpers.ts";
 
@@ -37,12 +38,17 @@ test("a demo person enters the PIN by keyboard; a wrong one counts and empties t
     page.getByRole("heading", { name: "Enter your PIN, Sarah Navarro, RN" }),
   ).toBeVisible();
   await expect(page.getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+  // The field is described by the hint, as every other PIN prompt's is.
+  await expect(page.getByLabel("PIN", { exact: true })).toHaveAccessibleDescription(
+    new RegExp(`Demo PIN: ${DEMO_PIN}`),
+  );
   // No patient anywhere on the page.
   await expect(page.getByText(/Demo patient/)).toHaveCount(0);
   const field = page.getByLabel("PIN", { exact: true });
   await expect(field).toBeFocused();
   await checkScreen(page, { night: true });
   await shot(page, "pin-enter");
+  await shotNight(page, "pin-enter");
 
   // The axe check used the theme toggle, so the cursor goes back to the field.
   await field.focus();

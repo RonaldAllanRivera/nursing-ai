@@ -4,9 +4,11 @@ import { signInOptionsQuery, useSession } from "./session";
 import { offeredFrom } from "./signInOptions";
 
 /**
- * "Demo PIN: 135790": the PIN every demo person shares, on its own paper patch so a ruled line
- * never runs through the digits. A tester who comes back hours later has never chosen it, and each
- * wrong try counts toward ending the demo session.
+ * "Demo PIN: 135790": the PIN every demo person shares. A tester who comes back hours later has
+ * never chosen it, and each wrong try counts toward ending the demo session. It is a hint, written
+ * like one: plain words with the digits in the note font, and no border or box, so it never looks
+ * like the PIN field under it already filled in. Its paper is the sheet's, so a ruled line never
+ * runs through it. PIN fields point at it by `id` (`describedBy`).
  */
 export function DemoPinChip({
   pin,
@@ -18,13 +20,9 @@ export function DemoPinChip({
   className?: string;
 }) {
   return (
-    <p
-      id={id}
-      className={cn(
-        "inline-block rounded-control border border-rule-strong bg-sheet px-2 py-0.5 font-note text-ink",
-        className,
-      )}
-    >{`Demo PIN: ${pin}`}</p>
+    <p id={id} className={cn("w-fit bg-sheet text-ink-2", className)}>
+      Demo PIN: <span className="font-note text-18 font-bold tracking-wider text-ink">{pin}</span>
+    </p>
   );
 }
 

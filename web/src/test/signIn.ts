@@ -6,6 +6,15 @@ import { renderApp } from "./render";
 /** The PIN every demo person shares (the sign-in options hand it out). */
 export const DEMO_PIN = "135790";
 
+/**
+ * Finds the "Demo PIN: 135790" hint by all its words: its digits are set in the note font, so
+ * they are an element of their own and a plain text match would not see the whole line.
+ */
+export const demoPinHint =
+  (pin: string = DEMO_PIN) =>
+  (_content: string, element: Element | null) =>
+    element?.tagName === "P" && element.textContent === `Demo PIN: ${pin}`;
+
 /** Types a PIN into the PIN screen that is showing and presses Enter. */
 export async function typePin(pin: string = DEMO_PIN, label = "PIN") {
   await userEvent.type(await screen.findByLabelText(label), `${pin}{Enter}`);

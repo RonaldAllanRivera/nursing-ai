@@ -8,7 +8,7 @@ import { holdNote, readHeldNote } from "../notes/heldNote";
 import type { QueryClient } from "@tanstack/react-query";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
-import { chooseAndUnlock, DEMO_PIN, signInAsPersona, typePin } from "../test/signIn";
+import { chooseAndUnlock, DEMO_PIN, demoPinHint, signInAsPersona, typePin } from "../test/signIn";
 import { DEMO_ENDED, DEMO_EXPIRED, PIN_LOCKED, PIN_WAIT_ENDED, PIN_WEAK } from "./pin";
 import { sessionKey, type Session } from "./session";
 
@@ -32,8 +32,12 @@ describe("enter your PIN", () => {
     expect(
       await screen.findByRole("heading", { name: "Enter your PIN, Sarah Navarro, RN" }),
     ).toBeVisible();
-    expect(screen.getByText("Demo PIN: 135790")).toBeVisible();
+    expect(screen.getByText(demoPinHint())).toBeVisible();
     expect(screen.getByLabelText("PIN")).toHaveFocus();
+    // The field points at the hint, as every other PIN prompt's field does.
+    expect(screen.getByLabelText("PIN")).toHaveAccessibleDescription(
+      expect.stringContaining("Demo PIN: 135790"),
+    );
     expectNoPatientData();
   });
 

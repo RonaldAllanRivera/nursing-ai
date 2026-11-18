@@ -67,6 +67,18 @@ export async function shot(page: Page, screen: string) {
   await page.screenshot({ path: `${folder}/shot-${screen}-${String(width)}.png`, fullPage: true });
 }
 
+/** `shot` in the night theme, set on the page directly (a dialog covers the theme button), then back to day. */
+export async function shotNight(page: Page, screen: string) {
+  if (!process.env["E2E_SHOTS"]) return;
+  await page.evaluate(() => {
+    document.documentElement.setAttribute("data-theme", "night");
+  });
+  await shot(page, `${screen}-night`);
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute("data-theme");
+  });
+}
+
 /**
  * The header takes at most two rows (on a phone: who is signed in and Sign out, then the shift,
  * the link and the theme). Rows are counted from the vertical centres of the header's controls

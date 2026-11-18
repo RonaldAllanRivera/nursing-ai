@@ -10,7 +10,7 @@ import { MOCK_EMAILS } from "../mocks/staff";
 import { DEMO_ENDED } from "../session/pin";
 import { noteQuery } from "./note";
 import { linesInOrder } from "./trace";
-import { chooseAndUnlock, DEMO_PIN } from "../test/signIn";
+import { chooseAndUnlock, DEMO_PIN, demoPinHint } from "../test/signIn";
 
 const NOTE_1 = "00000000-0000-4000-8000-000000000015";
 const NOTE_US = "00000000-0000-4000-8000-000000000035";
@@ -525,7 +525,7 @@ describe("signing with your own PIN", () => {
 
   it("shows a demo person the demo PIN, and ties it to the field", async () => {
     const { dialog } = await openSignDialog();
-    expect(within(dialog).getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+    expect(within(dialog).getByText(demoPinHint())).toBeVisible();
     expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
       expect.stringContaining(`Demo PIN: ${DEMO_PIN}`),
     );

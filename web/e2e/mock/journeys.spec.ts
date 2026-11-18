@@ -32,6 +32,7 @@ import {
   pageStatus,
   resolveThreeLines,
   shot,
+  shotNight,
   signInAs,
   tabTo,
 } from "./helpers.ts";
@@ -145,6 +146,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await expect(dialog.getByText("Not in this note:")).toBeVisible();
   await checkDialog(page);
   await shot(page, "sign-dialog");
+  await shotNight(page, "sign-dialog");
 
   // Signed: locked, with its hash. The removed line is not in the record.
   // It asks for her own PIN, with the focus already in the field.

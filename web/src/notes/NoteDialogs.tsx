@@ -173,7 +173,9 @@ export function SignDialog({
           </div>
         ) : null}
         <form noValidate onSubmit={entry.onSubmit}>
-          <div className="mt-4 grid gap-2">
+          {/* The same room between the hint and the field as every other PIN prompt: the hint
+              reads as a note above, not as part of the field's label. */}
+          <div className="mt-4 grid gap-4">
             {demoPin ? (
               <DemoPinChip pin={demoPin} id="sign-demo-pin" className="justify-self-start" />
             ) : null}
