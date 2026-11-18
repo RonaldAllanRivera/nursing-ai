@@ -1888,3 +1888,59 @@ def test_each_line_reads_only_the_note_numbers_its_quotes_overlap() -> None:
             line = _check(note, f"HR {80 + i}.", quotes)
             assert line.status is LineStatus.SOURCE_FOUND
             assert calls <= 2 + 1
+
+
+def test_a_sign_written_after_a_number_after_an_arrow_is_what_is_written_after_it() -> None:
+    for note in (
+        "HR 88 -> 38.5°",
+        "HR 88 -> 38.5 °",
+        "HR 88 -> 38.5°c",
+        "HR 88 -> 38.5°f",
+        "HR 88 -> 38.5*C",
+    ):
+        [mismatch] = _check(note, "HR 38.5.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88"), note
+    for note, text in (
+        ("IV 100 per hr -> 80 per min", "IV 80."),
+        ("IV 100 / hr -> 80 / min", "IV 80."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("T 38.5 °C -> 37.8 °C", "T 37.8 °C."),
+        ("IV 100 / hr -> 80 / hr", "IV 80 / hr."),
+        ("SpO2 88%->95%", "SpO2 95%."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_measures_word_after_an_arrow_starts_the_next_reading_only_before_a_number() -> None:
+    for note, text in (
+        ("HR 88 -> 37.8 o C", "HR 37.8."),
+        ("HR 88 -> 37 o", "HR 37."),
+        ("HR 120 -> 94 sats", "HR 94."),
+        ("HR 120 -> 37.9 temp", "HR 37.9."),
+        ("CBG 250 -> 4 i.u.", "CBG 4."),
+        ("HR 88 -> 2 in", "HR 2."),
+        ("Intake 500 -> 300 output", "Intake 300."),
+        ("HR 120 -> 94 sat at 0800", "HR 94."),
+        ("HR 120 -> 94 sat at 2L", "HR 94."),
+        ("Pain 8 -> 2\u00a0tabs paracetamol given", "Pain 2."),
+        # A label too far before its number is no label, and a run too long to read is alike
+        # to nothing.
+        ("HR 88->110" + " " * 70 + "RR 20", "HR 110."),
+        ("Pain 8 -> 2" + "x" * 70, "Pain 2."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    # What follows a number is read past the quote's end, whatever the quote.
+    note = "HR 120 -> 94 sat at 2L"
+    assert _kinds(_check(note, "HR 94.", ["HR 120 -> 94 sat"])) == [MismatchKind.VALUE]
+    for note, text in (
+        ("HR 88->110, RR 20", "HR 110."),
+        ("HR 88->110\nRR 20", "HR 110."),
+        ("HR 88->110 RR: 20", "HR 110."),
+        ("HR 88->110 RR is 20", "HR 110."),
+        ("HR 88->110 RR at 20", "HR 110."),
+        ("HR 88->110 pulse rate (90)", "HR 110."),
+        ("HR 88 -> 110.", "HR 110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
