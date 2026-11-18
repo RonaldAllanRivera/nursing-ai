@@ -7,7 +7,7 @@ import { explainDemoEnd, useSession } from "../session/session";
 import { usePinEntry } from "../session/usePinEntry";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
 import { WriteProblem } from "./WriteProblem";
-import { failureOf, useDiscardNote, useSignNote } from "./writes";
+import { failureOf, useDiscardNote, useNoteWriting, useSignNote } from "./writes";
 
 interface Shared {
   open: boolean;
@@ -30,6 +30,7 @@ function Choice({
   primary,
   safe,
   submit = false,
+  hold,
 }: {
   yes: string;
   yesBusy: string;
@@ -41,13 +42,16 @@ function Choice({
   primary: boolean;
   safe?: RefObject<HTMLButtonElement | null>;
   submit?: boolean;
+  /** The id of the line that says why the first button waits: it is unavailable until that clears. */
+  hold?: string | undefined;
 }) {
   return (
     <div className="actions">
       <button
         type={submit ? "submit" : "button"}
         className={primary ? "btn btn-primary" : "btn btn-firm"}
-        aria-disabled={busy || undefined}
+        aria-disabled={busy || hold !== undefined || undefined}
+        aria-describedby={hold}
         onClick={() => {
           if (!busy && !submit) onYes?.();
         }}
@@ -148,7 +152,9 @@ export function SignDialog({
     },
   });
   const field = useRef<HTMLInputElement>(null);
-  const entry = usePinEntry(sign, persona, field);
+  const { writing, writingNow } = useNoteWriting(shared.noteId);
+  const entry = usePinEntry(sign, persona, field, writingNow);
+  const waitingForWrite = writing && !sign.pending;
   /** Closes the dialog with nothing of the last try left in it (the typed PIN, the words under it). */
   function done() {
     entry.reset();
@@ -191,6 +197,12 @@ export function SignDialog({
               onKeyDown={entry.onKeyDown}
             />
           </div>
+          {waitingForWrite ? (
+            <p id="sign-waiting" role="status" className="mt-3 text-14">
+              Your last change to this note is still being saved. Sign note will work in a moment;
+              your PIN stays here.
+            </p>
+          ) : null}
           {sign.error !== null && !asksPinAgain(sign.error) ? (
             <WriteProblem
               error={sign.error}
@@ -207,6 +219,7 @@ export function SignDialog({
             yesBusy="Signing…"
             no="Cancel"
             busy={sign.pending}
+            hold={waitingForWrite ? "sign-waiting" : undefined}
             onNo={() => {
               close(false);
             }}

@@ -25,6 +25,8 @@ export function usePinEntry(
   request: PinRequest,
   persona: boolean,
   field: RefObject<HTMLInputElement | null>,
+  /** True while something must finish before the PIN may be sent: the PIN stays in the field. */
+  hold: () => boolean = () => false,
 ) {
   const [pin, setPin] = useState("");
   const [short, setShort] = useState(false);
@@ -55,6 +57,10 @@ export function usePinEntry(
     onSubmit: (event: SyntheticEvent) => {
       event.preventDefault();
       if (request.pending) return;
+      if (hold()) {
+        field.current?.focus();
+        return;
+      }
       if (!isPinTyped(pin)) {
         setShort(true);
         field.current?.focus();

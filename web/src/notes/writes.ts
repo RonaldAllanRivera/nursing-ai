@@ -1,4 +1,10 @@
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useQueryClient,
+  type MutationFilters,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
 import type { components } from "../api/schema";
@@ -22,6 +28,27 @@ function entryKey(noteId: string) {
  */
 function noteScope(noteId: string) {
   return `note:${noteId}`;
+}
+
+/** Any write to this note that is still under way (the sign itself included). */
+function writingFilter(noteId: string): MutationFilters {
+  return {
+    predicate: (m) => m.options.scope?.id === noteScope(noteId) && m.state.status === "pending",
+  };
+}
+
+/**
+ * Whether a write to this note is still under way, and a check of the same thing made at the
+ * moment of a submit. A PIN request never queues behind a write: whatever could hold that write
+ * (a retry while the tab is hidden, the network) must not also hold a PIN in the mutation cache.
+ */
+export function useNoteWriting(noteId: string) {
+  const queryClient = useQueryClient();
+  const count = useIsMutating(writingFilter(noteId));
+  return {
+    writing: count > 0,
+    writingNow: () => queryClient.isMutating(writingFilter(noteId)) > 0,
+  };
 }
 
 /** The tag of the version this screen shows: what a change must be made against. */
