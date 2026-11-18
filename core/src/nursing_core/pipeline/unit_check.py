@@ -42,21 +42,19 @@ read by meaning: hour, minute, day or week, from the same spellings as the denom
 one-letter "m" and "d".
 A frequency is read by meaning, in any case, each word whole, words separated by spaces, a line
 break or a hyphen ("once-a-day"); the longest reading wins, left to right, so "once daily" is one
-frequency and not "daily" inside it. "daily", "every day", "everyday", "each day", "once a day",
-"once per day" and "once daily" are one a day; the same with week, month and hour ("hourly", "once
-an hour"), and "nightly", "every night", "each night" and "every shift", "each shift" are one a
-night and one a shift. "twice", "thrice" and a number (digits, read by value so "3" and "3.0" are
-one, or a number word from two to ten) before "times" or "x" are a count, written with "daily",
-"weekly", "monthly", "hourly", "a" or "per" and a day, week, month or hour, or with "every" or
-"each" and any period they take alone (day, week, month, hour, night, shift), or with "every other"
-and a day, week or month: "twice a day", "twice daily", "2 times every day", "2 times a day" and "2x
-daily" are two a day, "2 times every night" is two a night, "twice each shift" is two a shift, and
-"3 times a week" is not "3 times a day". "every other day", "every other week" and "every other
-month" are their own meanings, and with a count in front ("2 times every other day") the count is
-theirs, so it is neither "every other day" nor "2 times every day". The abbreviations (OD, QD, BID,
-TID, QID, QOD, HS, PRN, STAT) each mean only their own spelling: "OD" is also the right eye, so it
-is never "daily". "once" alone is no frequency ("vomited once"), and "per day" with no count before
-it is not one ("15 mg per day" is a rate).
+frequency and not "daily" inside it. One list of periods serves every spelling: day, week, month,
+hour, night and shift. "daily", "every day", "everyday", "each day", "once a day", "once per day"
+and "once daily" are one a day, and the same for each other period ("hourly", "nightly", "every
+shift", "each night", "once an hour"). "every other day" (or any period) is its own meaning, not
+"daily". "twice", "thrice" and a number (digits, read by value so "3" and "3.0" are one, or a number
+word from two to ten) before "times" or "x" are a count, followed by an adverb ("daily", "nightly")
+or by "a", "an", "per", "every", "each", "every other" or "everyday" and a period: "twice a day",
+"twice daily", "2 times every day", "2 times everyday" and "2x daily" are two a day, "2 times every
+night" is two a night, "twice each shift" is two a shift, "2 times every other day" is its own
+counted meaning, and "3 times a week" is not "3 times a day". "a", "an" and "per" with no count are
+no frequency ("15 mg per day" is a rate). The abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN,
+STAT) each mean only their own spelling: "OD" is also the right eye, so it is never "daily". "once"
+alone is no frequency ("vomited once").
 """
 
 import re
@@ -109,15 +107,22 @@ _SMALL_NUMBERS = {
 _WHOLE_WORD = r"(?<![^\W_])(?:{})(?![^\W_])"
 _SEP = r"[\s\-]+"
 _COUNT = rf"(?P<count>\d+(?:\.\d+)?|{'|'.join(_SMALL_NUMBERS)})"
-# What "every" and "each" take, and "every other", the same with or without a count in front.
-_EVERY_PERIODS = "day|week|month|hour|night|shift"
-_EVERY = rf"(?:every|each){_SEP}(?P<period>{_EVERY_PERIODS})"
-_EVERY_OTHER = rf"every{_SEP}other{_SEP}(?P<other>day|week|month)"
+# One period list for every connector, with or without a count in front: "every night", "each
+# shift", "every other night", "twice a night", "2 times per shift", "once a night".
+_PERIODS = "day|week|month|hour|night|shift"
+
+
+def _connected(connectors: str) -> str:
+    return rf"(?:{connectors}){_SEP}(?P<period>{_PERIODS})"
+
+
+_EVERYDAY = r"(?P<everyday>everyday)"
+_EVERY_OTHER = rf"every{_SEP}other{_SEP}(?P<other>{_PERIODS})"
+# Read alone, "every" and "each" take a period; after a count "a", "an" and "per" do too.
+_EVERY = f"{_EVERYDAY}|{_connected('every|each')}|{_EVERY_OTHER}"
 _COUNTED_EACH = (
-    rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})"
-    rf"|(?:(?:an|a|per){_SEP}(?=day|week|month|hour)|(?:every|each){_SEP})"
-    rf"(?P<period>{_EVERY_PERIODS})"
-    rf"|{_EVERY_OTHER})"
+    rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per|every|each')}"
+    rf"|{_EVERYDAY}|{_EVERY_OTHER})"
 )
 # One pattern for each family of spellings; each match is a frequency, read with `_meaning`.
 _FREQUENCY_PATTERNS = tuple(
@@ -125,9 +130,8 @@ _FREQUENCY_PATTERNS = tuple(
     for body in (
         rf"(?P<abbreviation>{'|'.join(_ABBREVIATIONS)})",
         rf"(?P<adverb>{'|'.join(_ADVERBS)})",
-        rf"everyday|{_EVERY}",
-        _EVERY_OTHER,
-        rf"once{_SEP}(?:(?P<adverb>daily|weekly|monthly)|(?:an|a|per){_SEP}(?P<period>day|week|month|hour))",
+        _EVERY,
+        rf"once{_SEP}(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per')})",
         rf"(?P<times>twice|thrice){_SEP}{_COUNTED_EACH}",
         rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_SEP}{_COUNTED_EACH}",
     )
@@ -324,7 +328,11 @@ def _meaning(match: re.Match[str]) -> FrequencyMeaning:
         return (count, f"other {match['other'].casefold()}")
     if groups.get("adverb"):
         return (count, _ADVERBS[match["adverb"].casefold()])
-    return (count, (groups.get("period") or "day").casefold())
+    if groups.get("everyday"):
+        return (count, "day")
+    if groups.get("period"):
+        return (count, match["period"].casefold())
+    raise ValueError(f"a frequency pattern matched without a reading: {match.group()!r}")
 
 
 def _scan(text: str) -> tuple[list[tuple[str, Span]], list[int]]:

@@ -1579,3 +1579,38 @@ def test_a_count_before_every_night_shift_or_other_is_a_count() -> None:
         )
         == []
     )
+
+
+def test_a_count_before_everyday_and_every_other_night_is_a_count() -> None:
+    for note, text, phrase in [
+        (
+            "metformin 500 mg daily, 2 tabs",
+            "Metformin 500 mg 2 times everyday.",
+            "2 times everyday",
+        ),
+        ("metformin 500 mg daily, 2 tabs", "Metformin 500 mg 2x everyday.", "2x everyday"),
+        (
+            "metformin 500 mg every day, vomited twice",
+            "Metformin 500 mg twice everyday.",
+            "twice everyday",
+        ),
+        (
+            "melatonin 3 mg nightly, 2 tabs",
+            "Melatonin 3 mg 2 times per night.",
+            "2 times per night",
+        ),
+        (
+            "melatonin 3 mg nightly, 2 tabs",
+            "Melatonin 3 mg 2 times every other night.",
+            "2 times every other night",
+        ),
+        ("melatonin 3 mg nightly", "Melatonin 3 mg every other night.", "every other night"),
+    ]:
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], text
+    assert _frequency_findings("turn pt every other shift", "Turn pt every other shift.") == []
+    assert (
+        _frequency_findings("melatonin 3 mg twice a night", "Melatonin 3 mg twice a night.") == []
+    )

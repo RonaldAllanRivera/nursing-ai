@@ -515,3 +515,26 @@ def test_a_count_before_every_each_or_every_other_takes_the_same_periods_as_with
     [plain] = frequencies_in("every other day")
     [every] = frequencies_in("2 times every day")
     assert len({counted.meaning, plain.meaning, every.meaning}) == 3
+
+
+def test_every_connector_takes_every_period_with_and_without_a_count() -> None:
+    for period in ("day", "week", "month", "hour", "night", "shift"):
+        for connector in ("every", "each"):
+            assert _only_meaning(f"{connector} {period}") == (1, period)
+            assert _only_meaning(f"twice {connector} {period}") == (2, period)
+        for connector in ("a", "an", "per"):
+            assert _only_meaning(f"2 times {connector} {period}") == (2, period)
+            assert _only_meaning(f"once {connector} {period}") == (1, period)
+            assert frequencies_in(f"{connector} {period}") == [], (connector, period)
+        assert _only_meaning(f"every other {period}") == (1, f"other {period}")
+        assert _only_meaning(f"3x every other {period}") == (3, f"other {period}")
+    assert _only_meaning("2 times everyday") == (2, "day")
+    assert _only_meaning("2x everyday") == (2, "day")
+    assert _only_meaning("everyday") == (1, "day")
+    assert _only_meaning("every other night") != _only_meaning("nightly")
+
+
+def _only_meaning(text: str) -> object:
+    [found] = frequencies_in(text)
+    assert found.text == text
+    return found.meaning
