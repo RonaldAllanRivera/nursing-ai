@@ -13,7 +13,9 @@ export interface MockOptions {
   demo?: boolean;
   personaGate?: "open" | "enter_pin";
   account?: { user: string; gate?: "open" | "set_pin" | "enter_pin" | "pin_locked" };
-  failDraft?: string;
+  /** Keep in step with `JobFailure` in src/mocks/options.ts (e2e can not import app code). */
+  failDraft?:
+    "ai_budget_reached" | "model_refused" | "invalid_output" | "provider_error" | "replay_missing";
 }
 
 export const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
