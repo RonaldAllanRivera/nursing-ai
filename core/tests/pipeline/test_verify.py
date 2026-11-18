@@ -1,5 +1,6 @@
 """Deciding each line's status from its quotes, numbers and units."""
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.demo import DEMO_FACILITIES, load_demo_cases
@@ -15,6 +16,7 @@ from nursing_core.domain.notes import (
 from nursing_core.domain.units import Ucum, UnitDefaults
 from nursing_core.pipeline.redact import redact, restore
 from nursing_core.pipeline.text import prepare
+from nursing_core.pipeline.unit_check import written_unit
 from nursing_core.pipeline.verify import check_line, default_unit, recheck_line, restore_line
 
 PH = UnitDefaults(temperature=Ucum.CEL, weight=None, volume=Ucum.ML)
@@ -1786,3 +1788,54 @@ def test_a_very_long_note_of_arrows_is_checked_without_error() -> None:
     assert _check(note, "HR 1.", [note]).status is LineStatus.SOURCE_FOUND
     line = _check("HR 88", "HR 88" + "->88" * 1500 + ".", ["HR 88"])
     assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_units_are_read_once_per_number_not_once_per_quote() -> None:
+    note = " ".join(f"HR {80 + i}" for i in range(40))
+    quotes = [f"HR {80 + i}" for i in range(40)]
+    text = "HR 80."
+    calls = 0
+
+    def counting(raw: str, span: Span) -> object:
+        nonlocal calls
+        calls += 1
+        return written_unit(raw, span)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("nursing_core.pipeline.verify.written_unit", counting)
+        line = _check(note, text, quotes)
+    assert line.status is LineStatus.SOURCE_FOUND
+    assert calls <= 40 + 1
+
+
+def test_a_number_after_an_arrow_needs_the_same_words_after_it() -> None:
+    for note, text in (
+        ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
+        ("HR 120 -> 1 tab metoprolol", "HR 1."),
+        ("HR 88 bpm -> 20 cpm", "HR 20."),
+        ("IV 100/hr -> 80", "IV 80."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("HR 88 bpm -> 110 bpm", "HR 110 bpm."),
+        ("SpO2 88%->95%", "SpO2 95%."),
+        ("T 38.5 C -> 37.8 C", "T 37.8 C."),
+        ("HR 88->110", "HR 110."),
+        ("HR 88 -> >110", "HR >110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_only_at_keeps_a_time_or_a_setting_as_the_label() -> None:
+    for note, text in (
+        ("Intake was 1200 mL, output 800 mL", "Intake 800 mL."),
+        ("UO was 30 mL/hr, IVF 80 mL/hr", "UO 80 mL/hr."),
+        ("Intake of 1200, output 800", "Intake 800."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("BP at 10.30 90/60", "BP 90/60."),
+        ("HR at 2400 110", "HR 110."),
+        ("BP at 8.15 90/60", "BP 90/60."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
