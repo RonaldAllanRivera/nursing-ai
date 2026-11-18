@@ -1732,3 +1732,57 @@ def test_a_two_word_label_from_the_table_is_the_label_as_a_whole() -> None:
     note = "pulse rate 88, IV rate 100 mL/hr"
     [mismatch] = _check(note, "IV rate 88 mL/hr.", [note]).number_mismatches
     assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "100")
+
+
+def test_a_joining_word_before_a_time_or_a_setting_stays_the_label() -> None:
+    rows = [
+        ("BP at 0600 90/60", "BP 90/60 at 0600."),
+        ("T at 2200 38.9", "T 38.9 at 2200."),
+        ("HR at 0800 was 110", "HR 110 at 0800."),
+        ("HR at 0800 110, at 1000 96", "HR 96 at 1000."),
+        ("Sat at 2L 95%", "Sat 95%."),
+        ("BP at 10:30 90/60", "BP 90/60 at 10:30."),
+        ("Temp at 2pm 38.9", "Temp 38.9 at 2pm."),
+        ("Temp at 10 am 38.9", "Temp 38.9 at 10 am."),
+    ]
+    for note, text in rows:
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_joining_word_before_a_vital_is_still_read_past() -> None:
+    for note, text, expected in (
+        ("HR at 88, RR 20", "HR 20.", "88"),
+        ("HR at 110, RR 20", "HR 20.", "110"),
+        ("HR is 88 bpm, RR 20", "HR 20 bpm.", "88"),
+        ("SpO2 at 95%, HR 80", "SpO2 80%.", "95"),
+    ):
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, expected), note
+
+
+def test_a_number_after_an_arrow_takes_the_label_only_when_written_alike() -> None:
+    for note, text in (
+        ("HR 88->110", "HR 110."),
+        ("SpO2 88%->95%", "SpO2 95%."),
+        ("T 38.5 C -> 37.8 C", "T 37.8 C."),
+        ("HR 88->100->110", "HR 110."),
+        ("BP 90/60 => 100/70", "BP 100/70."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+    for note, text in (
+        ("Pain 8/10 -> 2 mg morphine given", "Pain 2."),
+        ("BP 90/60 -> 500 mL NS bolus", "BP 500."),
+        ("HR 88 -> RR 20", "HR 20."),
+        ("HR 88 bpm -> 110", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    note = "Temp 39.2, paracetamol 650 mg given"
+    line = _check(note, "Temp 39.2 -> 650 mg paracetamol given.", [note])
+    assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_a_very_long_note_of_arrows_is_checked_without_error() -> None:
+    note = "HR 1" + "->1" * 1500
+    assert _check(note, "HR 1.", [note]).status is LineStatus.SOURCE_FOUND
+    line = _check("HR 88", "HR 88" + "->88" * 1500 + ".", ["HR 88"])
+    assert line.status is LineStatus.SOURCE_FOUND
