@@ -99,28 +99,39 @@ async function once(name: Method, url: string, init: Init): Promise<Answer> {
  * A 401 may only mean the request left with the cookie that a PIN proof has just swapped. So a 401
  * is checked once before it counts: wait for any PIN proof in flight, then ask who is signed in.
  * - The re-read is a 401 too: nobody is signed in, the 401 stands and the caller signs her out.
- * - The re-read fails some other way (a 5xx, a waking database, a limit): that failure is the
- *   answer; it says nothing about the session, so she stays signed in.
- * - The re-read names someone else (another tab switched person): nothing is retried, and the
- *   session is handed over so the last person's data goes.
+ * - A request that carries a PIN never goes out twice, whatever the re-read answered: it fails
+ *   with `SignInRefreshedError` and the person types the PIN again.
+ * - Any other request, when the re-read fails some other way (a 5xx, a waking database, a limit):
+ *   that failure is the answer; it says nothing about the session, so she stays signed in.
+ * - The re-read names someone other than the person the request was sent as (another tab switched
+ *   person): nothing is retried, and the session is handed over so the last person's data goes.
  * - Otherwise she is still signed in: a 401 means the server refused before doing anything, so the
- *   request is asked again once, unless it carries a PIN, which is never sent twice.
+ *   request is asked again once.
  * A 401 from the PIN proofs themselves is final (see `send`).
  */
-async function checkedBefore401Counts(name: Method, url: string, init: Init, first: Answer) {
+async function checkedBefore401Counts(
+  name: Method,
+  url: string,
+  init: Init,
+  first: Answer,
+  sentAs: string | undefined,
+) {
   await Promise.allSettled([...pinProofsOut]);
   const signal = init?.signal ? { signal: init.signal } : undefined;
   const reread = await once("GET", SESSION_URL, signal);
   if (name === "GET" && url === SESSION_URL) return reread;
   if (reread.response.status === 401) return first;
-  if (!reread.response.ok) return reread;
+  const carries = carriesPin(name, url);
+  if (!reread.response.ok) {
+    if (carries) throw new SignInRefreshedError();
+    return reread;
+  }
   const now = reread.data as Session;
-  const mine = currentSession();
-  if (mine && now.user_id !== mine.user_id) {
+  if (sentAs !== undefined && now.user_id !== sentAs) {
     adoptSession(now);
     throw new SignInRefreshedError();
   }
-  if (carriesPin(name, url)) throw new SignInRefreshedError();
+  if (carries) throw new SignInRefreshedError();
   return once(name, url, init);
 }
 
@@ -135,8 +146,12 @@ function method<M extends Method>(name: M): Client<paths>[M] {
         pinProofsOut.delete(answer);
       }
     }
+    // Who the request is sent as: a person who signs in while it waits is not who it speaks for.
+    const sentAs = currentSession()?.user_id;
     const first = await once(name, url, init);
-    return first.response.status === 401 ? checkedBefore401Counts(name, url, init, first) : first;
+    return first.response.status === 401
+      ? checkedBefore401Counts(name, url, init, first, sentAs)
+      : first;
   };
   return send as unknown as Client<paths>[M];
 }

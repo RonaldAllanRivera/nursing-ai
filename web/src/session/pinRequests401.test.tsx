@@ -2,6 +2,9 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
+import { api } from "../api/client";
+import { SignInRefreshedError } from "../api/errors";
+import { createQueryClient } from "../app/queryClient";
 import { demoApi } from "../mocks/demo-api";
 import { MOCK_EMAILS, MOCK_PIN } from "../mocks/staff";
 import { holdNote, readHeldNote } from "../notes/heldNote";
@@ -46,7 +49,7 @@ describe("a session re-read that fails some other way does not sign her out", ()
 });
 
 describe("a re-read that names someone else", () => {
-  it("retries nothing and lets the identity change clear the last person's data", async () => {
+  it("lets the identity change clear the last person's data", async () => {
     const { queryClient } = await signInAsPersona(SARAH);
     await screen.findByRole("heading", { name: "Patients on this ward" });
     const mine = queryClient.getQueryData<Session>(sessionKey) as Session;
@@ -65,6 +68,56 @@ describe("a re-read that names someone else", () => {
       expect(queryClient.getQueryData<Session>(sessionKey)?.user_id).toBe("someone-else");
     });
     expect(readHeldNote(queryClient, PATIENT_A)).toBe("");
+  });
+});
+
+describe("a 401 answered for a request sent as someone else", () => {
+  const sessionOf = (user: string) => ({ user_id: user, csrf_token: "t", gate: "open" }) as never;
+
+  it("retries nothing when the re-read names another person, and counts the request once", async () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(sessionKey, sessionOf("sarah"));
+    let reads = 0;
+    server.use(
+      http.get("*/api/v1/patients", () => {
+        reads += 1;
+        return unauthorised();
+      }),
+      http.get("*/api/v1/session", () => HttpResponse.json(sessionOf("emily"))),
+    );
+    const failure = await api.GET("/api/v1/patients").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(SignInRefreshedError);
+    expect(reads).toBe(1);
+    await waitFor(() => {
+      expect(queryClient.getQueryData<Session>(sessionKey)?.user_id).toBe("emily");
+    });
+  });
+
+  it("does not retry a write as the new person who signed in while it waited", async () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(sessionKey, sessionOf("sarah"));
+    let reads = 0;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get("*/api/v1/patients", async () => {
+        reads += 1;
+        await held;
+        return unauthorised();
+      }),
+      http.get("*/api/v1/session", () => HttpResponse.json(sessionOf("emily"))),
+    );
+    const sent = api.GET("/api/v1/patients").catch((error: unknown) => error);
+    await waitFor(() => {
+      expect(reads).toBe(1);
+    });
+    // In this tab Emily signs in while Sarah's request is out.
+    queryClient.setQueryData(sessionKey, sessionOf("emily"));
+    release();
+    expect(await sent).toBeInstanceOf(SignInRefreshedError);
+    expect(reads).toBe(1);
   });
 });
 

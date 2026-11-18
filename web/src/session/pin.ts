@@ -1,4 +1,5 @@
 import { ApiError, SignInRefreshedError } from "../api/errors";
+import { isWaking } from "../api/waking";
 import type { Session } from "./session";
 
 /** Which screen a gate shows. `null` is the open gate: the page itself. */
@@ -27,9 +28,13 @@ export function isPinRefusal(error: unknown): boolean {
 export const PIN_NOT_CHECKED =
   "Your sign-in was just refreshed, so the PIN wasn't checked. Enter your PIN again.";
 
-/** A request that asks for the PIN again: a wrong PIN, or one the sign-in refresh kept from being checked. */
+/** The database was waking: the PIN went nowhere, and the request is never sent again by itself. */
+export const PIN_WAKING =
+  "The database is waking up, so the PIN wasn't checked. Enter your PIN again in a few seconds.";
+
+/** A request that asks for the PIN again: a wrong PIN, one the sign-in refresh or a waking database kept from being checked. */
 export function asksPinAgain(error: unknown): boolean {
-  return isPinRefusal(error) || error instanceof SignInRefreshedError;
+  return isPinRefusal(error) || error instanceof SignInRefreshedError || isWaking(error);
 }
 
 export const PIN_LOCKED = "Your PIN is locked. Ask a head nurse or the admin to reset it.";
@@ -72,6 +77,7 @@ export function idleLockWords(seconds: number): string {
  */
 export function pinProblemMessage(error: unknown, persona: boolean): string {
   if (error instanceof SignInRefreshedError) return PIN_NOT_CHECKED;
+  if (isWaking(error)) return PIN_WAKING;
   if (!(error instanceof ApiError)) return PIN_CONNECTION;
   const problem = error.problem;
   if (error.status === 403 && problem?.code === "pin_wrong") {

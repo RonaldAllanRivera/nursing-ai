@@ -28,6 +28,8 @@ export function usePinRequest<Answer>(
   const mutation = useMutation({
     mutationFn: send,
     gcTime: 0,
+    // A PIN is sent once: not again by itself, not even for a waking database.
+    retry: false,
     ...(options.scope ? { scope: { id: options.scope } } : {}),
     ...(options.onMutate ? { onMutate: options.onMutate } : {}),
   });
