@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent, type RefObject, type SyntheticEvent } from "react";
-import { PIN_NEEDED, isPinRefusal, isPinTyped, pinProblemMessage } from "./pin";
+import { PIN_NEEDED, asksPinAgain, isPinTyped, pinProblemMessage } from "./pin";
 
 /** The part of `usePinRequest` a PIN dialog reads. */
 export interface PinRequest {
@@ -36,7 +36,7 @@ export function usePinEntry(
 
   const message = short
     ? PIN_NEEDED
-    : isPinRefusal(failure)
+    : asksPinAgain(failure)
       ? pinProblemMessage(failure, persona)
       : null;
 

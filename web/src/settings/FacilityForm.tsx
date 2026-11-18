@@ -7,7 +7,7 @@ import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
 import { Button } from "../components/ui/Button";
 import { words } from "../region/words";
-import { isPinRefusal } from "../session/pin";
+import { asksPinAgain } from "../session/pin";
 import { explainDemoEnd, signInOptionsQuery, useSession } from "../session/session";
 import { checkShifts } from "./checkShifts";
 import { facilitySettingsQuery, useResetFacility, useSaveFacility } from "./facilities";
@@ -195,7 +195,7 @@ function Editor({
       },
       onError: (error, previous) => {
         if (persona) explainDemoEnd(queryClient, error, previous);
-        if (!isPinRefusal(error)) refused(error);
+        if (!asksPinAgain(error)) refused(error);
       },
     },
   );
@@ -212,7 +212,7 @@ function Editor({
     },
     onError: (error, previous) => {
       if (persona) explainDemoEnd(queryClient, error, previous);
-      if (isPinRefusal(error)) return;
+      if (asksPinAgain(error)) return;
       setResetting(false);
       const status = error instanceof ApiError ? error.status : null;
       if (status === 412) {

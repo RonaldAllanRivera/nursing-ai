@@ -9,6 +9,7 @@ import { gateFromProblem, patchGate } from "../session/gate";
 import { isPastExpiry, sessionHours } from "../session/expiry";
 import {
   clearPersonData,
+  storeSession,
   signInNoticeKey,
   sessionKey,
   type Session,
@@ -92,7 +93,12 @@ export function createQueryClient() {
       queryClient.setQueryData(signInNoticeKey, false);
     }
   });
-  readSessionFrom(() => queryClient.getQueryData<Session | null>(sessionKey));
+  readSessionFrom(
+    () => queryClient.getQueryData<Session | null>(sessionKey),
+    (session) => {
+      void storeSession(queryClient, session);
+    },
+  );
   // A new app has sent nothing yet.
   resetRequestClock();
   return queryClient;

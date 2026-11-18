@@ -1,6 +1,7 @@
 import createClient, { type Client } from "openapi-fetch";
 import type { Session } from "../session/session";
 import { csrfHeaders } from "./csrf";
+import { SignInRefreshedError } from "./errors";
 import { noteRequest } from "./requestClock";
 import type { components, paths } from "./schema";
 
@@ -16,10 +17,15 @@ type Init = { signal?: AbortSignal | null; headers?: Record<string, string> } | 
 type SessionSource = () => Session | null | undefined;
 
 let currentSession: SessionSource = () => undefined;
+let adoptSession: (session: Session) => void = () => undefined;
 
-/** Where the client reads the signed-in session from, for the CSRF header. The query client sets this up. */
-export function readSessionFrom(source: SessionSource) {
+/**
+ * Where the client reads the signed-in session from, for the CSRF header, and (`adopt`) where it
+ * puts a session it found to be someone else's. The query client sets this up.
+ */
+export function readSessionFrom(source: SessionSource, adopt?: (session: Session) => void) {
   currentSession = source;
+  adoptSession = adopt ?? (() => undefined);
 }
 
 // No origin and no `fetch` are captured here: the origin is read from `location`, and the
@@ -35,7 +41,23 @@ const base = createClient<paths>({
 const PIN_PROOF_URLS: readonly string[] = ["/api/v1/session/pin", "/api/v1/session/unlock"];
 const SESSION_URL = "/api/v1/session";
 
-type Answer = { response: Response };
+/**
+ * The other requests whose body carries the PIN. The PIN lives only in the one request that sends
+ * it, so one of these is never sent again after a refused first try (the person types it again).
+ */
+const PIN_BODY_ROUTES: readonly [Method, string][] = [
+  ["POST", "/api/v1/notes/{note_id}/sign"],
+  ["PUT", "/api/v1/facilities/{facility_key}"],
+  ["POST", "/api/v1/facilities/{facility_key}/reset"],
+  ["POST", "/api/v1/users"],
+  ["POST", "/api/v1/users/{user_id}/revoke"],
+  ["POST", "/api/v1/users/{user_id}/pin-reset"],
+];
+
+const carriesPin = (name: Method, url: string) =>
+  PIN_BODY_ROUTES.some(([method, route]) => method === name && route === url);
+
+type Answer = { response: Response; data?: unknown };
 
 /** The PIN proofs that have not answered yet. A 401 that may be the old cookie waits for these. */
 const pinProofsOut = new Set<Promise<Answer>>();
@@ -76,16 +98,30 @@ async function once(name: Method, url: string, init: Init): Promise<Answer> {
 /**
  * A 401 may only mean the request left with the cookie that a PIN proof has just swapped. So a 401
  * is checked once before it counts: wait for any PIN proof in flight, then ask who is signed in.
- * Only "nobody" lets the 401 stand (and the caller signs her out). A request that failed is asked
- * again once if she is still signed in: a 401 means the server refused before doing anything, so
- * a second try cannot write twice. A 401 from the PIN proofs themselves is final.
+ * - The re-read is a 401 too: nobody is signed in, the 401 stands and the caller signs her out.
+ * - The re-read fails some other way (a 5xx, a waking database, a limit): that failure is the
+ *   answer; it says nothing about the session, so she stays signed in.
+ * - The re-read names someone else (another tab switched person): nothing is retried, and the
+ *   session is handed over so the last person's data goes.
+ * - Otherwise she is still signed in: a 401 means the server refused before doing anything, so the
+ *   request is asked again once, unless it carries a PIN, which is never sent twice.
+ * A 401 from the PIN proofs themselves is final (see `send`).
  */
 async function checkedBefore401Counts(name: Method, url: string, init: Init, first: Answer) {
   await Promise.allSettled([...pinProofsOut]);
   const signal = init?.signal ? { signal: init.signal } : undefined;
   const reread = await once("GET", SESSION_URL, signal);
   if (name === "GET" && url === SESSION_URL) return reread;
-  return reread.response.ok ? once(name, url, init) : first;
+  if (reread.response.status === 401) return first;
+  if (!reread.response.ok) return reread;
+  const now = reread.data as Session;
+  const mine = currentSession();
+  if (mine && now.user_id !== mine.user_id) {
+    adoptSession(now);
+    throw new SignInRefreshedError();
+  }
+  if (carriesPin(name, url)) throw new SignInRefreshedError();
+  return once(name, url, init);
 }
 
 function method<M extends Method>(name: M): Client<paths>[M] {

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, type ReactNode, type RefObject } from "react";
 import { DemoPinChip, useDemoPin } from "../session/DemoPin";
-import { isPinRefusal } from "../session/pin";
+import { asksPinAgain } from "../session/pin";
 import { PinField } from "../session/PinField";
 import { explainDemoEnd, useSession } from "../session/session";
 import { usePinEntry } from "../session/usePinEntry";
@@ -189,7 +189,7 @@ export function SignDialog({
               onKeyDown={entry.onKeyDown}
             />
           </div>
-          {sign.error !== null && !isPinRefusal(sign.error) ? (
+          {sign.error !== null && !asksPinAgain(sign.error) ? (
             <WriteProblem
               error={sign.error}
               noteId={shared.noteId}

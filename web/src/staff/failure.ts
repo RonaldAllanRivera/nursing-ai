@@ -1,5 +1,5 @@
 import { ApiError } from "../api/errors";
-import { isPinRefusal } from "../session/pin";
+import { asksPinAgain } from "../session/pin";
 
 /**
  * What to do about a failed staff action:
@@ -13,7 +13,7 @@ import { isPinRefusal } from "../session/pin";
 export type Failure = "wrong_pin" | "gate" | "stale" | "stay";
 
 export function failureKind(error: unknown): Failure {
-  if (isPinRefusal(error)) return "wrong_pin";
+  if (asksPinAgain(error)) return "wrong_pin";
   if (error instanceof ApiError) {
     if (error.status === 423) return "gate";
     if (error.status === 403 || error.status === 404) return "stale";

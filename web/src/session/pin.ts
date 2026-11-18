@@ -1,4 +1,4 @@
-import { ApiError } from "../api/errors";
+import { ApiError, SignInRefreshedError } from "../api/errors";
 import type { Session } from "./session";
 
 /** Which screen a gate shows. `null` is the open gate: the page itself. */
@@ -21,6 +21,15 @@ export const PIN_NEEDED = "Enter your 6-digit PIN.";
 /** A wrong PIN, as opposed to any other way a request that carries a PIN can be refused. */
 export function isPinRefusal(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403 && error.problem?.code === "pin_wrong";
+}
+
+/** The PIN was not even checked, so no try was used: the sign-in was refreshed under the request. */
+export const PIN_NOT_CHECKED =
+  "Your sign-in was just refreshed, so the PIN wasn't checked. Enter your PIN again.";
+
+/** A request that asks for the PIN again: a wrong PIN, or one the sign-in refresh kept from being checked. */
+export function asksPinAgain(error: unknown): boolean {
+  return isPinRefusal(error) || error instanceof SignInRefreshedError;
 }
 
 export const PIN_LOCKED = "Your PIN is locked. Ask a head nurse or the admin to reset it.";
@@ -62,6 +71,7 @@ export function idleLockWords(seconds: number): string {
  * next wrong PIN ends the session (her tries count on the session, not on a PIN that can be reset).
  */
 export function pinProblemMessage(error: unknown, persona: boolean): string {
+  if (error instanceof SignInRefreshedError) return PIN_NOT_CHECKED;
   if (!(error instanceof ApiError)) return PIN_CONNECTION;
   const problem = error.problem;
   if (error.status === 403 && problem?.code === "pin_wrong") {
