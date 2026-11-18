@@ -25,19 +25,22 @@ the arrow and its own comparator after the previous number and its unit), takes 
 when both are written alike: both "/" groups or neither, and the same written right after each,
 compared in any case and without spaces, and read even past the quote's end. What is written right
 after a number is the unit (one the code reads or only knows) or the rate read there, as typed
-("°C", "bpm", "/hr"). With neither, a label of the table of measures (one word or two, read as any
-label is) that the joiners above and a number follow starts the next reading and is nothing
-("HR 88->110 RR 20", "HR 88->110 resp rate 20"), unless it is glued to that number (a letter right
-before it: "O2", "RR20") or that number is a setting, written with a dose, volume, drop or
-oxygen-flow unit ("sat 2L"). Anything else is the run of characters glued to the number or after
-spaces (of any kind but a line break), up to a space, a line break, ",", ";", ")", an arrow or a
-"." that ends a sentence (one followed by a space, a line break or the end): "°" for "38.5°", "*C"
-for "38.5*C", "i.u" for "4 i.u.", "o2" for "94 O2". An arrow, the end of the text or that
-punctuation right after a number is nothing, and so is a run of punctuation only: dashes (a hyphen,
-an en or an em dash), ":", "(", "!", "?" and ellipses ("..." or the one character for it), as in
-"HR 88->110 - MD notified" and "HR 88->110: improving". A run longer than 64 characters is alike to
-none. So "HR 88 bpm -> 110 bpm", "SpO2 88%->95%" and "HR 88->110, RR 20" take the label;
-"Pain 8/10 -> 2 mg", "HR 88 -> 20 cpm", "HR 88 -> 38.5°" and "HR 120 -> 94 sats" do not.
+("°C", "bpm", "/hr"). With neither, a run of punctuation only right after the number is skipped
+and what follows it is read in its place: dashes (a hyphen, an en or an em dash), ":", "(", "!",
+"?" and ellipses ("..." or the one character for it), glued to the number or after spaces and
+ending where a run ends (below), as in "HR 88->110 - MD notified" and "HR 88->110: improving".
+Then a label of the table of measures (one word or two, read as any label is) that the joiners
+above and a number follow starts the next reading and is nothing ("HR 88->110 RR 20", "HR 88->110
+resp rate 20", "HR 88->110 - RR 20"), unless it is glued to that number (a letter right before
+it: "O2", "RR20") or that number is a setting, written with a dose, volume, drop or oxygen-flow
+unit ("sat 2L"). Anything else is the run of characters glued there or after spaces (of any kind
+but a line break), up to a space, a line break, ",", ";", ")", an arrow or a "." that ends a
+sentence (one followed by a space, a line break or the end): "°" for "38.5°", "*C" for "38.5*C",
+"i.u" for "4 i.u.", "o2" for "94 O2", "MD" for "110 - MD notified". An arrow, the end of the text
+or that punctuation there is nothing ("HR 88->110!", "HR 88->110 -"). A run longer than 64
+characters is alike to none. So "HR 88 bpm -> 110 bpm", "SpO2 88%->95%", "HR 88->110, RR 20" and
+"HR 88->110 - RR 20" take the label; "Pain 8/10 -> 2 mg", "HR 88 -> 20 cpm", "HR 88 -> 38.5°",
+"HR 120 -> 94 sats", "HR 88->110 - MD notified" and "Pain 8 -> 2 - tabs" do not.
 
 A label the quotes use says which of their numbers the line's number must be: under that label
 the line's value must be one of theirs. A measure spelled another way is the same measure ("Temp"
@@ -132,8 +135,8 @@ _RUN_AFTER = re.compile(rf"{_SPACE}*({_RUN_CHARACTER}{{1,{_READ_AFTER}}})({_RUN_
 # A mark of punctuation only: a dash (a hyphen where no arrow starts, an en or an em dash), ":",
 # "(", "!", "?" or an ellipsis ("..." or the one character for it).
 _MARK = r"(?:-(?!-?>)|[\u2013\u2014:(!?\u2026]|\.\.\.)"
-# What is written right after a number when it is marks only, to where its run ends: "110 - MD
-# notified", "110: improving", "110!".
+# A run of marks only right after a number, glued to it or after spaces, to where the run ends:
+# the " -" of "110 - MD notified", the ":" of "110: improving", the "!" of "110!". It is skipped.
 _MARKS_AFTER = re.compile(rf"{_SPACE}*{_MARK}+(?!{_RUN_CHARACTER})")
 # Spaces after a number, a label of one word or two, then the joiners before the next number
 # ("110 RR 20"), indexed by whether "at" is read past.
@@ -325,27 +328,27 @@ def _starts_the_next_reading(
     return without_at or _at_is_value(text, written, span, read)
 
 
-def _written_after(text: str, span: Span, end: int, next_reading: bool) -> str | None:
+def _written_after(text: str, span: Span, end: int, after: int, next_reading: bool) -> str | None:
     """What is written right after a number, folded, for telling whether two are written alike.
 
     A unit or a rate read after the number (up to `end`) is its typed spelling in any case and
-    without spaces ("°C" is "°c", "/ hr" is "/hr"). Otherwise a label of the measures table that
-    the next number follows starts the next reading and is nothing (`next_reading`); and anything
-    else is the run of characters glued to the number or after spaces, up to a space, a line
-    break, ",", ";", ")", an arrow or a "." that ends a sentence ("°", "*c", "tabs", "i.u", "o2").
-    It is nothing when an arrow, the end of the text or that punctuation comes first, or when the
-    run is punctuation only ("-", ":", "!", "..."); and None when it is longer than can be read.
+    without spaces ("°C" is "°c", "/ hr" is "/hr"). Otherwise what is read starts at `after`, past
+    a run of punctuation only right after the number ("-", ":", "!", "..."): a label of the
+    measures table that the next number follows starts the next reading and is nothing
+    (`next_reading`); and anything else is the run of characters glued to that place or after
+    spaces, up to a space, a line break, ",", ";", ")", an arrow or a "." that ends a sentence
+    ("°", "*c", "tabs", "i.u", "o2", the "md" of "110 - MD notified"). It is nothing when an
+    arrow, the end of the text or that punctuation comes first, and None when it is longer than
+    can be read.
     """
     if end > span.end:
         return "".join(text[span.end : end].split()).casefold()
     if next_reading:
         return ""
-    run = _RUN_AFTER.match(text, span.end)
+    run = _RUN_AFTER.match(text, after)
     if run is None:
         return ""
-    if run.group(2) is not None:
-        return None
-    return "" if _MARKS_AFTER.match(text, span.end) else run.group(1).casefold()
+    return None if run.group(2) is not None else run.group(1).casefold()
 
 
 def _reads(
@@ -371,16 +374,20 @@ def _reads(
         unit = units[index - first]
         bare_rate, bare_end = bare_rate_end_after(text, span)
         end = bare_end if unit is None else unit.end
+        # With no unit or rate after it, a run of punctuation only right after the number is
+        # skipped: what follows it is read in its place ("110 - RR 20", "110 - MD notified").
+        marks = _MARKS_AFTER.match(text, span.end) if end == span.end else None
+        after = span.end if marks is None else marks.end()
         after_arrow = bool(out) and _ARROW.fullmatch(text, out[-1].end, span.start) is not None
         next_reading = (
             end == span.end
             and index + 1 < len(tokens)
             and (index + 1 < stop or after_arrow)
             and _starts_the_next_reading(
-                text, span.end, tokens[index + 1], partial(unit_at, index + 1)
+                text, after, tokens[index + 1], partial(unit_at, index + 1)
             )
         )
-        key = _written_after(text, span, end, next_reading)
+        key = _written_after(text, span, end, after, next_reading)
         out.append(
             _Read(
                 written=written,

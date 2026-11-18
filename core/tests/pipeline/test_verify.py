@@ -1979,22 +1979,43 @@ def test_a_measures_word_before_a_setting_does_not_start_the_next_reading() -> N
         assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
 
 
-def test_punctuation_alone_after_a_number_after_an_arrow_is_nothing() -> None:
+def test_a_run_of_punctuation_after_a_number_after_an_arrow_is_skipped_for_what_follows() -> None:
+    # Nothing after the punctuation, or a label the next number follows: the label is carried.
+    for after in (
+        "!",
+        "?",
+        " (",
+        " -",
+        "...",
+        "\u2026",
+        " - RR 20",
+        " -- RR 20",
+        " : RR: 20",
+        "! RR 20",
+    ):
+        note = f"HR 88->110{after}"
+        assert _check(note, "HR 110.", [note]).status is LineStatus.SOURCE_FOUND, note
+    # Anything else after it is what is written after the number, so the label is not carried.
     for after in (
         " - MD notified",
         ": improving",
         " ... improving",
-        "!",
-        "?",
         " \u2013 MD aware",
         " \u2014 MD aware",
         "\u2026 improving",
-        " (",
         " -- stable",
+        " - 2 tabs given",
+        " -- 2 mg given",
     ):
         note = f"HR 88->110{after}"
-        assert _check(note, "HR 110.", [note]).status is LineStatus.SOURCE_FOUND, note
+        assert _kinds(_check(note, "HR 110.", [note])) == [MismatchKind.VALUE], note
     for note, text in (
+        ("Pain 8 -> 2 - tabs", "Pain 2."),
+        ("HR 88 -> 37.8 - °C", "HR 37.8."),
+        ("HR 88 -> 38.5: temp", "HR 38.5."),
+        ("HR 120 -> 94 : O2 sat", "HR 94."),
+        ("HR 120 -> 94 ( sats )", "HR 94."),
+        ("HR 120 -> 94 - sats", "HR 94."),
         ("HR 88 -> 38.5°", "HR 38.5."),
         ("HR 88 -> 38.5*C", "HR 38.5."),
         ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
