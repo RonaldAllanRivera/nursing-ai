@@ -122,6 +122,34 @@ describe("a 401 answered for a request sent as someone else", () => {
 });
 
 describe("a request that carries a PIN is never sent twice", () => {
+  const sessionOf = (user: string) => ({ user_id: user, csrf_token: "t", gate: "open" }) as never;
+  /** A route no PIN list names (a later one): only its body says it carries a PIN. */
+  const LATER_ROUTE = "/api/v1/users/{user_id}/role";
+
+  it.each([
+    ["a body with a PIN is sent once", { role: "head_nurse", pin: MOCK_PIN }, 1],
+    ["a body with no PIN is asked again once", { role: "head_nurse" }, 2],
+  ])("on a route no list names, %s", async (_name, body, sends) => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(sessionKey, sessionOf("sarah"));
+    let seen = 0;
+    server.use(
+      http.post("*/api/v1/users/:id/role", () => {
+        seen += 1;
+        return seen === 1 ? unauthorised() : HttpResponse.json({ ok: true });
+      }),
+      http.get("*/api/v1/session", () => HttpResponse.json(sessionOf("sarah"))),
+    );
+    const post = api.POST as unknown as (url: string, init: object) => Promise<unknown>;
+    const answer = await post(LATER_ROUTE, {
+      params: { path: { user_id: "u1" } },
+      body,
+    }).catch((error: unknown) => error);
+    expect(seen).toBe(sends);
+    if (sends === 1) expect(answer).toBeInstanceOf(SignInRefreshedError);
+    else expect(answer).not.toBeInstanceOf(Error);
+  });
+
   const note = () => {
     const found = structuredClone(demoApi.notes[NOTE_1]);
     if (!found) throw new Error("no demo note");

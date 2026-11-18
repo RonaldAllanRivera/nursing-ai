@@ -30,6 +30,10 @@ export function usePinRequest<Answer>(
     gcTime: 0,
     // A PIN is sent once: not again by itself, not even for a waking database.
     retry: false,
+    // Never paused while the browser says it is offline: a paused request would keep the PIN in
+    // the mutation cache, hold its dialog open with only "…ing" in it, and go out by itself when
+    // the network came back. Sent now, an offline request fails at once with the connection words.
+    networkMode: "always",
     ...(options.scope ? { scope: { id: options.scope } } : {}),
     ...(options.onMutate ? { onMutate: options.onMutate } : {}),
   });

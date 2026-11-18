@@ -12,7 +12,8 @@ export type FacilitySettings = Omit<components["schemas"]["FacilityUpdateIn"], "
 export const REQUEST_TIMEOUT_MS = 10_000;
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-type Init = { signal?: AbortSignal | null; headers?: Record<string, string> } | undefined;
+type Init =
+  { signal?: AbortSignal | null; headers?: Record<string, string>; body?: unknown } | undefined;
 
 type SessionSource = () => Session | null | undefined;
 
@@ -44,6 +45,8 @@ const SESSION_URL = "/api/v1/session";
 /**
  * The other requests whose body carries the PIN. The PIN lives only in the one request that sends
  * it, so one of these is never sent again after a refused first try (the person types it again).
+ * The list is the contract's today; `carriesPin` also reads the body, so a later route whose body
+ * has a `pin` is never sent twice either, listed or not.
  */
 const PIN_BODY_ROUTES: readonly [Method, string][] = [
   ["POST", "/api/v1/notes/{note_id}/sign"],
@@ -54,8 +57,12 @@ const PIN_BODY_ROUTES: readonly [Method, string][] = [
   ["POST", "/api/v1/users/{user_id}/pin-reset"],
 ];
 
-const carriesPin = (name: Method, url: string) =>
-  PIN_BODY_ROUTES.some(([method, route]) => method === name && route === url);
+const hasPinKey = (body: unknown) =>
+  typeof body === "object" && body !== null && Object.hasOwn(body, "pin");
+
+const carriesPin = (name: Method, url: string, init: Init) =>
+  PIN_BODY_ROUTES.some(([method, route]) => method === name && route === url) ||
+  hasPinKey(init?.body);
 
 type Answer = { response: Response; data?: unknown };
 
@@ -121,7 +128,7 @@ async function checkedBefore401Counts(
   const reread = await once("GET", SESSION_URL, signal);
   if (name === "GET" && url === SESSION_URL) return reread;
   if (reread.response.status === 401) return first;
-  const carries = carriesPin(name, url);
+  const carries = carriesPin(name, url, init);
   if (!reread.response.ok) {
     if (carries) throw new SignInRefreshedError();
     return reread;
