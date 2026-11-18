@@ -57,14 +57,18 @@ one, or a number word from two to ten) before "times" or "x". It is followed by 
 period, or by "/" and a period (spaces around the "/" are fine): "twice a day", "twice daily",
 "2 times every day", "2 times everyday", "2x daily", "2x/day" and "2 times / day" are two a day,
 "2 times every night" is two a night, "twice each shift" is two a shift, "2 times every other day"
-is its own counted meaning, and "3 times a week" is not "3 times a day". With no "once" or count
-before it, "per" or "/" and a period is no frequency ("15 mg per day" and "15 mg/day" are rates),
-and "a" or "an" and a period is a frequency only right after a dose, volume or drop unit written
-with no rate, and then is one per that period: "15 mg a day" is one a day, while "fever for a
-day" has no frequency. That reading takes day, week, month, night and shift but not hour:
-"1000 units an hour" has no frequency, as it is a rate in practice. The abbreviations (OD, QD,
-BID, TID, QID, QOD, HS, PRN, STAT) each mean only their own spelling: "OD" is also the right eye,
-so it is never "daily". "once" alone is no frequency ("vomited once").
+is its own counted meaning, and "3 times a week" is not "3 times a day". "per" and a period is a
+frequency only after "once" or a count, and "/" and a period only after a count, so "once/day" is
+not read; otherwise neither is a frequency ("15 mg per day" and "15 mg/day" are rates). With no
+"once" or count before it, "a" or "an" and a period is a frequency only right after a dose,
+volume or drop unit written with no rate, and then is one per that period: "15 mg a day" is one a
+day, while "fever for a day" has no frequency. That reading takes day, week, month, night and
+shift but not hour ("1000 units an hour" has no frequency, as it is a rate in practice), and
+never a period followed, past spaces or a line break, by the whole word ago, before, prior,
+earlier, early, later or late: "15 mg a day ago" and "1 L a night before" say when, not how
+often. The abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN, STAT) each mean only their own
+spelling: "OD" is also the right eye, so it is never "daily". "once" alone is no frequency
+("vomited once").
 """
 
 import re
@@ -158,6 +162,11 @@ _DOSE_PERIODS = "day|week|month|night|shift"
 # "a" or "an" and one of those periods, whole words ("a day", "an-night"), read as a frequency
 # only right after such a unit ("15 mg a day").
 _A_PERIOD = re.compile(_WHOLE_WORD.format(rf"an?{_SEP}(?P<period>{_DOSE_PERIODS})"), re.IGNORECASE)
+# A time word after that period, past spaces or a line break, makes it say when, not how often:
+# "15 mg a day ago", "1 L a night before".
+_WHEN_AFTER = re.compile(
+    r"(?>\s+)(?:ago|before|prior|earlier|early|later|late)(?![^\W_])", re.IGNORECASE
+)
 
 # Longest first, so "lbs" is tried before "lb". These short spellings are read in the case shown;
 # the degree sign and the word spellings are read apart (see _read_unit).
@@ -341,7 +350,8 @@ def frequencies_in(text: str) -> list[WrittenFrequency]:
 
 def _after_a_unit(text: str) -> list[WrittenFrequency]:
     """Each "a" or "an" and a period right after a dose, volume or drop unit written with no rate
-    ("15 mg a day"), as typed from the "a": one per that period.
+    ("15 mg a day"), as typed from the "a": one per that period. A period a time word follows
+    ("15 mg a day ago") is no frequency.
 
     A unit has no digit in it, so only the number right before each "a" or "an" is read with its
     unit, which must end where the spaces, line breaks or hyphens before the "a" start.
@@ -352,6 +362,8 @@ def _after_a_unit(text: str) -> list[WrittenFrequency]:
     numbers = numbers_in(text)
     out: list[WrittenFrequency] = []
     for match in found:
+        if _WHEN_AFTER.match(text, match.end()):
+            continue
         gap = match.start()
         while gap > 0 and (text[gap - 1].isspace() or text[gap - 1] == "-"):
             gap -= 1

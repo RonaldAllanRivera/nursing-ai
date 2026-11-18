@@ -604,6 +604,32 @@ def test_a_or_an_and_a_period_is_no_frequency_after_anything_but_a_dose_with_no_
     assert rate.rate == ("day",)
 
 
+def test_a_or_an_and_a_period_before_a_time_word_says_when_not_how_often() -> None:
+    for text in (
+        "15 mg a day ago",
+        "500 mg a week ago",
+        "15 mg a day early",
+        "1 L a night before",
+        "15 mg a day prior",
+        "15 mg a day earlier",
+        "15 mg a month later",
+        "15 mg a shift late",
+        "15 mg a day\nAGO",
+        "15 mg an day   Before",
+    ):
+        assert frequencies_in(text) == [], text
+    # Only a whole time word right after the period, past spaces or a line break, stops it.
+    for text in (
+        "15 mg a day.",
+        "15 mg a day, then",
+        "15 mg a day for 3 days",
+        "15 mg a day, ago",
+        "15 mg a day lately",
+        "15 mg a day-ago",
+    ):
+        assert [f.meaning for f in frequencies_in(text)] == [(1, "day")], text
+
+
 def test_a_count_then_a_slash_and_a_period_is_a_counted_frequency() -> None:
     assert _meanings("2x/day") == [("2x/day", (0, 6), (2, "day"))]
     assert _meanings("give 2 times / week") == [("2 times / week", (5, 19), (2, "week"))]

@@ -1765,6 +1765,24 @@ def test_a_dose_then_a_or_an_and_a_period_is_checked_as_a_frequency() -> None:
     assert _frequency_findings(note, "MTX 15 mg daily.") == [("daily", Span(start=10, end=15))]
 
 
+def test_a_dose_then_a_or_an_and_a_period_before_a_time_word_is_no_frequency() -> None:
+    # "a day ago" says when, not how often, so it can't stand for "daily".
+    for note, text, phrase in (
+        ("MTX 15 mg weekly, last dose 15 mg a day ago", "MTX 15 mg daily.", "daily"),
+        (
+            "started metformin 500 mg a week ago, now 500 mg daily",
+            "Metformin 500 mg weekly.",
+            "weekly",
+        ),
+        ("MTX 15 mg weekly, given 15 mg a day early", "MTX 15 mg daily.", "daily"),
+        ("IVF 1 L every shift, 1 L a night before", "IVF 1 L nightly.", "nightly"),
+    ):
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], note
+
+
 def test_a_count_then_a_slash_and_a_period_is_checked_as_a_frequency() -> None:
     # The "2" of "SpO2" can't make "2x/day" pass for a once-daily dose.
     note = "SpO2 95%, metformin 500 mg daily"
