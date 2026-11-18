@@ -4,9 +4,11 @@ Numbers are read from the note as typed, never from the normalised matching text
 the matcher folds (a typed "½", say) can't make a number appear that the nurse didn't write. A
 number counts for a quote when it overlaps the quote and is compared whole; labels are read only
 inside the quote, and a unit is read right after the number even past the quote's end. A word
-whose number can't be compared by value ("q4h", "D5W", "two", "BID") must appear whole in a found
-quote. A time word right after a line's number ("every 2 hours") needs the same time, by meaning,
-right after a note number of that value ("q 2 hrs").
+whose number can't be compared by value ("q4h", "D5W", "two") must appear whole in a found quote.
+A frequency ("daily", "every day", "twice a day", "BID") is read by meaning and needs a frequency
+of the same meaning in a found quote; one that overlaps a mismatch the line already has is not
+flagged again. A time word right after a line's number ("every 2 hours") needs the same time, by
+meaning, right after a note number of that value ("q 2 hrs").
 """
 
 import re
@@ -35,6 +37,7 @@ from nursing_core.pipeline.unit_check import (
     NumberValue,
     WrittenUnit,
     bare_rate_end_after,
+    frequencies_in,
     number_value,
     numbers_in,
     time_after,
@@ -345,4 +348,34 @@ def _mismatches(
                 note_span=first.with_unit,
             )
         )
+    out.extend(_frequency_mismatches(text, quote_texts, out))
     return sorted(out, key=lambda mismatch: mismatch.draft_span.start)
+
+
+def _frequency_mismatches(
+    text: str, quote_texts: list[str], found: list[NumberMismatch]
+) -> list[NumberMismatch]:
+    """The frequencies of the line that no found quote gives by meaning.
+
+    A frequency that overlaps a mismatch the line already has ("twice" missing from the quotes,
+    the "3" of "3 times a day") is not flagged again.
+    """
+    in_the_quotes = {
+        frequency.meaning for quote in quote_texts for frequency in frequencies_in(quote)
+    }
+    return [
+        NumberMismatch(
+            kind=MismatchKind.VALUE,
+            draft_text=frequency.text,
+            draft_span=frequency.span,
+            note_text=None,
+            note_span=None,
+        )
+        for frequency in frequencies_in(text)
+        if frequency.meaning not in in_the_quotes
+        and not any(
+            frequency.span.start < mismatch.draft_span.end
+            and mismatch.draft_span.start < frequency.span.end
+            for mismatch in found
+        )
+    ]

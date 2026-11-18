@@ -7,6 +7,7 @@ from nursing_core.domain.units import Ucum
 from nursing_core.pipeline.unit_check import (
     WrittenUnit,
     bare_rate_end_after,
+    frequencies_in,
     number_value,
     numbers_in,
     time_after,
@@ -446,7 +447,49 @@ def test_only_a_whole_time_word_right_after_the_number_is_read() -> None:
         assert _time(text, "8") is None, text
 
 
-def test_frequency_words_are_words_with_a_number_in_them() -> None:
-    found = words_with_numbers("MTX 15 mg weekly, then PRN; Status BID.")
-    assert [word for word, _ in found] == ["weekly", "PRN", "BID"]
-    assert found[2][1] == Span(start=35, end=38)
+def test_frequency_words_are_no_longer_words_with_a_number_in_them() -> None:
+    found = words_with_numbers("MTX 15 mg weekly, then PRN; twice BID.")
+    assert [word for word, _ in found] == ["twice"]
+
+
+def _meanings(text: str) -> list[tuple[str, tuple[int, int], object]]:
+    return [(f.text, (f.span.start, f.span.end), f.meaning) for f in frequencies_in(text)]
+
+
+def test_frequencies_are_read_with_their_span_and_meaning() -> None:
+    assert _meanings("MTX 15 mg every day.") == [("every day", (10, 19), (1, "day"))]
+    assert _meanings("Given Once-A-Day") == [("Once-A-Day", (6, 16), (1, "day"))]
+    assert _meanings("x\nweekly") == [("weekly", (2, 8), (1, "week"))]
+    assert _meanings("PRN and BID") == [
+        ("PRN", (0, 3), ("abbreviation", "prn")),
+        ("BID", (8, 11), ("abbreviation", "bid")),
+    ]
+
+
+def test_the_longest_reading_wins_left_to_right() -> None:
+    assert [f.text for f in frequencies_in("once daily")] == ["once daily"]
+    assert [f.text for f in frequencies_in("every other day")] == ["every other day"]
+    assert [f.text for f in frequencies_in("3 times a day, then daily")] == [
+        "3 times a day",
+        "daily",
+    ]
+
+
+def test_synonyms_have_equal_meanings() -> None:
+    def one(text: str) -> object:
+        [found] = frequencies_in(text)
+        return found.meaning
+
+    assert len({one(t) for t in ("daily", "every day", "everyday", "each day", "once a day")}) == 1
+    assert len({one(t) for t in ("twice daily", "twice a day", "twice per day")}) == 1
+    threes = ("3 times a day", "3.0x daily", "3 x a day", "three times daily")
+    assert len({one(t) for t in threes}) == 1
+    assert one("2 times a day") == one("twice daily")
+    assert one("every other day") != one("every day")
+    assert one("OD") != one("daily")
+    assert one("3 times a week") != one("3 times a day")
+
+
+def test_a_frequency_needs_whole_words_and_a_count_or_period() -> None:
+    for text in ("dailies", "weekday", "everything", "vomited once", "15 mg per day", "15 mg/day"):
+        assert frequencies_in(text) == [], text

@@ -40,6 +40,19 @@ and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
 A time word written right after a number with no unit between ("2 hours", "x 8 hrs", "20mins") is
 read by meaning: hour, minute, day or week, from the same spellings as the denominators but for the
 one-letter "m" and "d".
+A frequency is read by meaning, in any case, each word whole, words separated by spaces, a line
+break or a hyphen ("once-a-day"); the longest reading wins, left to right, so "once daily" is one
+frequency and not "daily" inside it. "daily", "every day", "everyday", "each day", "once a day",
+"once per day" and "once daily" are one a day; the same with week, month and hour ("hourly",
+"once an hour"), and "nightly", "every night", "each night" and "every shift", "each shift" are one
+a night and one a shift. "twice", "thrice" and a number (digits, read by value so "3" and "3.0"
+are one, or a number word from two to ten) before "times" or "x" are a count, written with "daily",
+"weekly", "monthly", "hourly" or "a" or "per" and a day, week, month or hour: "twice a day",
+"twice daily", "2 times a day" and "2x daily" are two a day, and "3 times a week" is not "3 times
+a day". "every other day", "every other week" and "every other month" are their own meanings. The
+abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN, STAT) each mean only their own spelling: "OD"
+is also the right eye, so it is never "daily". "once" alone is no frequency ("vomited once"), and
+"per day" with no count before it is not one ("15 mg per day" is a rate).
 """
 
 import re
@@ -75,25 +88,36 @@ _WORD = re.compile(r"[^\W_]+")
 _NUMBER_WORDS = frozenset(
     {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "half", "twice"}
 )
-# How often a dose is given, which no number in the line says: "daily" is not "weekly", "BID" not
-# "TID". "once" is left out: a line writes "vomited once" for a note's "x1".
-_FREQUENCY_WORDS = frozenset(
-    {
-        "daily",
-        "weekly",
-        "monthly",
-        "hourly",
-        "nightly",
-        "od",
-        "qd",
-        "bid",
-        "tid",
-        "qid",
-        "qod",
-        "hs",
-        "prn",
-        "stat",
-    }
+_ABBREVIATIONS = ("od", "qd", "bid", "tid", "qid", "qod", "hs", "prn", "stat")
+_ADVERBS = {
+    "daily": "day",
+    "weekly": "week",
+    "monthly": "month",
+    "hourly": "hour",
+    "nightly": "night",
+}
+_SMALL_NUMBERS = {
+    word: Decimal(value)
+    for value, word in enumerate(
+        ("two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"), start=2
+    )
+}
+_WHOLE_WORD = r"(?<![^\W_])(?:{})(?![^\W_])"
+_SEP = r"[\s\-]+"
+_COUNT = rf"(?P<count>\d+(?:\.\d+)?|{'|'.join(_SMALL_NUMBERS)})"
+_EACH = rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})|(?:an|a|per){_SEP}(?P<period>day|week|month|hour))"
+# One pattern for each family of spellings; each match is a frequency, read with `_meaning`.
+_FREQUENCY_PATTERNS = tuple(
+    re.compile(_WHOLE_WORD.format(body), re.IGNORECASE)
+    for body in (
+        rf"(?P<abbreviation>{'|'.join(_ABBREVIATIONS)})",
+        rf"(?P<adverb>{'|'.join(_ADVERBS)})",
+        rf"everyday|(?:every|each){_SEP}(?P<period>day|week|month|hour|night|shift)",
+        rf"every{_SEP}other{_SEP}(?P<other>day|week|month)",
+        rf"once{_SEP}(?:(?P<adverb>daily|weekly|monthly)|(?:an|a|per){_SEP}(?P<period>day|week|month|hour))",
+        rf"(?P<times>twice|thrice){_SEP}{_EACH}",
+        rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_SEP}{_EACH}",
+    )
 )
 
 # Longest first, so "lbs" is tried before "lb". These short spellings are read in the case shown;
@@ -205,7 +229,18 @@ _HEART_RATE_NUMBER = re.compile(
 # "/ HR 88" form passes, and any other reading of that number with a unit flags.
 _AMBIGUOUS = "?"
 type NumberValue = tuple[str | Decimal, ...]
+# How often, by meaning: (a count, what it is per) such as (2, "day"), or ("abbreviation", "bid").
+type FrequencyMeaning = tuple[str | Decimal, str]
 _WINDOW = 64  # typed characters read after a number (a unit, a bare rate) or a unit (a rate)
+
+
+@dataclass(frozen=True, slots=True)
+class WrittenFrequency:
+    """A frequency as typed, with its span in the text and what it means."""
+
+    text: str
+    span: Span
+    meaning: FrequencyMeaning  # "daily" and "every day" mean the same; "BID" only itself
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,21 +265,53 @@ def words_with_numbers(text: str) -> list[tuple[str, Span]]:
     """Words that carry a number that isn't read as one, with their spans in `text`.
 
     These are words with digits inside ("q4h", "D5W", "HR121bpmRR20"), the number words one to
-    ten, "half" and "twice", and the frequency words ("daily", "BID", "PRN", "stat"). They can't
-    be compared by value, only as whole words.
+    ten, "half" and "twice". They can't be compared by value, only as whole words. Frequencies
+    are read by meaning instead (see `frequencies_in`).
     """
     in_words = _scan(text)[1]
     out: list[tuple[str, Span]] = []
     for word in _WORD.finditer(text):
         start, end = word.span()
         folded = word.group().casefold()
-        if (
-            folded in _NUMBER_WORDS
-            or folded in _FREQUENCY_WORDS
-            or any(start <= i < end for i in in_words)
-        ):
+        if folded in _NUMBER_WORDS or any(start <= i < end for i in in_words):
             out.append((word.group(), Span(start=start, end=end)))
     return out
+
+
+def frequencies_in(text: str) -> list[WrittenFrequency]:
+    """Every frequency in `text` as typed, left to right, each with its meaning.
+
+    Where two readings start at the same place the longer wins, and a reading that starts inside
+    an earlier one is dropped, so "once daily" is one frequency.
+    """
+    matches = sorted(
+        (match for pattern in _FREQUENCY_PATTERNS for match in pattern.finditer(text)),
+        key=lambda match: (match.start(), -match.end()),
+    )
+    out: list[WrittenFrequency] = []
+    for match in matches:
+        if out and match.start() < out[-1].span.end:
+            continue
+        span = Span(start=match.start(), end=match.end())
+        out.append(WrittenFrequency(match.group(), span, _meaning(match)))
+    return out
+
+
+def _meaning(match: re.Match[str]) -> FrequencyMeaning:
+    groups = match.groupdict()
+    if groups.get("abbreviation"):
+        return ("abbreviation", match["abbreviation"].casefold())
+    if groups.get("other"):
+        return (Decimal(1), f"other {match['other'].casefold()}")
+    count = Decimal(1)
+    if groups.get("times"):
+        count = Decimal(2 if match["times"].casefold() == "twice" else 3)
+    elif groups.get("count"):
+        written = match["count"].casefold()
+        count = _SMALL_NUMBERS.get(written) or Decimal(written)
+    if groups.get("adverb"):
+        return (count, _ADVERBS[match["adverb"].casefold()])
+    return (count, (groups.get("period") or "day").casefold())
 
 
 def _scan(text: str) -> tuple[list[tuple[str, Span]], list[int]]:

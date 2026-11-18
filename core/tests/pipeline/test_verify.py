@@ -1401,3 +1401,115 @@ def test_a_time_after_a_number_passes_when_the_note_gives_it_in_any_spelling() -
         ("ambulated 10 m", "Ambulated 10 m."),
     ]:
         assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def _frequency_findings(note: str, text: str) -> list[tuple[str, Span]]:
+    line = _check(note, text, [note])
+    for mismatch in line.number_mismatches:
+        assert mismatch.kind is MismatchKind.VALUE
+        assert (mismatch.note_text, mismatch.note_span) == (None, None)
+    return [(m.draft_text, m.draft_span) for m in line.number_mismatches]
+
+
+def test_weekly_note_drafted_as_daily_is_flagged() -> None:
+    for phrase in ("daily", "every day", "once a day"):
+        text = f"MTX 15 mg {phrase}."
+        line = _check("MTX 15 mg weekly", text, ["MTX 15 mg weekly"])
+        assert line.status is LineStatus.NUMBER_MISMATCH, phrase
+        [mismatch] = line.number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE
+        start = text.index(phrase)
+        assert (mismatch.draft_text, mismatch.draft_span) == (
+            phrase,
+            Span(start=start, end=start + len(phrase)),
+        )
+        assert (mismatch.note_text, mismatch.note_span) == (None, None)
+
+
+def test_daily_synonyms_pass() -> None:
+    spellings = ("daily", "every day", "once a day", "once daily", "each day", "once per day")
+    for a in spellings:
+        for b in spellings:
+            note = f"metformin 500 mg {a}"
+            line = _check(note, f"Metformin 500 mg {b}.", [note])
+            assert line.status is LineStatus.SOURCE_FOUND, (a, b)
+
+
+def test_weekly_synonyms_pass_and_weekly_against_daily_flags() -> None:
+    spellings = ("weekly", "every week", "each week", "once a week", "once per week", "once weekly")
+    for a in spellings:
+        for b in spellings:
+            assert _frequency_findings(f"MTX 15 mg {a}", f"MTX 15 mg {b}.") == [], (a, b)
+    assert _frequency_findings("MTX 15 mg daily", "MTX 15 mg weekly.") == [
+        ("weekly", Span(start=10, end=16))
+    ]
+
+
+def test_counted_frequencies_pass_each_other_when_the_count_is_spelled_alike() -> None:
+    # A count in words ("twice", "three") and a count in digits are checked as numbers, as before:
+    # "2 times a day" for a note's "twice daily" flags the "2".
+    for group in (
+        ("twice daily", "twice a day", "twice per day"),
+        ("2 times a day", "2x daily", "2 x a day", "2.0 times per day", "2 times daily"),
+        ("three times a day", "three times daily"),
+    ):
+        for a in group:
+            for b in group:
+                found = _frequency_findings(f"paracetamol 500 mg {a}", f"Paracetamol 500 mg {b}.")
+                assert found == [], (a, b)
+
+
+def test_a_different_count_or_period_is_flagged_on_the_frequency() -> None:
+    assert _frequency_findings("amox 3 times a day", "Amox 3 times a week.") == [
+        ("3 times a week", Span(start=5, end=19))
+    ]
+    assert _frequency_findings("amox twice daily", "Amox once a day.") == [
+        ("once a day", Span(start=5, end=15))
+    ]
+    assert _frequency_findings("amox once a day", "Amox twice daily.") == [
+        ("twice", Span(start=5, end=10))
+    ]
+
+
+def test_every_other_day_is_not_every_day() -> None:
+    assert _frequency_findings("enox 40 mg every day", "Enox 40 mg every other day.") == [
+        ("every other day", Span(start=11, end=26))
+    ]
+    assert _frequency_findings("enox 40 mg every other day", "Enox 40 mg every day.") == [
+        ("every day", Span(start=11, end=20))
+    ]
+    assert _frequency_findings("enox 40 mg every other day", "Enox 40 mg every other day.") == []
+
+
+def test_od_is_not_daily_and_an_abbreviation_is_not_a_phrase() -> None:
+    assert _frequency_findings("enox 40 mg daily", "Enox 40 mg OD.") == [
+        ("OD", Span(start=11, end=13))
+    ]
+    assert _frequency_findings("enox 40 mg OD", "Enox 40 mg daily.") == [
+        ("daily", Span(start=11, end=16))
+    ]
+    assert _frequency_findings("enox 40 mg BID", "Enox 40 mg twice a day.")[0][0] == "twice"
+    assert _frequency_findings("enox 40 mg QOD", "Enox 40 mg every other day.") == [
+        ("every other day", Span(start=11, end=26))
+    ]
+
+
+def test_a_frequency_that_overlaps_a_finding_is_not_flagged_again() -> None:
+    assert _frequency_findings("amox daily", "Amox twice daily.") == [
+        ("twice", Span(start=5, end=10))
+    ]
+    assert _frequency_findings("amox 500 mg", "Amox 500 mg 3 times a day.") == [
+        ("3", Span(start=12, end=13))
+    ]
+
+
+def test_a_frequency_is_read_in_any_case_and_with_hyphens() -> None:
+    assert _frequency_findings("amox ONCE-A-DAY", "Amox once a day.") == []
+    assert _frequency_findings("amox once daily", "Amox ONCE-A-DAY.") == []
+    assert _frequency_findings("amox daily", "Amox EVERY\nDAY.") == []
+
+
+def test_only_whole_words_are_frequencies() -> None:
+    assert _frequency_findings("amox daily", "Amox Everyday.") == []
+    for text in ("Dailies done.", "Weekday shift.", "Everything done."):
+        assert _frequency_findings("pt resting", text) == [], text
