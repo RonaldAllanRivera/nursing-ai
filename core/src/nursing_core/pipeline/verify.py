@@ -46,12 +46,17 @@ characters is alike to none. So "HR 88 bpm -> 110 bpm", "SpO2 88%->95%", "HR 88-
 
 A label the quotes use says which of their numbers the line's number must be: under that label
 the line's value must be one of theirs. A measure spelled another way is the same measure ("Temp"
-for "T", "heart rate" for "HR"), so a value the quotes give that measure under another label is a
-swap. A comparator (">", "<", ">=", "<=", "≥", "≤") right before a number belongs to it, even
-when it stands before the quote starts, and is compared by meaning (">=" is "≥"); an arrow ("->",
-"-->", "=>") and "~" are not comparators. A line number whose value matches must carry the
-comparator, or none, of a note number of that value: "HR 100" for "HR >100" is flagged, naming
-">100". Comparator words ("above", "over", "below") are not read, as "over" is also "120 over 80".
+for "T", "heart rate" for "HR"), so when the quotes give that measure numbers, a value that is not
+one of them is a swap. When they give a measure of the table no number at all, a value they give
+only under other measures of the table is a swap too ("Temp 88." for "HR 88 RR 20"). A wrong
+value offers the note number of its label, else of its measure, when there is one, but none when
+a quoted number of the line's value has no label of the table ("HR 110." for "HR was 88, now
+110"): the line may mean that reading, and a one-click fix would write an older one over it. A
+comparator (">", "<", ">=", "<=", "≥", "≤") right before a number belongs to it, even when it
+stands before the quote starts, and is compared by meaning (">=" is "≥"); an arrow ("->", "-->",
+"=>") and "~" are not comparators. A line number whose value matches must carry the comparator,
+or none, of a note number of that value: "HR 100" for "HR >100" is flagged, naming ">100".
+Comparator words ("above", "over", "below") are not read, as "over" is also "120 over 80".
 """
 
 import re
@@ -591,9 +596,23 @@ def _mismatches(
         labelled = [n for n in note_numbers if label is not None and n.label == label]
         measured = [n for n in note_numbers if measure is not None and n.measure == measure]
         same_value = [n for n in labelled or note_numbers if n.value == value]
-        swapped = bool(measured) and all(n.value != value for n in measured)
+        if measured:
+            swapped = all(n.value != value for n in measured)
+        else:
+            # A measure of the table that the quotes give no number: a value they give only under
+            # other measures of the table is a swap too ("Temp 88." for "HR 88 RR 20").
+            swapped = (
+                label in _MEASURES
+                and bool(same_value)
+                and all(n.label in _MEASURES for n in same_value)
+            )
         if not same_value or swapped:
             paired = labelled[0] if labelled and not same_value else next(iter(measured), None)
+            if any(n.value == value and n.label not in _MEASURES for n in note_numbers):
+                # A quoted number of this value with no label of the table may be the reading
+                # the line means ("HR 110." for "HR was 88, now 110"), so no note number is
+                # offered: a one-click fix could write an older reading over it.
+                paired = None
             out.append(
                 NumberMismatch(
                     kind=MismatchKind.VALUE,

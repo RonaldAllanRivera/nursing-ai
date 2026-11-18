@@ -835,6 +835,56 @@ def test_a_label_the_note_spells_the_same_way_still_decides_as_before() -> None:
     assert (mismatch.note_text, mismatch.note_span) == ("37.4", Span(start=2, end=6))
 
 
+def test_a_value_the_note_gives_only_under_other_measures_is_a_swap() -> None:
+    for note, text, drafted in (
+        ("HR 88 RR 20", "Temp 88.", "88"),
+        ("T 37.8->38.2", "HR 38.2.", "38.2"),
+        ("RR 20", "HR 20.", "20"),
+        ("Intake at 1200 mL, output 800 mL", "Intake 800 mL.", "800"),
+        ("Intake at 8 oz, output 6 oz", "Intake 6 oz.", "6"),
+    ):
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, drafted), note
+        assert (mismatch.note_text, mismatch.note_span) == (None, None), note
+    # The same measure under another spelling, a number with no label and a label outside the
+    # table are no swap.
+    for note, text in (
+        ("HR 88 RR 20", "Pulse 88."),
+        ("HR 88, 20 mins later", "RR 20."),
+        ("pulse ox 95%", "Sat 95%."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_value_the_line_may_mean_unlabelled_in_the_note_offers_no_note_number() -> None:
+    # A note number of the line's value with no label of the measures table may be the reading
+    # the line means ("now 110"), so the finding offers no note number: a one-click fix can't
+    # write the older reading.
+    for note, text, drafted in (
+        ("HR was 88, now 110", "HR 110.", "110"),
+        ("T was 39.1, now 37.8", "T 37.8.", "37.8"),
+        ("Pain was 8/10, now 3/10", "Pain 3/10.", "3/10"),
+        ("SpO2 was 88%, now 95%", "SpO2 95%.", "95"),
+        ("HR is 88 at rest, 110 on ambulation", "HR 110 on ambulation.", "110"),
+        ("amox 2 times a day, 500 mg", "Amox 500 mg 2 times a week.", "500"),
+        ("BP 140/90 -> 120/80 UO 200 mL", "BP 120/80.", "120/80"),
+        ("HR 88, later 110", "HR 88 -> 110.", "110"),
+    ):
+        line = _check(note, text, [note])
+        [mismatch] = [m for m in line.number_mismatches if m.draft_text == drafted]
+        assert mismatch.kind is MismatchKind.VALUE, note
+        assert (mismatch.note_text, mismatch.note_span) == (None, None), note
+    # A value the note gives only under labels of the table still offers the right number.
+    for note, text, offered, span in (
+        ("HR 88 RR 20", "HR 20.", "88", Span(start=3, end=5)),
+        ("T 37.4 HR 88", "Temp 88.", "37.4", Span(start=2, end=6)),
+        ("RR 18 calm", "RR 20.", "18", Span(start=3, end=5)),
+    ):
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE, note
+        assert (mismatch.note_text, mismatch.note_span) == (offered, span), note
+
+
 def test_more_spacings_and_an_ampersand_make_a_mixed_number_in_the_note() -> None:
     for note in (
         "GAVE 1 AND 1/2 TAB",
@@ -1960,7 +2010,10 @@ def test_a_sign_written_after_a_number_after_an_arrow_is_what_is_written_after_i
         "HR 88 -> 38.5*C",
     ):
         [mismatch] = _check(note, "HR 38.5.", [note]).number_mismatches
-        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88"), note
+        # The note's 38.5 takes no label, so the line may mean it: no note number is offered,
+        # as a one-click fix could write the other reading over it.
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, None), note
+        assert mismatch.note_span is None, note
     for note, text in (
         ("IV 100 per hr -> 80 per min", "IV 80."),
         ("IV 100 / hr -> 80 / min", "IV 80."),
@@ -2025,7 +2078,13 @@ def test_a_measures_word_glued_to_the_next_number_does_not_start_the_next_readin
     assert _kinds(_check(note, "HR 94.", ["HR 120 -> 94"])) == [MismatchKind.VALUE]
     note = "CBG 94 -> >0800 o2"
     [mismatch] = _check(note, "CBG 0800.", [note]).number_mismatches
-    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "94")
+    # The note's 0800 takes no label, so the line may mean it: no note number is offered, as a
+    # one-click fix could write the 94 over it.
+    assert (mismatch.kind, mismatch.note_text, mismatch.note_span) == (
+        MismatchKind.VALUE,
+        None,
+        None,
+    )
 
 
 def test_a_measures_word_before_a_setting_does_not_start_the_next_reading() -> None:
