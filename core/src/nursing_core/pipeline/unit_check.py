@@ -37,9 +37,11 @@ A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit
 letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
 and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
 "lpm" is litres per minute.
-An ounce ("oz", "ounce", "ounces", "fl oz", "fl. oz", in any case) is a unit of its own, kept by
-spelling like the others: it is never mL, cc, L or a bare number, and nothing converts it, so
-"8 oz" is not "240 mL". It reads a rate like any volume unit ("8 oz/hr"). "fl" alone is no unit.
+An ounce ("oz", "ozs", "ounce", "ounces", or "fl" or "fluid" then one of those past a "." and
+spaces or a line break: "fl oz", "fl. oz", "fluid ounces"; in any case) is a unit of its own, kept
+by spelling like the others: it is never mL, cc or L, a note number written with no unit never
+stands for one, and nothing converts it, so "8 oz" is not "240 mL". It reads a rate like any
+volume unit ("8 oz/hr"). "fl" or "fluid" alone is no unit.
 A time word written right after a number with no unit between ("2 hours", "x 8 hrs", "20mins") is
 read by meaning: hour, minute, day or week, from the same spellings as the denominators but for the
 one-letter "m" and "d".
@@ -95,7 +97,9 @@ _MIXED_PARTS = re.compile(
 _WHOLE_NUMBER = re.compile(r"\d+")
 _LETTERS = re.compile(r"[^\W\d_]+")
 _WORD = re.compile(r"[^\W_]+")
-_FLUID_OUNCE = re.compile(r"\.?[ \t]*oz", re.IGNORECASE)  # after "fl"
+# An ounce spelling after "fl" or "fluid", past a "." and spaces or a line break: "fl. oz",
+# "fluid ounces".
+_FLUID_OUNCE = re.compile(r"\.?\s*(?:ozs?|ounces?)", re.IGNORECASE)
 _NUMBER_WORDS = frozenset(
     {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "half", "twice"}
 )
@@ -208,7 +212,7 @@ _COMPARED_UNITS = {
     **dict.fromkeys(("milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
     "gtt": "gtt",
     "gtts": "gtt",
-    **dict.fromkeys(("oz", "ounce", "ounces"), "oz"),
+    **dict.fromkeys(("oz", "ozs", "ounce", "ounces"), "oz"),
 }
 # The unit spellings the code knows, folded. A letter run right after whole digits that is one of
 # them ("HR121bpm") leaves the digits a number, and a note number followed by one has a unit.
@@ -525,7 +529,7 @@ def _spelling_after(text: str, number_span: Span) -> tuple[str, int] | None:
         return None
     spelling = letters.group().casefold()
     stop = letters.end()
-    if spelling == "fl":  # "fl oz" and "fl. oz" are the ounce, "fl" alone is nothing
+    if spelling in ("fl", "fluid"):  # "fl oz" and "fluid ounces" are the ounce, "fl" is nothing
         fluid = _FLUID_OUNCE.match(folded, stop)
         if fluid is None or not _word_ends(folded, fluid.end()):
             return None

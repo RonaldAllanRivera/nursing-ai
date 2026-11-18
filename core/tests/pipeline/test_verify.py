@@ -698,6 +698,22 @@ def test_ounces_drafted_as_millilitres_are_flagged() -> None:
     assert _kinds(_check("8 oz", "240 mL", ["8 oz"])) == [MismatchKind.VALUE]
 
 
+def test_more_ounce_spellings_drafted_as_millilitres_are_flagged() -> None:
+    for written in ("8 fl ounces", "8 ozs", "8 fluid ounces", "8 fl\noz", "8 FLUID OZ"):
+        note = f"PO intake {written}"
+        [mismatch] = _check(note, "PO intake 8 mL.", [note]).number_mismatches
+        assert mismatch.kind is MismatchKind.UNIT, written
+        assert (mismatch.note_text, mismatch.note_span) == (
+            written,
+            Span(start=10, end=10 + len(written)),
+        ), written
+        assert _check(note, "PO intake 8 oz.", [note]).status is LineStatus.SOURCE_FOUND, written
+    [mismatch] = _check("8 fl oz", "8 mL", ["8 fl oz"]).number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.UNIT, "8 mL")
+    assert mismatch.draft_span == Span(start=0, end=4)
+    assert (mismatch.note_text, mismatch.note_span) == ("8 fl oz", Span(start=0, end=7))
+
+
 def test_a_value_must_match_a_number_that_follows_the_same_label() -> None:
     line = _check("HR 112 RR 20", "HR 20, RR 112.", ["HR 112 RR 20"])
     assert _kinds(line) == [MismatchKind.VALUE, MismatchKind.VALUE]
@@ -784,19 +800,27 @@ def test_pulse_rate_label_pairs_with_hr() -> None:
     assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
     note = "pulse rate 88, RR 20"
     assert _check(note, "HR 88.", [note]).status is LineStatus.SOURCE_FOUND
-    line = _check(note, "HR 20.", [note])
-    assert _kinds(line) == [MismatchKind.VALUE]
+    [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+    assert mismatch.note_span == Span(start=11, end=13)
 
 
-def test_respirations_label_pairs_with_rr() -> None:
+def test_each_respiratory_rate_spelling_pairs_with_rr() -> None:
+    spellings = ("Respirations", "Respiration", "Resps", "Respiration rate")
     note = "HR 88 RR 20"
-    for faithful in ("Respirations 20.", "Respiration 20."):
+    for spelled in spellings:
+        faithful = f"{spelled} 20."
         assert _check(note, faithful, [note]).status is LineStatus.SOURCE_FOUND, faithful
-    line = _check(note, "Respirations 88.", [note])
-    assert _kinds(line) == [MismatchKind.VALUE]
-    note = "respirations 20, HR 88"
-    assert _check(note, "RR 20.", [note]).status is LineStatus.SOURCE_FOUND
-    assert _kinds(_check(note, "RR 88.", [note])) == [MismatchKind.VALUE]
+        [mismatch] = _check(note, f"{spelled} 88.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "20"), spelled
+        assert mismatch.note_span == Span(start=9, end=11), spelled
+    for spelled in spellings:
+        note = f"{spelled.lower()} 20, HR 88"
+        assert _check(note, "RR 20.", [note]).status is LineStatus.SOURCE_FOUND, note
+        [mismatch] = _check(note, "RR 88.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "20"), note
+        start = len(spelled) + 1
+        assert mismatch.note_span == Span(start=start, end=start + 2), note
 
 
 def test_a_label_the_note_spells_the_same_way_still_decides_as_before() -> None:

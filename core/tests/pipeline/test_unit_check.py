@@ -307,15 +307,33 @@ def test_rate_denominators_are_read_by_meaning() -> None:
 
 
 def test_every_ounce_spelling_is_the_compared_unit_oz() -> None:
-    for text in ("8 oz", "8 OZ", "8 ounce", "8 ounces", "8 fl oz", "8 fl. oz", "8 FL.OZ", "8oz"):
+    for text in (
+        "8 oz",
+        "8 OZ",
+        "8 ozs",
+        "8 ounce",
+        "8 ounces",
+        "8 fl oz",
+        "8 fl. oz",
+        "8 FL.OZ",
+        "8oz",
+        "8 fl ozs",
+        "8 fl ounce",
+        "8 fl ounces",
+        "8 fluid oz",
+        "8 fluid ounces",
+        "8 FLUID OUNCES",
+        "8 fl\noz",
+        "8 fluid\nounces",
+    ):
         written = _written(text, "8")
         assert written is not None, text
         assert (written.compared, written.rate, written.end) == ("oz", (), len(text)), text
     rate = _written("8 oz/hr", "8")
     assert rate is not None
     assert (rate.compared, rate.rate) == ("oz", ("hour",))
-    assert _written("8 fl", "8") is None
-    assert _written("8 fl ozone", "8") is None
+    for text in ("8 fl", "8 fl ozone", "8 fluid", "8 fluids", "8 fluid intake", "8 fluid ozone"):
+        assert _written(text, "8") is None, text
 
 
 def test_a_slash_then_a_digit_ends_the_unit() -> None:
