@@ -1542,3 +1542,40 @@ def test_only_whole_words_are_frequencies() -> None:
     assert _frequency_findings("amox daily", "Amox Everyday.") == []
     for text in ("Dailies done.", "Weekday shift.", "Everything done."):
         assert _frequency_findings("pt resting", text) == [], text
+
+
+def test_a_count_before_every_night_shift_or_other_is_a_count() -> None:
+    for note, text, phrase in [
+        (
+            "melatonin 3 mg nightly, 2 tabs",
+            "Melatonin 3 mg 2 times every night.",
+            "2 times every night",
+        ),
+        (
+            "melatonin 3 mg nightly, vomited twice",
+            "Melatonin 3 mg twice each night.",
+            "twice each night",
+        ),
+        ("turn pt every shift, 2 staff", "Turn pt 2 times every shift.", "2 times every shift"),
+        ("turn pt every shift, vomited twice", "Turn pt twice each shift.", "twice each shift"),
+        (
+            "enox 40 mg every other day, 2 tabs",
+            "Enox 40 mg 2 times every other day.",
+            "2 times every other day",
+        ),
+        (
+            "enox 40 mg every other day, vomited twice",
+            "Enox 40 mg twice every other day.",
+            "twice every other day",
+        ),
+    ]:
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], text
+    assert (
+        _frequency_findings(
+            "enox 40 mg 2 times every other day", "Enox 40 mg 2 times every other day."
+        )
+        == []
+    )

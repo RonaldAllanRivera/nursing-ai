@@ -47,13 +47,16 @@ frequency and not "daily" inside it. "daily", "every day", "everyday", "each day
 an hour"), and "nightly", "every night", "each night" and "every shift", "each shift" are one a
 night and one a shift. "twice", "thrice" and a number (digits, read by value so "3" and "3.0" are
 one, or a number word from two to ten) before "times" or "x" are a count, written with "daily",
-"weekly", "monthly", "hourly" or "a", "per", "every" or "each" and a day, week, month or hour:
-"twice a day", "twice daily", "2 times every day", "2 times a day" and "2x daily" are two a day, and
+"weekly", "monthly", "hourly", "a" or "per" and a day, week, month or hour, or with "every" or
+"each" and any period they take alone (day, week, month, hour, night, shift), or with "every other"
+and a day, week or month: "twice a day", "twice daily", "2 times every day", "2 times a day" and "2x
+daily" are two a day, "2 times every night" is two a night, "twice each shift" is two a shift, and
 "3 times a week" is not "3 times a day". "every other day", "every other week" and "every other
-month" are their own meanings. The abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN, STAT) each
-mean only their own spelling: "OD" is also the right eye, so it is never "daily". "once" alone is no
-frequency ("vomited once"), and "per day" with no count before it is not one ("15 mg per day" is a
-rate).
+month" are their own meanings, and with a count in front ("2 times every other day") the count is
+theirs, so it is neither "every other day" nor "2 times every day". The abbreviations (OD, QD, BID,
+TID, QID, QOD, HS, PRN, STAT) each mean only their own spelling: "OD" is also the right eye, so it
+is never "daily". "once" alone is no frequency ("vomited once"), and "per day" with no count before
+it is not one ("15 mg per day" is a rate).
 """
 
 import re
@@ -106,9 +109,15 @@ _SMALL_NUMBERS = {
 _WHOLE_WORD = r"(?<![^\W_])(?:{})(?![^\W_])"
 _SEP = r"[\s\-]+"
 _COUNT = rf"(?P<count>\d+(?:\.\d+)?|{'|'.join(_SMALL_NUMBERS)})"
-_EACH = (
+# What "every" and "each" take, and "every other", the same with or without a count in front.
+_EVERY_PERIODS = "day|week|month|hour|night|shift"
+_EVERY = rf"(?:every|each){_SEP}(?P<period>{_EVERY_PERIODS})"
+_EVERY_OTHER = rf"every{_SEP}other{_SEP}(?P<other>day|week|month)"
+_COUNTED_EACH = (
     rf"(?:(?P<adverb>{'|'.join(_ADVERBS)})"
-    rf"|(?:an|a|per|every|each){_SEP}(?P<period>day|week|month|hour))"
+    rf"|(?:(?:an|a|per){_SEP}(?=day|week|month|hour)|(?:every|each){_SEP})"
+    rf"(?P<period>{_EVERY_PERIODS})"
+    rf"|{_EVERY_OTHER})"
 )
 # One pattern for each family of spellings; each match is a frequency, read with `_meaning`.
 _FREQUENCY_PATTERNS = tuple(
@@ -116,11 +125,11 @@ _FREQUENCY_PATTERNS = tuple(
     for body in (
         rf"(?P<abbreviation>{'|'.join(_ABBREVIATIONS)})",
         rf"(?P<adverb>{'|'.join(_ADVERBS)})",
-        rf"everyday|(?:every|each){_SEP}(?P<period>day|week|month|hour|night|shift)",
-        rf"every{_SEP}other{_SEP}(?P<other>day|week|month)",
+        rf"everyday|{_EVERY}",
+        _EVERY_OTHER,
         rf"once{_SEP}(?:(?P<adverb>daily|weekly|monthly)|(?:an|a|per){_SEP}(?P<period>day|week|month|hour))",
-        rf"(?P<times>twice|thrice){_SEP}{_EACH}",
-        rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_SEP}{_EACH}",
+        rf"(?P<times>twice|thrice){_SEP}{_COUNTED_EACH}",
+        rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_SEP}{_COUNTED_EACH}",
     )
 )
 
@@ -305,14 +314,14 @@ def _meaning(match: re.Match[str]) -> FrequencyMeaning:
     groups = match.groupdict()
     if groups.get("abbreviation"):
         return ("abbreviation", match["abbreviation"].casefold())
-    if groups.get("other"):
-        return (Decimal(1), f"other {match['other'].casefold()}")
     count = Decimal(1)
     if groups.get("times"):
         count = Decimal(2 if match["times"].casefold() == "twice" else 3)
     elif groups.get("count"):
         written = match["count"].casefold()
         count = _SMALL_NUMBERS.get(written) or Decimal(written)
+    if groups.get("other"):
+        return (count, f"other {match['other'].casefold()}")
     if groups.get("adverb"):
         return (count, _ADVERBS[match["adverb"].casefold()])
     return (count, (groups.get("period") or "day").casefold())

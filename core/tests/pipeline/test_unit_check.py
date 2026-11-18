@@ -499,3 +499,19 @@ def test_a_count_before_every_or_each_is_read_as_a_count() -> None:
     assert _meanings("2 times every day") == [("2 times every day", (0, 17), (2, "day"))]
     assert _meanings("twice each week") == [("twice each week", (0, 15), (2, "week"))]
     assert _meanings("3x each month") == [("3x each month", (0, 13), (3, "month"))]
+
+
+def test_a_count_before_every_each_or_every_other_takes_the_same_periods_as_without() -> None:
+    assert _meanings("2 times every night") == [("2 times every night", (0, 19), (2, "night"))]
+    assert _meanings("twice each shift") == [("twice each shift", (0, 16), (2, "shift"))]
+    assert _meanings("2 times every other day") == [
+        ("2 times every other day", (0, 23), (2, "other day"))
+    ]
+    assert _meanings("twice every other week") == [
+        ("twice every other week", (0, 22), (2, "other week"))
+    ]
+    assert _meanings("every other day") == [("every other day", (0, 15), (1, "other day"))]
+    [counted] = frequencies_in("2 times every other day")
+    [plain] = frequencies_in("every other day")
+    [every] = frequencies_in("2 times every day")
+    assert len({counted.meaning, plain.meaning, every.meaning}) == 3
