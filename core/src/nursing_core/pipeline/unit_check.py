@@ -37,6 +37,9 @@ A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit
 letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
 and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
 "lpm" is litres per minute.
+An ounce ("oz", "ounce", "ounces", "fl oz", "fl. oz", in any case) is a unit of its own, kept by
+spelling like the others: it is never mL, cc, L or a bare number, and nothing converts it, so
+"8 oz" is not "240 mL". It reads a rate like any volume unit ("8 oz/hr"). "fl" alone is no unit.
 A time word written right after a number with no unit between ("2 hours", "x 8 hrs", "20mins") is
 read by meaning: hour, minute, day or week, from the same spellings as the denominators but for the
 one-letter "m" and "d".
@@ -87,6 +90,7 @@ _MIXED_PARTS = re.compile(
 _WHOLE_NUMBER = re.compile(r"\d+")
 _LETTERS = re.compile(r"[^\W\d_]+")
 _WORD = re.compile(r"[^\W_]+")
+_FLUID_OUNCE = re.compile(r"\.?[ \t]*oz", re.IGNORECASE)  # after "fl"
 _NUMBER_WORDS = frozenset(
     {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "half", "twice"}
 )
@@ -188,6 +192,7 @@ _COMPARED_UNITS = {
     **dict.fromkeys(("milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
     "gtt": "gtt",
     "gtts": "gtt",
+    **dict.fromkeys(("oz", "ounce", "ounces"), "oz"),
 }
 # The unit spellings the code knows, folded. A letter run right after whole digits that is one of
 # them ("HR121bpm") leaves the digits a number, and a note number followed by one has a unit.
@@ -478,9 +483,15 @@ def _spelling_after(text: str, number_span: Span) -> tuple[str, int] | None:
     if letters is None or not _word_ends(folded, letters.end()):
         return None
     spelling = letters.group().casefold()
+    stop = letters.end()
+    if spelling == "fl":  # "fl oz" and "fl. oz" are the ounce, "fl" alone is nothing
+        fluid = _FLUID_OUNCE.match(folded, stop)
+        if fluid is None or not _word_ends(folded, fluid.end()):
+            return None
+        spelling, stop = "oz", fluid.end()
     if spelling not in _UNIT_SPELLINGS:
         return None
-    return spelling, origin[letters.end() - 1] + 1
+    return spelling, origin[stop - 1] + 1
 
 
 def _fold_after(text: str, start: int) -> tuple[str, list[int]]:

@@ -677,6 +677,25 @@ def test_a_dose_unit_must_agree_with_the_note_and_a_bare_note_number_has_none() 
         assert _kinds(line) == [MismatchKind.UNIT], (note, drafted)
 
 
+def test_ounces_drafted_as_millilitres_are_flagged() -> None:
+    line = _check("PO intake 8 oz", "PO intake 8 mL.", ["PO intake 8 oz"])
+    assert _kinds(line) == [MismatchKind.UNIT]
+    [mismatch] = line.number_mismatches
+    assert (mismatch.draft_text, mismatch.draft_span) == ("8 mL", Span(start=10, end=14))
+    assert (mismatch.note_text, mismatch.note_span) == ("8 oz", Span(start=10, end=14))
+    for drafted in (
+        "PO intake 8 oz.",
+        "PO intake 8 ounces.",
+        "PO intake 8 fl oz.",
+        "PO intake 8 OZ.",
+    ):
+        assert _check("PO intake 8 oz", drafted, ["PO intake 8 oz"]).status is (
+            LineStatus.SOURCE_FOUND
+        ), drafted
+    assert _kinds(_check("PO intake 8", "8 oz", ["PO intake 8"])) == [MismatchKind.UNIT]
+    assert _kinds(_check("8 oz", "240 mL", ["8 oz"])) == [MismatchKind.VALUE]
+
+
 def test_a_value_must_match_a_number_that_follows_the_same_label() -> None:
     line = _check("HR 112 RR 20", "HR 20, RR 112.", ["HR 112 RR 20"])
     assert _kinds(line) == [MismatchKind.VALUE, MismatchKind.VALUE]
