@@ -7,7 +7,7 @@ import { GateScreen } from "../session/GateScreen";
 import { roleLabel } from "../session/personas";
 import { screenForGate } from "../session/pin";
 import { useSession, useSignOut } from "../session/session";
-import { applyTheme, readTheme, saveTheme, type Theme } from "../theme/theme";
+import { appliedTheme, applyTheme, saveTheme, type Theme } from "../theme/theme";
 import { canSeeStaff } from "../staff/permissions";
 import { cn } from "../lib/cn";
 import { useFacility } from "../facility/useFacility";
@@ -21,7 +21,7 @@ const NAV_LINK =
   "inline-flex min-h-11 items-center rounded-full px-2 font-semibold sm:px-3 text-ink [&.active]:bg-sunk [&.active]:underline [&.active]:underline-offset-4 hover:bg-sunk";
 
 function ThemeToggle({ className }: { className?: string }) {
-  const [theme, setTheme] = useState<Theme>(readTheme);
+  const [theme, setTheme] = useState<Theme>(appliedTheme);
   const night = theme === "night";
   return (
     <button

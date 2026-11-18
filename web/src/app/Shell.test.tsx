@@ -1,7 +1,8 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
+import { sessionKey, type Session } from "../session/session";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { chooseAndUnlock, signInAsPersona as signInAs } from "../test/signIn";
@@ -81,6 +82,35 @@ describe("shell and guards", () => {
     expect(localStorage.getItem("theme")).toBe("night");
     await userEvent.click(toggle);
     expect(document.documentElement.dataset["theme"]).toBe("day");
+  });
+
+  it("shows the theme that is applied after a lock, even when storage is blocked", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const { queryClient } = await signInAs("Staff nurse · Sarah Navarro, RN");
+    await userEvent.click(await screen.findByRole("button", { name: "Night theme" }));
+    expect(document.documentElement.dataset["theme"]).toBe("night");
+    const gate = (next: Session["gate"]) => {
+      act(() => {
+        queryClient.setQueryData<Session | null>(sessionKey, (s) => (s ? { ...s, gate: next } : s));
+      });
+    };
+    gate("idle_locked");
+    await screen.findByRole("button", { name: "Switch nurse" });
+    gate("open");
+    await screen.findByRole("button", { name: "Sign out" });
+    const toggle = await screen.findByRole("button", { name: "Night theme" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(toggle);
+    await waitFor(() => {
+      expect(document.documentElement.dataset["theme"]).toBe("day");
+    });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    vi.restoreAllMocks();
   });
 
   it("keeps the admin off a patient's page too", async () => {

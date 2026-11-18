@@ -28,16 +28,23 @@ export function usePinEntry(
 ) {
   const [pin, setPin] = useState("");
   const [short, setShort] = useState(false);
+  // What the request had failed with before this form was shown. A dialog the code closed (not
+  // the person) leaves its failure in the request, and that failure is about the try before: a
+  // form shows only a failure that came after it opened.
+  const [before] = useState(request.error);
+  const failure = request.error === before ? null : request.error;
 
   const message = short
     ? PIN_NEEDED
-    : isPinRefusal(request.error)
-      ? pinProblemMessage(request.error, persona)
+    : isPinRefusal(failure)
+      ? pinProblemMessage(failure, persona)
       : null;
 
   return {
     pin,
     message,
+    /** This try's failure, whatever it was (`message` words only a wrong PIN). */
+    failure,
     onChange: (value: string) => {
       setPin(value);
       setShort(false);

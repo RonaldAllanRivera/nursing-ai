@@ -152,7 +152,12 @@ describe("when an action fails", () => {
     ]);
     await fillInvite();
     const dialog = await giveThePin(/^Invite /, "Send invite");
-    expect(await within(dialog).findByText(/Check your connection/)).toBeVisible();
+    expect(
+      await within(dialog).findByText(
+        "The invite could not be saved as typed. Check the email, role and facility, then try again.",
+      ),
+    ).toBeVisible();
+    expect(within(dialog).queryByText(/connection/)).toBeNull();
     expect(screen.queryByText("Enter an email address like name@example.com.")).toBeNull();
   });
 });

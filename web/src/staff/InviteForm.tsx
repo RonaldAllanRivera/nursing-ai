@@ -13,12 +13,24 @@ import {
   type InviteProblems,
   type InviteValues,
 } from "./invite";
+import { pinProblemMessage } from "../session/pin";
 import { failureKind } from "./failure";
 import { useInvite } from "./staffApi";
 import { DONE, inviteWords } from "./words";
 
 const ROLES: components["schemas"]["Role"][] = ["staff_nurse", "head_nurse", "admin"];
 const EMPTY: InviteValues = { email: "", role: "staff_nurse", facility: "" };
+
+/** Said under the PIN when the server refused the invite's content in a way the form has no field for. */
+export const INVITE_UNSAVED =
+  "The invite could not be saved as typed. Check the email, role and facility, then try again.";
+
+/** The words for a failure that keeps the dialog open: a refused invite, or the usual PIN words. */
+function inviteFailureWords(error: unknown): string {
+  return error instanceof ApiError && error.status === 422
+    ? INVITE_UNSAVED
+    : pinProblemMessage(error, false);
+}
 
 /**
  * What a refused invitation says about the form, in the screen's own words (never the server's),
@@ -185,7 +197,7 @@ export function InviteForm({
         words={inviteWords(asked, roleLabel(values.role).toLowerCase(), facilityName)}
         request={request}
         persona={false}
-        showFailure
+        failureWords={inviteFailureWords}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           const target = { email, facility, invite: submit }[landing.current];
