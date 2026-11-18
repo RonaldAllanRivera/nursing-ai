@@ -291,7 +291,12 @@ async def test_new_routes_answer_501_until_built(
     response = await client.request(method, path, json=body, headers=headers)
     # Registered: never a 404 or 405. A stub answers 501; a built route answers anything else,
     # so this stays true while the lanes build them.
-    assert response.status_code not in (404, 405), response.text
+    # The Google routes are registered but answer 404 `not_found` while Google sign-in is off,
+    # which is how this app (no Google client) runs.
+    if path.startswith("/api/v1/auth/google/") and response.status_code == 404:
+        assert response.json()["code"] == "not_found"
+    else:
+        assert response.status_code not in (404, 405), response.text
     if response.status_code == 501:
         assert response.json()["code"] == "not_implemented"
 

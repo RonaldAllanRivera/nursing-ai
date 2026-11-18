@@ -22,13 +22,14 @@ from uuid import UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from faker import Faker
-from sqlalchemy import Table
+from sqlalchemy import Table, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from nursing_core.auth.pins import hash_pin
 from nursing_core.clock import SystemClock
 from nursing_core.db import create_engine
-from nursing_core.demo import DEMO_FACILITIES, DEMO_PERSONAS, DemoCase, load_demo_cases
+from nursing_core.demo import DEMO_FACILITIES, DEMO_PERSONAS, DEMO_PIN, DemoCase, load_demo_cases
 from nursing_core.domain.facility import FacilityProfile
 from nursing_core.domain.patient import (
     FallRisk,
@@ -379,6 +380,12 @@ async def seed(engine: AsyncEngine, clock: Clock) -> None:
                 for persona in DEMO_PERSONAS
             ],
         )
+        # One public PIN, so one hash for every persona that has none; a hash already there stays.
+        unhashed = tables.app_user.c.persona.is_(True) & tables.app_user.c.pin_hash.is_(None)
+        if await conn.scalar(select(func.count()).select_from(tables.app_user).where(unhashed)):
+            await conn.execute(
+                update(tables.app_user).where(unhashed).values(pin_hash=hash_pin(DEMO_PIN))
+            )
         wards = sorted({(key, s.ward) for key, group in stays.items() for s in group})
         await _add(
             conn,

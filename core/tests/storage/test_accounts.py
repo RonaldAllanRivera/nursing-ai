@@ -2,12 +2,14 @@
 
 import hashlib
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from nursing_core.auth.pins import MAX_PIN_TRIES, hash_pin, verify_pin
 from nursing_core.clock import FixedClock
-from nursing_core.domain.errors import NotFound
-from nursing_core.domain.users import Role
+from nursing_core.demo import DEMO_PERSONAS, DEMO_PIN
+from nursing_core.domain.errors import EmailTaken, IdentityMismatch, NotFound
+from nursing_core.domain.users import Role, UserStatus
 from nursing_core.ports import FacilityRepository, NoteRepository, PatientRepository
 from nursing_core.storage import tables
 from nursing_core.storage.repositories import (
@@ -18,7 +20,8 @@ from nursing_core.storage.repositories import (
     PgSessionRepository,
     PgUserRepository,
 )
-from sqlalchemy import select
+from nursing_core.storage.seed import seed
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .world import NOW, build_world
@@ -61,7 +64,7 @@ async def test_session_stores_only_a_hash_and_expires_after_twelve_hours(
     repo = PgSessionRepository(engine)
     shift = world.case.rough_note.shift
 
-    token = await repo.create(world.nurse_id, shift, NOW)
+    token = (await repo.create(world.nurse_id, shift, NOW, 12)).token
 
     async with engine.connect() as conn:
         stored = (await conn.execute(select(tables.session.c.token_hash))).scalars().all()
@@ -81,8 +84,8 @@ async def test_tokens_are_random_and_an_admin_session_has_no_shift(engine: Async
     world = await build_world(engine)
     repo = PgSessionRepository(engine)
 
-    first = await repo.create(world.admin_id, None, NOW)
-    second = await repo.create(world.admin_id, None, NOW)
+    first = (await repo.create(world.admin_id, None, NOW, 12)).token
+    second = (await repo.create(world.admin_id, None, NOW, 12)).token
 
     assert first != second
     assert len(first) >= 43
@@ -96,8 +99,8 @@ async def test_each_session_gets_its_own_csrf_token_never_in_a_repr(engine: Asyn
     world = await build_world(engine)
     repo = PgSessionRepository(engine)
 
-    first = await repo.create(world.admin_id, None, NOW)
-    second = await repo.create(world.admin_id, None, NOW)
+    first = (await repo.create(world.admin_id, None, NOW, 12)).token
+    second = (await repo.create(world.admin_id, None, NOW, 12)).token
 
     one, two = await repo.get(first, NOW), await repo.get(second, NOW)
     assert one is not None
@@ -131,7 +134,7 @@ async def test_set_shift_and_delete(engine: AsyncEngine) -> None:
             "ends_at": shift.ends_at + timedelta(hours=8),
         }
     )
-    token = await repo.create(world.nurse_id, shift, NOW)
+    token = (await repo.create(world.nurse_id, shift, NOW, 12)).token
 
     await repo.set_shift(token, later)
     session = await repo.get(token, NOW)
@@ -142,3 +145,426 @@ async def test_set_shift_and_delete(engine: AsyncEngine) -> None:
     await repo.delete(token)
     assert await repo.get(token, NOW) is None
     await repo.delete(token)  # no session: nothing to do
+
+
+ADMIN_EMAIL = "boss@example.com"
+NURSE_EMAIL = "nina@example.com"
+
+
+@pytest.mark.asyncio
+async def test_invite_reads_invited_and_bind_google_makes_it_active(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    users = PgUserRepository(engine)
+    admin = await users.invite(ADMIN_EMAIL, Role.ADMIN, None, None)
+
+    invited = await users.invite(NURSE_EMAIL, Role.STAFF_NURSE, world.profile.key, admin.id)
+
+    assert (invited.status, invited.has_pin, invited.pin_locked, invited.persona) == (
+        UserStatus.INVITED,
+        False,
+        False,
+        False,
+    )
+    assert (invited.email, invited.display_name) == (NURSE_EMAIL, NURSE_EMAIL)
+    assert invited.initials == "N"
+    assert invited.facility_key == world.profile.key
+    bound = await users.bind_google(invited.id, "sub-1", "Nina Nurse", "NN")
+    assert (bound.status, bound.display_name, bound.initials) == (
+        UserStatus.ACTIVE,
+        "Nina Nurse",
+        "NN",
+    )
+    again = await users.bind_google(invited.id, "sub-1", "Other Name", "ON")
+    assert again.display_name == "Nina Nurse"
+    persona = await users.get_user(world.nurse_id)
+    assert persona.status is UserStatus.ACTIVE
+    assert persona.email is None
+
+
+@pytest.mark.asyncio
+async def test_email_lookup_is_case_insensitive(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    invited = await users.invite("Mixed.Case@Example.com", Role.ADMIN, None, None)
+
+    found = await users.get_user_by_email("  MIXED.case@example.COM")
+
+    assert found is not None
+    assert found.id == invited.id
+    assert found.email == "mixed.case@example.com"
+    assert await users.get_user_by_email("nobody@example.com") is None
+
+
+@pytest.mark.asyncio
+async def test_bind_google_refuses_a_second_sub(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    first = await users.invite("one@example.com", Role.ADMIN, None, None)
+    second = await users.invite("two@example.com", Role.ADMIN, None, None)
+    await users.bind_google(first.id, "sub-a", "One", "O")
+
+    with pytest.raises(IdentityMismatch):
+        await users.bind_google(first.id, "sub-b", "One", "O")
+    with pytest.raises(IdentityMismatch):  # a sub belongs to one person
+        await users.bind_google(second.id, "sub-a", "Two", "T")
+    assert (await users.get_user(second.id)).status is UserStatus.INVITED
+
+
+@pytest.mark.asyncio
+async def test_invite_twice_is_email_taken(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    await users.invite("dup@example.com", Role.ADMIN, None, None)
+
+    with pytest.raises(EmailTaken):
+        await users.invite("DUP@example.com", Role.ADMIN, None, None)
+
+
+@pytest.mark.asyncio
+async def test_invite_to_an_unknown_facility_is_not_found(engine: AsyncEngine) -> None:
+    with pytest.raises(NotFound):
+        await PgUserRepository(engine).invite("x@example.com", Role.STAFF_NURSE, "nowhere", None)
+
+
+@pytest.mark.asyncio
+async def test_revoke_ends_the_users_sessions(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    users, sessions = PgUserRepository(engine), PgSessionRepository(engine)
+    invited = await users.invite(NURSE_EMAIL, Role.STAFF_NURSE, world.profile.key, None)
+    mine = await sessions.create(invited.id, None, NOW, 12)
+    other = await sessions.create(world.nurse_id, None, NOW, 12)
+
+    revoked = await users.revoke(invited.id, NOW)
+
+    assert revoked.status is UserStatus.REVOKED
+    assert await sessions.get(mine.token, NOW) is None
+    assert await sessions.get(other.token, NOW) is not None
+    assert await users.revoke(invited.id, NOW + timedelta(hours=1)) == revoked
+    async with engine.connect() as conn:
+        at = (
+            await conn.execute(
+                select(tables.app_user.c.revoked_at).where(tables.app_user.c.id == invited.id)
+            )
+        ).scalar_one()
+    assert at == NOW
+    with pytest.raises(NotFound):
+        await users.revoke(uuid4(), NOW)
+
+
+@pytest.mark.asyncio
+async def test_list_staff_skips_personas_and_orders_by_email(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    users = PgUserRepository(engine)
+    await users.invite("zed@example.com", Role.STAFF_NURSE, world.profile.key, None)
+    await users.invite("amy@example.com", Role.HEAD_NURSE, world.profile.key, None)
+    await users.invite("root@example.com", Role.ADMIN, None, None)
+
+    everyone = await users.list_staff(None)
+    here = await users.list_staff(world.profile.key)
+
+    assert [u.email for u in everyone] == [
+        "amy@example.com",
+        "root@example.com",
+        "zed@example.com",
+    ]
+    assert [u.email for u in here] == ["amy@example.com", "zed@example.com"]
+    assert await users.list_staff("nowhere") == []
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_admin_only_while_no_active_admin(engine: AsyncEngine) -> None:
+    world = await build_world(engine)  # its admin is a demo persona: it does not count
+    users = PgUserRepository(engine)
+
+    first = await users.ensure_bootstrap_admin("Root@Example.com")
+    assert first is not None
+    assert (first.role, first.facility_key, first.status) == (
+        Role.ADMIN,
+        None,
+        UserStatus.INVITED,
+    )
+    again = await users.ensure_bootstrap_admin("root@example.com")
+    assert again is not None
+    assert again.id == first.id  # still waiting for its first sign-in
+    # A nurse's email is never promoted.
+    nurse = await users.invite(NURSE_EMAIL, Role.STAFF_NURSE, world.profile.key, None)
+    assert await users.ensure_bootstrap_admin(NURSE_EMAIL) is None
+    assert (await users.get_user(nurse.id)).role is Role.STAFF_NURSE
+    # Once a Google admin is active, nobody else is made one.
+    await users.bind_google(first.id, "sub-root", "Root", "R")
+    assert await users.ensure_bootstrap_admin("other@example.com") is None
+    assert await users.get_user_by_email("other@example.com") is None
+    # A revoked admin is not revived, and no longer counts as active.
+    await users.revoke(first.id, NOW)
+    assert await users.ensure_bootstrap_admin("root@example.com") is None
+    made = await users.ensure_bootstrap_admin("next@example.com")
+    assert made is not None
+    assert made.role is Role.ADMIN
+
+
+async def claim_all(users: PgUserRepository, user_id: UUID) -> list[int | None]:
+    return [await users.claim_pin_try(user_id) for _ in range(MAX_PIN_TRIES + 1)]
+
+
+@pytest.mark.asyncio
+async def test_fifth_wrong_pin_locks_the_account(
+    engine: AsyncEngine,
+) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    assert await users.set_pin(user.id, hash_pin("246813"))
+
+    claims = await claim_all(users, user.id)
+
+    assert claims == [4, 3, 2, 1, 0, None]  # the sixth claim is refused: no sixth verify
+    assert not (await users.get_user(user.id)).pin_locked  # a claim alone doesn't lock
+    assert await users.lock_pin(user.id, NOW)
+    assert not await users.lock_pin(user.id, NOW + timedelta(hours=1))  # already locked
+    assert (await users.get_user(user.id)).pin_locked
+    assert await users.claim_pin_try(user.id) is None
+    async with engine.connect() as conn:
+        locked_at = (
+            await conn.execute(
+                select(tables.app_user.c.pin_locked_at).where(tables.app_user.c.id == user.id)
+            )
+        ).scalar_one()
+    assert locked_at == NOW  # the first lock's time stands
+
+
+@pytest.mark.asyncio
+async def test_a_right_pin_clears_the_claims_but_never_on_a_locked_account(
+    engine: AsyncEngine,
+) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    await users.claim_pin_try(user.id)
+    await users.claim_pin_try(user.id)
+
+    assert await users.clear_pin_failures(user.id)
+
+    assert await users.claim_pin_try(user.id) == MAX_PIN_TRIES - 1
+    for _ in range(MAX_PIN_TRIES - 1):
+        await users.claim_pin_try(user.id)
+    assert await users.lock_pin(user.id, NOW)
+    assert not await users.clear_pin_failures(user.id)  # a right guess racing the lock loses
+
+
+@pytest.mark.asyncio
+async def test_lock_pin_locks_only_when_the_tries_are_used_up(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    for _ in range(MAX_PIN_TRIES - 2):
+        await users.claim_pin_try(user.id)
+    assert not await users.lock_pin(user.id, NOW)  # three tries claimed: not locked
+    await users.claim_pin_try(user.id)
+    await users.claim_pin_try(user.id)
+    assert await users.clear_pin_failures(user.id)  # a right guess in between
+    assert not await users.lock_pin(user.id, NOW)  # a cleared counter is not locked
+    assert not (await users.get_user(user.id)).pin_locked
+    for _ in range(MAX_PIN_TRIES):
+        await users.claim_pin_try(user.id)
+    assert await users.lock_pin(user.id, NOW)
+    assert not await users.lock_pin(user.id, NOW)  # the second call reports False
+
+
+@pytest.mark.asyncio
+async def test_a_persona_never_uses_the_user_level_counter(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    await seed(engine, CLOCK)
+    persona = DEMO_PERSONAS[0]
+
+    assert await users.claim_pin_try(persona.id) is None
+    assert not await users.clear_pin_failures(persona.id)
+    await users.lock_pin(persona.id, NOW)
+    assert not (await users.get_user(persona.id)).pin_locked
+
+
+@pytest.mark.asyncio
+async def test_set_pin_writes_only_while_none_is_set(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    first, second = hash_pin("246813"), hash_pin("135790")
+
+    assert await users.set_pin(user.id, first)
+    assert not await users.set_pin(user.id, second)
+
+    assert await users.pin_hash(user.id) == first
+
+
+@pytest.mark.asyncio
+async def test_the_pin_hash_is_read_apart_and_never_in_a_repr(engine: AsyncEngine) -> None:
+    users = PgUserRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    assert await users.pin_hash(user.id) is None
+
+    assert await users.set_pin(user.id, hash_pin("246813"))
+
+    stored = await users.pin_hash(user.id)
+    assert stored is not None
+    assert verify_pin(stored, "246813")
+    assert "246813" not in stored
+    assert stored not in repr(await users.get_user(user.id))
+    assert await users.pin_hash(uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_reset_pin_clears_the_lock_and_ends_the_sessions(engine: AsyncEngine) -> None:
+    users, sessions = PgUserRepository(engine), PgSessionRepository(engine)
+    user = await users.invite(NURSE_EMAIL, Role.ADMIN, None, None)
+    await users.set_pin(user.id, hash_pin("246813"))
+    for _ in range(MAX_PIN_TRIES):
+        await users.claim_pin_try(user.id)
+    await users.lock_pin(user.id, NOW)
+    session = await sessions.create(user.id, None, NOW, 12)
+
+    reset = await users.reset_pin(user.id)
+
+    assert (reset.has_pin, reset.pin_locked) == (False, False)
+    assert await users.pin_hash(user.id) is None
+    assert await sessions.get(session.token, NOW) is None
+    assert await users.claim_pin_try(user.id) == MAX_PIN_TRIES - 1
+
+
+@pytest.mark.asyncio
+async def test_personas_seeded_with_the_demo_pin(engine: AsyncEngine) -> None:
+    await seed(engine, CLOCK)
+    users = PgUserRepository(engine)
+
+    hashes = {await users.pin_hash(p.id) for p in DEMO_PERSONAS}
+
+    assert len(hashes) == 1  # one public PIN, one hash
+    (stored,) = hashes
+    assert stored is not None
+    assert verify_pin(stored, DEMO_PIN)
+    for persona in DEMO_PERSONAS:
+        user = await users.get_user(persona.id)
+        assert (user.persona, user.status, user.has_pin) == (True, UserStatus.ACTIVE, True)
+    await seed(engine, CLOCK)  # a second run keeps the hash it has
+    assert {await users.pin_hash(p.id) for p in DEMO_PERSONAS} == {stored}
+
+
+@pytest.mark.asyncio
+async def test_session_lasts_the_facilitys_session_max_hours(engine: AsyncEngine) -> None:
+    await seed(engine, CLOCK)
+    us = (await PgFacilityRepository(engine, CLOCK).get_facility("us-demo")).profile
+    nurse = next(p for p in DEMO_PERSONAS if p.facility_key == "us-demo")
+    repo = PgSessionRepository(engine)
+
+    new = await repo.create(nurse.id, None, NOW, us.session_max_hours)
+
+    session = await repo.get(new.token, NOW)
+    assert session is not None
+    assert us.session_max_hours == 14
+    assert session.expires_at == NOW + timedelta(hours=14)
+    assert await repo.get(new.token, NOW + timedelta(hours=14)) is None
+
+
+@pytest.mark.asyncio
+async def test_admin_session_lasts_12_hours(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+
+    new = await repo.create(world.admin_id, None, NOW, 12)
+
+    session = await repo.get(new.token, NOW)
+    assert session is not None
+    assert session.expires_at == NOW + SESSION_LIFETIME
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_hides_its_tokens_and_starts_unverified(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+
+    new = await repo.create(world.admin_id, None, NOW, 12)
+
+    assert new.token not in repr(new)
+    assert new.csrf_token not in repr(new)
+    session = await repo.get(new.token, NOW)
+    assert session is not None
+    assert session.csrf_token == new.csrf_token
+    assert (session.created_at, session.last_active_at) == (NOW, NOW)
+    assert (session.pin_verified_at, session.pin_failures) == (None, 0)
+
+
+@pytest.mark.asyncio
+async def test_touch_verify_and_session_pin_failures(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    new = await repo.create(world.nurse_id, None, NOW, 12)
+    later = NOW + timedelta(minutes=3)
+
+    await repo.touch(new.token, later)
+    touched = await repo.get(new.token, later)
+    assert touched is not None
+    assert (touched.last_active_at, touched.pin_verified_at) == (later, None)
+    token = await repo.mark_pin_verified(new.token, later)
+    assert token is not None
+    verified = await repo.get(token, later)
+    assert verified is not None
+    assert verified.pin_verified_at == later
+    assert verified.expires_at == NOW + timedelta(hours=12)  # an unlock never extends it
+
+
+@pytest.mark.asyncio
+async def test_verifying_the_pin_gives_the_session_a_new_token(engine: AsyncEngine) -> None:
+    # A cookie copied while the session waited for its PIN must open nothing once she proves it.
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    new = await repo.create(world.nurse_id, None, NOW, 12)
+    later = NOW + timedelta(minutes=3)
+
+    token = await repo.mark_pin_verified(new.token, later)
+
+    assert token is not None
+    assert token != new.token
+    assert await repo.get(new.token, later) is None
+    verified = await repo.get(token, later)
+    assert verified is not None
+    # The same session under a new token: its expiry, CSRF token and start stay.
+    assert verified.expires_at == NOW + timedelta(hours=12)
+    assert verified.csrf_token == new.csrf_token
+    assert verified.created_at == NOW
+    assert (verified.pin_verified_at, verified.last_active_at) == (later, later)
+    async with engine.connect() as conn:
+        rows = await conn.scalar(
+            select(func.count())
+            .select_from(tables.session)
+            .where(tables.session.c.user_id == world.nurse_id)
+        )
+    assert rows == 1  # the same row, not a second session
+    # The old token, or a session that is gone, verifies nothing.
+    assert await repo.mark_pin_verified(new.token, later) is None
+
+
+@pytest.mark.asyncio
+async def test_session_claims_run_out_after_five_and_a_right_pin_clears_them(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    new = await repo.create(world.nurse_id, None, NOW, 12)
+
+    assert [await repo.claim_session_pin_try(new.token) for _ in range(2)] == [4, 3]
+    assert await repo.clear_session_pin_failures(new.token)
+    cleared = await repo.get(new.token, NOW)
+    assert cleared is not None
+    assert cleared.pin_failures == 0
+    left = [await repo.claim_session_pin_try(new.token) for _ in range(MAX_PIN_TRIES + 1)]
+    assert left == [4, 3, 2, 1, 0, None]
+    assert await repo.claim_session_pin_try("not-a-token") is None
+    assert not await repo.clear_session_pin_failures("not-a-token")
+    failed = await repo.get(new.token, NOW)
+    assert failed is not None
+    assert failed.pin_failures == MAX_PIN_TRIES  # the refused sixth claim changed nothing
+
+
+@pytest.mark.asyncio
+async def test_delete_for_user_ends_every_session_of_that_user(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    one = await repo.create(world.nurse_id, None, NOW, 12)
+    two = await repo.create(world.nurse_id, None, NOW, 12)
+    kept = await repo.create(world.admin_id, None, NOW, 12)
+
+    await repo.delete_for_user(world.nurse_id)
+
+    assert [await repo.get(t.token, NOW) for t in (one, two)] == [None, None]
+    assert await repo.get(kept.token, NOW) is not None

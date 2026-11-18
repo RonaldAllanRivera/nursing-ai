@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from nursing_core.clock import FixedClock
+from nursing_core.demo import DEMO_FACILITIES
 from nursing_core.domain.errors import NotFound, StaleVersion
 from nursing_core.domain.facility import FacilitySettings, ShiftDefinition, ShiftInk, preset
 from nursing_core.domain.patient import PatientRecord, PatientSummary
@@ -219,3 +220,63 @@ async def test_list_patients_sorts_by_ward_bed_and_name_and_skips_discharged(
     assert await repo.list_patients("nowhere") == []
     with pytest.raises(NotFound):
         await repo.get_patient(gone_id)
+
+
+@pytest.mark.asyncio
+async def test_reset_to_preset_keeps_key_and_name(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgFacilityRepository(engine, CLOCK)
+    await repo.update_facility(world.profile.key, _edited("SYNTHETIC Renamed"), 1, world.admin_id)
+    later = NOW + timedelta(days=1)
+
+    stored = await repo.reset_to_preset(world.profile.key, later, 2)
+
+    assert stored.version == 3
+    assert stored.profile.key == world.profile.key
+    wanted = next(p for p in DEMO_FACILITIES if p.key == world.profile.key)
+    assert stored.profile.name == wanted.name != "SYNTHETIC Renamed"
+    assert stored.profile == wanted
+    assert await repo.get_facility(world.profile.key) == stored
+    async with engine.connect() as conn:
+        history = (
+            await conn.execute(
+                select(
+                    tables.facility_change.c.version,
+                    tables.facility_change.c.changed_by,
+                    tables.facility_change.c.changed_at,
+                    tables.facility_change.c.reset,
+                )
+                .where(tables.facility_change.c.facility_id == world.facility_id)
+                .order_by(tables.facility_change.c.version)
+            )
+        ).all()
+    assert [(row.version, row.changed_by, row.reset) for row in history] == [
+        (1, None, False),
+        (2, world.admin_id, False),
+        (3, None, True),
+    ]
+    assert history[2].changed_at == later
+    async with engine.connect() as conn:
+        recorded = await conn.scalar(
+            select(tables.facility_change.c.settings).where(
+                tables.facility_change.c.facility_id == world.facility_id,
+                tables.facility_change.c.version == 3,
+            )
+        )
+    assert FacilitySettings.model_validate(recorded) == FacilitySettings.model_validate(
+        wanted.model_dump(exclude={"key"})
+    )
+    with pytest.raises(NotFound):
+        await repo.reset_to_preset("nowhere", later, 3)
+
+
+@pytest.mark.asyncio
+async def test_reset_to_preset_refuses_a_stale_version(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgFacilityRepository(engine, CLOCK)
+    await repo.update_facility(world.profile.key, _edited("SYNTHETIC Renamed"), 1, world.admin_id)
+
+    with pytest.raises(StaleVersion):
+        await repo.reset_to_preset(world.profile.key, NOW, 1)
+
+    assert (await repo.get_facility(world.profile.key)).profile.name == "SYNTHETIC Renamed"

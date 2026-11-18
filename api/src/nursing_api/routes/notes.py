@@ -8,11 +8,15 @@ from nursing_core.domain.notes import Discard, Note, NoteStatus, RoughNote
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.storage.signing import signed_record
 
+from nursing_api.auth.pin_check import SessionEnded, prove_pin, session_ended_response
 from nursing_api.deps import (
     ClockDep,
     NotesDep,
     NurseDep,
     PatientsDep,
+    SessionsDep,
+    SignedInDep,
+    UsersDep,
     ensure_own_facility,
 )
 from nursing_api.line_actions import apply_line_action
@@ -132,14 +136,21 @@ async def sign_note(
     clock: ClockDep,
     notes: NotesDep,
     patients: PatientsDep,
+    users: UsersDep,
+    sessions: SessionsDep,
+    signed_in: SignedInDep,
     if_match: IfMatch = None,
-) -> NoteOut:
+) -> NoteOut | Response:
     """Signs the draft with the nurse's PIN: 409 review_incomplete lists the lines that still
     need her."""
     if not if_match:
         raise PreconditionRequired
     found = await find_note(note_id, nurse, notes, patients)
     check_current(found.note, if_match)
+    try:
+        await prove_pin(signed_in, body.pin, users=users, sessions=sessions, clock=clock)
+    except SessionEnded:
+        return session_ended_response()
     # Raises ReviewIncomplete (409, with the line ids) while any line still needs the nurse.
     record = signed_record(found.note, found.rough, nurse.user.id, clock.now())
     saved = await notes.sign(found.note.id, found.note.version, record)
