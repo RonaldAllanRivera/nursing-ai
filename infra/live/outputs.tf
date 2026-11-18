@@ -35,8 +35,9 @@ output "distribution_id" {
 }
 
 output "queue_url" {
-  description = "URL of the draft jobs queue."
+  description = "URL of the draft jobs queue. Sensitive because the URL carries the account id and a deploy's output is public."
   value       = module.compute.queue_url
+  sensitive   = true
 }
 
 output "ops_function_name" {

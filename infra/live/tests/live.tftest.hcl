@@ -434,6 +434,17 @@ run "alert_email_is_sensitive" {
   }
 }
 
+run "queue_url_is_sensitive" {
+  command = plan
+
+  # An SQS queue URL carries the account id, and terraform apply prints every
+  # output in a public CI log.
+  assert {
+    condition     = issensitive(output.queue_url)
+    error_message = "queue_url must be sensitive so an apply never prints the account id"
+  }
+}
+
 run "image_uri_is_sensitive" {
   command = plan
 

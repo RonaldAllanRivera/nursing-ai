@@ -46,6 +46,37 @@ say() { printf 'deploy: %s\n' "$*"; }
 die() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
 cleanup() { [[ -n "$WORK" ]] && rm -rf "$WORK"; return 0; }
 
+# CI logs are public and the raw text of a failing call can carry the caller's ARN and the account
+# id. Every AWS CLI call goes through aws_call, which prints only the AWS error code; docker and
+# terraform output goes through mask_account_ids, which hides any 12-digit number.
+aws_error_code() {
+  local code
+  code="$(sed -n 's/.*An error occurred (\([A-Za-z0-9]*\)).*/\1/p' "$1" | head -n 1)"
+  printf '%s' "${code:-unknown AWS error}"
+}
+
+# Runs `aws "$@"`. Standard output passes through; on failure it stops with the error code only.
+aws_call() {
+  local error_file="$WORK/aws.err" status=0
+  aws "$@" 2>"$error_file" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    die "aws $1 $2 failed ($(aws_error_code "$error_file")); nothing more was run"
+  fi
+}
+
+mask_account_ids() { sed -E 's/[0-9]{12}/<account-id>/g'; }
+
+# Runs a command whose output may name the account; shows its output with 12-digit numbers hidden.
+masked() {
+  local label="$1" output status=0
+  shift
+  output="$("$@" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    printf '%s\n' "$output" | mask_account_ids >&2
+    die "$label failed"
+  fi
+}
+
 check_arguments() {
   if [[ $# -ne 1 || ( "$1" != "demo" && "$1" != "prod" ) ]]; then
     printf 'usage: scripts/deploy.sh demo|prod\n' >&2
@@ -69,7 +100,7 @@ terraform_init() {
     backend+=(-backend-config="profile=${AWS_PROFILE}")
     export TF_VAR_aws_profile="$AWS_PROFILE"
   fi
-  "${TF[@]}" init -input=false "${backend[@]}" >/dev/null
+  masked "terraform init" "${TF[@]}" init -input=false "${backend[@]}"
 }
 
 # A simple grep, not an HCL parse: the tfvars file beats TF_VAR_environment, so a different name in
@@ -102,11 +133,7 @@ check_first_deploy() {
     FIRST_DEPLOY="yes"
     say "first deploy: the apply runs before the migration"
   else
-    # The raw AWS CLI message can carry the caller's ARN, account id included, and CI logs are
-    # public: print only the error code ("An error occurred (<Code>) when ...").
-    local code
-    code="$(sed -n 's/^An error occurred (\([A-Za-z0-9]*\)).*/\1/p' "$error_file" | head -n 1)"
-    die "could not tell whether the ops function exists (${code:-unknown AWS error}); nothing was built"
+    die "could not tell whether the ops function exists ($(aws_error_code "$error_file")); nothing was built"
   fi
 }
 
@@ -116,30 +143,32 @@ image_tag() {
 
 build_and_push_image() {
   say "build and push the image"
-  REGISTRY="$(aws ecr describe-repositories --repository-names nursing-ai \
+  REGISTRY="$(aws_call ecr describe-repositories --repository-names nursing-ai \
     --query 'repositories[0].repositoryUri' --output text)"
   [[ -n "$REGISTRY" && "$REGISTRY" != "None" ]] || die "the nursing-ai registry was not found"
   IMAGE_TAG="$(image_tag)"
   IMAGE_URI="${REGISTRY}:${IMAGE_TAG}"
   say "image tag ${IMAGE_TAG}"
-  aws ecr get-login-password | docker login --username AWS --password-stdin "${REGISTRY%%/*}" >/dev/null
-  docker build --quiet --platform linux/amd64 --provenance=false -f api/Dockerfile -t "$IMAGE_URI" . >/dev/null
-  docker push --quiet "$IMAGE_URI" >/dev/null
+  local password
+  password="$(aws_call ecr get-login-password)"
+  masked "docker login" docker login --username AWS --password-stdin "${REGISTRY%%/*}" <<<"$password"
+  masked "docker build" docker build --quiet --platform linux/amd64 --provenance=false \
+    -f api/Dockerfile -t "$IMAGE_URI" .
+  masked "docker push" docker push --quiet "$IMAGE_URI"
 }
 
 point_ops_function() {
   say "point the ops function at the new image"
-  aws lambda update-function-code --function-name "$OPS_FUNCTION" --image-uri "$IMAGE_URI" >/dev/null
-  aws lambda wait function-updated --function-name "$OPS_FUNCTION"
+  aws_call lambda update-function-code --function-name "$OPS_FUNCTION" --image-uri "$IMAGE_URI" >/dev/null
+  aws_call lambda wait function-updated --function-name "$OPS_FUNCTION"
 }
 
 # Invokes one ops task and stops the deploy unless its answer says ok.
 run_ops_task() {
   local task="$1" answer="$WORK/$1.json"
   say "$task"
-  aws lambda invoke --cli-read-timeout 900 --function-name "$OPS_FUNCTION" \
-    --cli-binary-format raw-in-base64-out --payload "{\"task\":\"${task}\"}" "$answer" >/dev/null \
-    || die "$task: the ops function could not be invoked"
+  aws_call lambda invoke --cli-read-timeout 900 --function-name "$OPS_FUNCTION" \
+    --cli-binary-format raw-in-base64-out --payload "{\"task\":\"${task}\"}" "$answer" >/dev/null
   python3 - "$answer" "$task" <<'PY' || exit 1
 import json, sys
 
@@ -159,7 +188,9 @@ PY
 
 terraform_apply() {
   say "terraform apply"
-  "${TF[@]}" apply -input=false -auto-approve -var "image_uri=${IMAGE_URI}"
+  # The plan prints resource attributes, some of which are ARNs with the account id: hide those.
+  # (A custom domain does show in it; that is the public address of the site.)
+  "${TF[@]}" apply -input=false -auto-approve -var "image_uri=${IMAGE_URI}" 2>&1 | mask_account_ids
 }
 
 tf_output() { "${TF[@]}" output -raw "$1"; }
@@ -179,10 +210,10 @@ upload_web() {
   bucket="$(tf_output web_bucket_name)"
   distribution="$(tf_output distribution_id)"
   say "upload the web app"
-  aws s3 sync web/dist "s3://${bucket}" --delete --exclude index.html \
+  aws_call s3 sync web/dist "s3://${bucket}" --delete --exclude index.html \
     --cache-control "public, max-age=31536000, immutable"
-  aws s3 cp web/dist/index.html "s3://${bucket}/index.html" --cache-control "no-cache"
-  aws cloudfront create-invalidation --distribution-id "$distribution" --paths /index.html >/dev/null
+  aws_call s3 cp web/dist/index.html "s3://${bucket}/index.html" --cache-control "no-cache"
+  aws_call cloudfront create-invalidation --distribution-id "$distribution" --paths /index.html >/dev/null
 }
 
 check_alarms() {
@@ -191,7 +222,7 @@ check_alarms() {
   local names
   names="$(python3 -c 'import json,sys; print(*json.load(open(sys.argv[1])).values())' "$WORK/alarm_names.json")"
   # shellcheck disable=SC2086  # the names are three words without spaces
-  aws cloudwatch describe-alarms --alarm-names $names --output json >"$WORK/alarms.json"
+  aws_call cloudwatch describe-alarms --alarm-names $names --output json >"$WORK/alarms.json"
   python3 - "$WORK/alarms.json" "$(tf_output http_api_id)" "$(tf_output dlq_name)" "$names" <<'PY' \
     || exit 1
 import json, sys

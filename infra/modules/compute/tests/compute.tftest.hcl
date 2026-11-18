@@ -276,6 +276,14 @@ run "lambdas_use_ipv6_and_the_web_adapter" {
     error_message = "the worker must pass queue events through to /events"
   }
   assert {
+    condition     = aws_lambda_function.worker.environment[0].variables["AWS_LWA_ERROR_STATUS_CODES"] == "500-599"
+    error_message = "the worker must make the adapter fail the invocation on a 5xx, or SQS deletes a message whose job was not finished"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.api.environment[0].variables), "AWS_LWA_ERROR_STATUS_CODES") && !contains(keys(aws_lambda_function.ops.environment[0].variables), "AWS_LWA_ERROR_STATUS_CODES")
+    error_message = "the API (its 5xx must reach the browser) and ops (the deploy reads its 500 body) must not turn a 5xx into a Lambda error"
+  }
+  assert {
     condition     = aws_lambda_function.api.environment[0].variables["APP_ROLE"] == "api" && !contains(keys(aws_lambda_function.api.environment[0].variables), "AWS_LWA_PASS_THROUGH_PATH")
     error_message = "the API role is api and has no pass-through path"
   }

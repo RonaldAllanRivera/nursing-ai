@@ -60,6 +60,21 @@ outputs = {
     "web_bucket_name": f"nursing-ai-{env}-web",
     "distribution_id": "E123EXAMPLE",
 }
+fail_with = os.environ.get("FAKE_FAIL_MESSAGE", "")
+if tool == "terraform" and "apply" in args and os.environ.get("FAKE_APPLY_PRINTS"):
+    print(fail_with)
+    sys.stderr.write(fail_with + "\n")
+    if os.environ.get("FAKE_APPLY_FAILS"):
+        sys.exit(1)
+if tool == "terraform" and "init" in args and os.environ.get("FAKE_INIT_FAILS"):
+    sys.stderr.write(fail_with + "\n")
+    sys.exit(1)
+if tool == "docker" and os.environ.get("FAKE_DOCKER_FAIL") in args:
+    sys.stderr.write(fail_with + "\n")
+    sys.exit(1)
+if tool == "aws" and os.environ.get("FAKE_AWS_FAIL") == " ".join(args[:2]):
+    sys.stderr.write(fail_with + "\n")
+    sys.exit(254)
 if tool == "terraform" and "output" in args:
     if "-json" in args:
         print(json.dumps({
@@ -451,3 +466,71 @@ def test_the_stand_ins_shadow_every_real_tool(sandbox: Path) -> None:
         assert found is not None
         assert Path(found).resolve() == (sandbox / "bin" / "stand-in.py").resolve()
     assert os.access(SCRIPT, os.X_OK)
+
+
+AWS_FAILURE_PATHS = [
+    "ecr describe-repositories",
+    "ecr get-login-password",
+    "lambda update-function-code",
+    "lambda wait",
+    "lambda invoke",
+    "s3 sync",
+    "s3 cp",
+    "cloudfront create-invalidation",
+    "cloudwatch describe-alarms",
+]
+RAW_AWS_ERROR = (
+    f"An error occurred (AccessDenied) when calling the Operation: User: {ARN} is not "
+    f"authorized, account {ACCOUNT}, registry {REGISTRY}"
+)
+
+
+@pytest.mark.parametrize("path", AWS_FAILURE_PATHS)
+@pytest.mark.parametrize(
+    ("message", "shown"),
+    [
+        (RAW_AWS_ERROR, "AccessDenied"),
+        (f"Unable to locate credentials for {ARN}", "unknown AWS error"),
+    ],
+)
+def test_every_aws_call_that_fails_shows_only_its_error_code(
+    sandbox: Path, path: str, message: str, shown: str
+) -> None:
+    extra = {"FAKE_AWS_FAIL": path, "FAKE_FAIL_MESSAGE": message}
+    run = run_deploy(sandbox, "demo", extra=extra)
+    assert run.result.returncode != 0
+    everything = run.result.stdout + run.result.stderr
+    assert shown in run.result.stderr
+    for secret in (ACCOUNT, ARN, REGISTRY):
+        assert secret not in everything
+    assert "Unable to locate" not in everything
+
+
+@pytest.mark.parametrize(
+    ("extra", "step"),
+    [
+        ({"FAKE_DOCKER_FAIL": "build"}, "docker build"),
+        ({"FAKE_DOCKER_FAIL": "push"}, "docker push"),
+        ({"FAKE_DOCKER_FAIL": "login"}, "docker login"),
+        ({"FAKE_INIT_FAILS": "1"}, "terraform init"),
+        ({"FAKE_APPLY_PRINTS": "1", "FAKE_APPLY_FAILS": "1"}, "terraform apply"),
+    ],
+)
+def test_docker_and_terraform_failures_hide_account_ids(
+    sandbox: Path, extra: dict[str, str], step: str
+) -> None:
+    extra = {**extra, "FAKE_FAIL_MESSAGE": f"failed for {ARN} at {REGISTRY}"}
+    run = run_deploy(sandbox, "demo", extra=extra)
+    assert run.result.returncode != 0
+    everything = run.result.stdout + run.result.stderr
+    assert ACCOUNT not in everything
+    assert step.split()[0] in everything
+
+
+def test_what_terraform_apply_prints_never_shows_an_account_id(sandbox: Path) -> None:
+    extra = {"FAKE_APPLY_PRINTS": "1", "FAKE_FAIL_MESSAGE": f'  + arn = "{ARN}"'}
+    run = run_deploy(sandbox, "demo", extra=extra)
+    assert run.result.returncode == 0, run.result.stderr
+    assert "deploy: done" in run.result.stdout
+    assert ACCOUNT not in run.result.stdout + run.result.stderr
+    assert "deploy-role/session" in run.result.stdout

@@ -38,12 +38,15 @@ below the cap" before each call is racy: two workers can both check, both pass, 
   (`provider_error`) and runs nothing. This sits under the queue's `maxReceiveCount` of 5, so the
   app fails a job cleanly before SQS would send its message to the dead-letter queue.
 - **When an outcome cannot be recorded** (the database is unreachable when the worker tries to mark
-  the job done or failed) the worker answers 5xx, so SQS delivers the message again after its
-  visibility timeout (720 seconds, six times the worker's). By then the lease has run out and the
-  next claim retries the job.
+  the job done or failed) the worker answers 5xx. The Lambda Web Adapter turns a 5xx into a failed invocation only
+  for the status codes listed in `AWS_LWA_ERROR_STATUS_CODES`, so the worker (and only the
+  worker) lists `500-599`. SQS then delivers the message again after its visibility timeout
+  (720 seconds, six times the worker's). By then the lease has run out and the next claim retries
+  the job.
 - **The in-process queue** (local, CI) runs at most 2 jobs at once, like the worker's concurrency
-  of 2, and keeps the startup recovery that re-runs jobs a crash left behind. Lambda never does
-  that recovery: a new worker starting up would fail a job another worker is still running.
+  of 2, and keeps the startup recovery after a restart: it fails the jobs a crash left `running` and
+  runs the `queued` ones again. Lambda never does that recovery: a new worker starting up would
+  fail a job another worker is still running.
 
 ### Budget: hold the worst case first
 
@@ -75,10 +78,13 @@ below the cap" before each call is racy: two workers can both check, both pass, 
     uses an SQS receive without counting an attempt. If the database sleeps through five
     deliveries, SQS moves the message to the dead-letter queue (the dead-letter alarm fires) while
     the job row is still `queued`.
+  - A job can also be left `running` when its outcome cannot be saved and the redelivery
+    never comes (for example the message already used its five receives). The lease lets the next
+    delivery reclaim it, but nothing sends one.
   - If sending the SQS message fails after the job row has been saved, the job stays `queued` and,
     in SQS mode, nothing recovers it, because the startup recovery exists only in process.
 
-## Alternatives
+## Alternatives considered
 
 - **A visibility-timeout heartbeat,** where the worker keeps extending the message's invisibility
   while it runs. It would replace the lease, but needs the worker to call SQS during the draft

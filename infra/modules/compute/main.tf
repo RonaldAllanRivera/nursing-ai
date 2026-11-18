@@ -32,8 +32,14 @@ locals {
   })
 
   worker_environment = merge(local.shared_environment, {
-    APP_ROLE                        = "worker"
-    AWS_LWA_PASS_THROUGH_PATH       = "/events"
+    APP_ROLE                  = "worker"
+    AWS_LWA_PASS_THROUGH_PATH = "/events"
+    # The adapter fails an invocation for a status code only if it is listed here
+    # (the default is none). Without it, the 5xx the worker answers when it cannot
+    # record an outcome would reach Lambda as a success and SQS would delete the
+    # message. Not on the API (its 5xx must reach the browser) and not on ops (the
+    # deploy reads the JSON body of its 500).
+    AWS_LWA_ERROR_STATUS_CODES      = "500-599"
     ANTHROPIC_API_KEY_SSM_PARAMETER = var.anthropic_api_key_parameter_name
   })
 

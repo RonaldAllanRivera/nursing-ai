@@ -23,7 +23,10 @@ Lambda functions, and the `APP_ROLE` setting picks what each one is.
     Google client ID and secret, the bootstrap admin email, the queue URL and the daily draft limit.
   - `worker` reads the draft queue (`POST /events`, which only this role and `ops` serve). It gets
     the database URL, the site URL and the Anthropic key, and is the only function that can call
-    the model. It writes the AI-spend metric.
+    the model. It writes the AI-spend metric. Its function lists `500-599` in
+    `AWS_LWA_ERROR_STATUS_CODES`, so a 5xx fails the invocation and SQS delivers the message again.
+    The API and ops functions do not: the API's 5xx must reach the browser, and the deploy reads
+    the body of an ops 500.
   - `ops` is called only by a deploy, with a task (see "The ops function and the smoke check"). It
     gets the database URL, the site URL and the queue URL, and no Anthropic key.
 - **Secrets.** A function is given the names of its parameters, as `<SETTING>_SSM_PARAMETER`
@@ -81,7 +84,7 @@ deploy in a braked month can still run `smoke` and say what is wrong.
 | `modules/registry/` | The ECR image repository (keeps the newest 3 images). |
 | `modules/compute/` | The API, worker and ops Lambda functions, the HTTP API, the job queue and its dead-letter queue. |
 | `modules/web/` | The S3 bucket and CloudFront distribution for the web app. |
-| `modules/ops/` | Log groups, the three secret parameters, the `bootstrap-admin-email` and `site-url` parameters, the alarm topic and three alarms. |
+| `modules/ops/` | The four log groups (api, worker, ops and the HTTP API's access log), the three secret parameters, the `bootstrap-admin-email` and `site-url` parameters, the alarm topic and three alarms. |
 | `modules/brake/` | The budget action that cuts the Lambda functions off from AWS at 100% of the budget. |
 | `scripts/check.sh` | One command that runs every check. |
 
@@ -155,18 +158,13 @@ That is only safe if you set up two things in GitHub by hand:
 - The deny is a list on top of the `ReadOnlyAccess` policy. The plan role can still pull container
   images and read Lambda configuration. That is fine only while no secret is baked into an image or
   a Lambda environment variable. Secrets live in SSM SecureStrings.
-- **Deploys** run in the `production` environment and assume the `deploy` role. CI builds the image,
-  pushes it to the registry (the `repository_url` output of `bootstrap`), then applies `live`.
-  The job runs after the `production` environment's reviewer approves, so CI adds `-auto-approve`
-  (or applies a reviewed saved plan). The command is:
-
-  ```sh
-  cd infra/live
-  terraform init -backend-config="bucket=<state-bucket>"
-  terraform apply -var="image_uri=<registry-url>:<tag>" -var="alert_email=you@example.com"
-  ```
-
-  On a PC, also pass `-backend-config="profile=nursing-ai"` and `-var="aws_profile=nursing-ai"`.
+- **Deploys** run in the `production` environment and assume the `deploy` role. The only way to
+  deploy is `scripts/deploy.sh` (see "Deploying"). It builds and pushes the image, migrates, applies
+  `live`, seeds, smoke-tests, uploads the web app and checks the alarms. Do not run a bare
+  `terraform apply` against a real environment: it would skip the migration, the smoke check and
+  the guards, and without an `environment` setting it would apply the demo stack. No workflow runs
+  the script yet. When one does, it runs in the `production` environment after its reviewer
+  approves.
 - `image_uri` has no default. Image tags are immutable, so every deploy uses a new tag.
 - **Post-deploy IPv6 check.** The deploy runs the ops function's `smoke` task after each apply (see
   "The ops function and the smoke check").
@@ -187,7 +185,8 @@ It needs:
 - Every Terraform variable but `image_uri`, as `TF_VAR_*` variables (for example
   `TF_VAR_alert_email` and `TF_VAR_domain_name`) or in the git-ignored `infra/live/terraform.tfvars`.
   The script sets `TF_VAR_environment` itself, and refuses a tfvars file that names another
-  environment.
+  environment. A value in `terraform.tfvars` beats the same `TF_VAR_*` variable, so an uncommented
+  `domain_validated` or `aws_profile` in that file wins over what you export.
 - `docker`, `terraform`, `pnpm`, `python3`, `git` and the AWS CLI.
 
 In order, it:
@@ -202,15 +201,26 @@ In order, it:
    the migration after it. The first apply is slow, because the functions wait for CloudFront.
 4. In `demo` only, runs `seed-demo`.
 5. Runs `smoke`. Any task whose answer is not `ok` stops the deploy.
-6. Builds the web app and uploads it to S3 (hashed files cached for a year, `index.html` never),
-   then invalidates `/index.html` in CloudFront.
+6. Builds the web app and uploads it to S3. Every file except `index.html` gets a one-year
+   `immutable` cache header (this includes the unhashed `fonts/` and `mockServiceWorker.js`).
+   `index.html` gets `no-cache`, so a browser asks again before using it. Then it invalidates
+   `/index.html` in CloudFront.
 7. Checks the alarms: one in `ALARM`, or one watching the wrong HTTP API or queue, fails the
    deploy. One still in `INSUFFICIENT_DATA` (new alarms start there) prints a warning with its name.
 
-It never reads a secret: no SSM parameter, no Secrets Manager, no decryption. CI logs of this
-public repository are public, so it prints only the image tag (not the registry host, which holds
-the account ID) and, when an AWS call fails, only the AWS error code. `alert_email` and `image_uri`
-are marked `sensitive` in Terraform for the same reason.
+The script itself makes no SSM or Secrets Manager call and never decrypts anything. (The apply it
+runs refreshes the SSM parameters, which does decrypt them inside Terraform; nothing is printed.)
+CI logs of this public repository are public, so:
+
+- It prints the image tag, not the registry host, which holds the account ID.
+- Every AWS CLI call that fails prints only the AWS error code (or "unknown AWS error"), never the
+  raw message, which can carry the caller's ARN.
+- The output of `terraform apply`, `terraform init` and the docker commands has every 12-digit
+  number replaced, so an ARN's account ID is hidden.
+- `alert_email`, `image_uri` and the `queue_url` output (an SQS URL holds the account ID) are
+  `sensitive` in Terraform. The script still reads sensitive outputs with `terraform output -raw`.
+- Once a custom domain is set, the apply's plan and outputs show it. That is the public address of
+  the site, and CI deploys start only after it is live, so it is not hidden.
 
 ### A custom domain
 
@@ -245,16 +255,16 @@ unset VALUE
 
 Repeat for `google-client-id`, `google-client-secret` and `bootstrap-admin-email` (also a
 SecureString, the address of the first admin; its placeholder is `nobody@example.com`, so the app
-starts before you set it), with `prod` in the path for the prod environment.
+starts before you set it; it must be exactly one email address, or every API cold start fails), with `prod` in the path for the prod environment.
 
 Two parameters need no manual step. The database URL (`/nursing-ai/<environment>/database-url`) and
 `site-url` (a plain `String`, the site's address, which Terraform writes) are written by Terraform.
 Each Lambda function reads its parameters once at cold start (see "What the app does on this
 stack"), so a new value reaches a running function after its next cold start.
 
-Changing any setting of an SSM parameter other than its tags makes the next apply fail, because the
-provider sends the write-only value only when the parameter's version changes. For the
-hand-set secrets, raising the version would overwrite the real value with the placeholder. So after
+Changing any setting of a write-only SSM parameter (the hand-set ones: the three secrets and
+`bootstrap-admin-email`) other than its tags makes the next apply fail, because the provider sends
+the write-only value only when the parameter's version changes. For these parameters, raising the version would overwrite the real value with the placeholder. So after
 filling the secrets, run a plan and check that the parameters show no change, and never change
 those resources' settings without filling the secrets in again afterwards.
 
@@ -325,8 +335,9 @@ policy.
 
 ## After the first real apply
 
-The mocked tests cannot prove the alarm wiring. The deploy checks the wiring of each alarm, but
-open CloudWatch too and check:
+The mocked tests cannot prove the alarm wiring. The deploy checks that the 5xx alarm watches the
+HTTP API and the dead-jobs alarm watches the dead-letter queue, and the state of all three
+alarms, but open CloudWatch too and check:
 
 - Each alarm shows OK, not INSUFFICIENT_DATA for days.
 - The 5xx alarm's `ApiId` dimension is the HTTP API's ID.
@@ -335,6 +346,10 @@ open CloudWatch too and check:
   spend alarm has no data until then. Once a job has run, confirm the line really reaches
   CloudWatch as a metric. The worker's `log_format` is JSON, and a wrapped line would leave the
   alarm without data.
+- A worker 5xx fails its invocation, and SQS delivers the message again. The worker lists
+  `500-599` in `AWS_LWA_ERROR_STATUS_CODES`; without it the adapter reports the 5xx as a success
+  and SQS deletes the message. Check the worker function's configuration, and watch a message's
+  receive count rise after a forced failure.
 - An ops invoke returns its JSON body as the payload even when the task fails. The deploy reads
   `ok` from it.
 
@@ -366,7 +381,7 @@ Assumptions:
 | `registry` | 3 images of about 1 GB at $0.10 per GB-month. | about $0.30 |
 | `compute` | 50,000 HTTP API requests at $1.29 per million. Lambda (the API, worker and ops functions; a deploy invokes the ops function a few times) and SQS are inside the free amounts. | about $0.06 |
 | `web` | CloudFront is inside the free 1 TB and 10 million requests. The S3 bucket holds a web build of a few MB; S3 and CloudFront Function prices were not read. | Close to $0 |
-| `ops` | Three alarms (10 are free), SNS email, three log groups including the ops function's (5 GB a month free). Standard SSM parameters, including `site-url` and `bootstrap-admin-email`, are free. | $0 |
+| `ops` | Three alarms (10 are free), SNS email, four log groups (API, worker, ops and API access log; 5 GB a month free). Standard SSM parameters, including `site-url` and `bootstrap-admin-email`, are free. | $0 |
 | certificate | The public ACM certificate for a custom domain is free. | $0 |
 | domain | No AWS cost: the domain is the owner's own, with its DNS on Cloudflare, and there is no Route 53 zone. | $0 on AWS |
 | `brake` | A budget action (the first two are free), one IAM policy and role. | $0 |

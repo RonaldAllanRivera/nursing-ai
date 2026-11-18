@@ -66,7 +66,7 @@ should come from, and whether AWS should take over the DNS for it.
 - **Cloudflare's own proxy is not used.** The records are DNS only, so Cloudflare's caching and
   firewall do not sit in front of the app; CloudFront does that job.
 
-## Alternatives
+## Alternatives considered
 
 - **The `cloudfront.net` name.** Free and no steps, but Google would not accept it for a live
   sign-in client. Kept as the default when no domain is set (local checks, a bare demo).
