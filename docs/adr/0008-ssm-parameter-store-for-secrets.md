@@ -8,9 +8,10 @@ Accepted
 
 ## Context
 
-The app has four secrets: the database URL, the Anthropic API key, and the Google sign-in client ID
-and client secret. They must reach the Lambda functions, never sit in the repository, and stay out
-of Terraform state, which is plain text.
+The app has five secrets: the database URL, the Anthropic API key, the Google sign-in client ID
+and client secret, and the first admin's email address (private, though not a credential). They
+must reach the Lambda functions, never sit in the repository, and stay out of Terraform state,
+which is plain text.
 
 AWS has two main places for them. Prices read 2026-11-12, Sydney:
 
@@ -22,25 +23,28 @@ dual-stack endpoints, so this is a question of price and fit, not IPv6.
 
 ## Decision
 
-All four secrets are SSM SecureString parameters under `/nursing-ai/<environment>/`:
-`database-url`, `anthropic-api-key`, `google-client-id` and `google-client-secret`.
+All five secrets are SSM SecureString parameters under `/nursing-ai/<environment>/`:
+`database-url`, `anthropic-api-key`, `google-client-id`, `google-client-secret` and
+`bootstrap-admin-email`. The site's address, `site-url`, sits beside them as a plain String that
+Terraform writes, because it is public.
 
 - Terraform writes the database URL in the same apply that creates the cluster, through a
   write-only argument. The password is an ephemeral value, so neither the URL nor the password
   reaches the state or the plan.
-- The other three are created with a write-only placeholder. The operator then overwrites each
+- The other four are created with a write-only placeholder. The operator then overwrites each
   with `aws ssm put-parameter --overwrite`, reading the value from a hidden prompt. Terraform never
   reads these values back. The check script refuses a `master_password` or `insecure_value`
-  argument anywhere in the code, and a plaintext `value` inside any SSM parameter.
+  argument anywhere in the code, and a plaintext `value` on any parameter that is not a plain
+  String.
 - The Lambda functions get only the parameter names, as environment variables such as
   `ANTHROPIC_API_KEY_SSM_PARAMETER`. They never get a secret value in an environment variable,
   because those sit in state and in the console in plain text.
-- Each function will read its secrets once, at cold start, and keep them in memory. The app does
-  not do this yet. Each read is one decryption request, so the count will stay inside the free
-  allowance (20,000 a month, then $0.03 per
-  10,000).
+- Each function reads its parameters once, at cold start, and keeps them in memory. Each read is
+  one decryption request, so the count stays inside the free allowance (20,000 a month, then
+  $0.03 per 10,000).
 - IAM limits who can read what. Only the worker role can read the Anthropic key. Only the API role
-  can read the Google settings and send to the queue.
+  can read the Google settings and the first admin's email, and send to the queue. The ops
+  function's role reads only the database URL and the site address.
 - The parameters use the AWS-managed SSM key. It costs nothing and its key policy already allows
   callers in the account.
 
@@ -65,8 +69,8 @@ All four secrets are SSM SecureString parameters under `/nursing-ai/<environment
 
 ## Alternatives considered
 
-- **Secrets Manager.** Better rotation, and AWS's own recommendation for credentials. For four
-  secrets it is $1.60 a month, a large share of a $3 to $7 stack, for rotation we do not use.
+- **Secrets Manager.** Better rotation, and AWS's own recommendation for credentials. For five
+  secrets it is $2.00 a month, a large share of a $3 to $7 stack, for rotation we do not use.
 - **Lambda environment variables.** Free and simple, but the values sit in state and in the console.
 - **Secrets in the container image.** They would be copied with every image and readable by anyone
   who can pull it.
