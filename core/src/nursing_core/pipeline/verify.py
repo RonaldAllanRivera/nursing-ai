@@ -6,13 +6,14 @@ number counts for a quote when it overlaps the quote and is compared whole; labe
 inside the quote, and a unit is read right after the number even past the quote's end. A line
 number written with no unit is never checked for one: "PO intake 8." passes for the note's
 "8 oz", while "PO intake 8 mL." is flagged for its unit. A word whose number can't be compared by
-value ("q4h", "D5W", "two") must appear whole in a found quote.
-A frequency ("daily", "every day", "twice a day", "BID") is read by meaning and needs a frequency
-of the same meaning in a found quote. One that no quote gives is flagged whole, as typed ("3 times
-a day"), in place of any number or number-word mismatch it overlaps, so a one-click fix of a
-number can't keep a wrong period; one the quotes give leaves those mismatches as they are. A time
-word right after a line's number ("every 2 hours") needs the same time, by meaning, right after a
-note number of that value ("q 2 hrs").
+value ("q4h", "D5W", "two") must appear whole in a found quote. A frequency ("daily", "every
+day", "twice a day", "BID") is read by meaning and needs a frequency of the same meaning in a
+found quote. One that no quote gives is flagged whole, as typed ("3 times a day"), in place of
+every finding it overlaps (a number, a number word or a unit), so a one-click fix of a number
+can't keep a wrong period; one the quotes give leaves those findings as they are, and a finding
+it doesn't overlap stays either way ("15 g" in "MTX 15 g daily."). A time word right after a
+line's number ("every 2 hours") needs the same time, by meaning, right after a note number of
+that value ("q 2 hrs").
 
 A number's label is the word right before it, or a two-word label from the table of measures
 ("heart rate", "pulse rate") as a whole, read past one ":" or "=", one "~" or "(" and a comparator

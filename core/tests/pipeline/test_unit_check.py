@@ -616,3 +616,17 @@ def test_a_count_then_a_slash_and_a_period_is_a_counted_frequency() -> None:
     rate = _written("15 mg/day", "15")
     assert rate is not None
     assert rate.rate == ("day",)
+
+
+def test_each_adverb_is_read_alone_and_after_once_or_twice() -> None:
+    for adverb, period in (
+        ("daily", "day"),
+        ("weekly", "week"),
+        ("monthly", "month"),
+        ("hourly", "hour"),
+        ("nightly", "night"),
+    ):
+        assert _only_meaning(adverb) == (1, period)
+        assert _only_meaning(adverb.upper()) == (1, period)
+        assert _only_meaning(f"once {adverb}") == (1, period)
+        assert _only_meaning(f"twice {adverb}") == (2, period)

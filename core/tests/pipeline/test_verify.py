@@ -1631,6 +1631,20 @@ def test_a_frequency_the_quotes_give_leaves_the_number_findings_standing() -> No
     assert [d for d, _ in _frequency_findings("amox twice daily", "Amox 2x daily.")] == ["2"]
 
 
+def test_a_dose_unit_finding_beside_a_wrong_frequency_stays() -> None:
+    # The frequency replaces only the findings it overlaps: the dose's unit is still flagged.
+    note = "MTX 15 mg weekly"
+    line = _check(note, "MTX 15 g daily.", [note])
+    assert [(m.kind, m.draft_text, m.note_text) for m in line.number_mismatches] == [
+        (MismatchKind.UNIT, "15 g", "15 mg"),
+        (MismatchKind.VALUE, "daily", None),
+    ]
+    assert [m.draft_span for m in line.number_mismatches] == [
+        Span(start=4, end=8),
+        Span(start=9, end=14),
+    ]
+
+
 def test_a_count_before_every_or_each_is_a_count() -> None:
     note = "metformin 500 mg daily, 2 tabs"
     assert _frequency_findings(note, "Metformin 500 mg 2 times every day.") == [
@@ -1785,17 +1799,30 @@ def test_label_with_is_at_tilde_or_paren_reads_the_number() -> None:
 
 
 def test_a_label_reads_past_every_joiner_in_order() -> None:
-    for form in ("HR ~ 88", "HR: ~88", "HR is >100", "HR (>100)", "HR >= 100", "heart rate (88)"):
+    for form, offered in (
+        ("HR ~ 88", "88"),
+        ("HR: ~88", "88"),
+        ("HR is >100", "100"),
+        ("HR (>100)", "100"),
+        ("HR >= 100", "100"),
+        ("heart rate (88)", "88"),
+    ):
         note = f"{form}, RR 20"
-        line = _check(note, "HR 20.", [note])
-        assert _kinds(line) == [MismatchKind.VALUE], form
-        assert line.number_mismatches[0].note_text is not None, form
+        [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, offered), form
+        start = note.index(offered)
+        assert mismatch.note_span == Span(start=start, end=start + len(offered)), form
 
 
 def test_a_joining_word_with_no_label_before_it_stays_the_label() -> None:
     note = "at 0800 HR 88"
     line = _check(note, "HR 88 at 0800.", [note])
     assert line.status is LineStatus.SOURCE_FOUND
+    # "at" is the label of both times, so a wrong time is paired with the note's time.
+    note = "at 0800, HR 88"
+    [mismatch] = _check(note, "At 0900.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "0900")
+    assert (mismatch.note_text, mismatch.note_span) == ("0800", Span(start=3, end=7))
 
 
 def test_lost_comparator_is_flagged() -> None:
@@ -1833,18 +1860,20 @@ def test_a_lost_comparator_ends_that_numbers_checks() -> None:
 
 def test_a_two_word_label_from_the_table_is_the_label_as_a_whole() -> None:
     cases = [
-        ("resp rate 20, pulse rate 88", "Pulse rate 22.", "88"),
-        ("pulse rate 88, resp rate 20", "Resp rate 22.", "20"),
-        ("resp rate 20, heart rate 88", "Pulse rate 22.", "88"),
+        ("resp rate 20, pulse rate 88", "Pulse rate 22.", "88", Span(start=25, end=27)),
+        ("pulse rate 88, resp rate 20", "Resp rate 22.", "20", Span(start=25, end=27)),
+        ("resp rate 20, heart rate 88", "Pulse rate 22.", "88", Span(start=25, end=27)),
     ]
-    for note, text, expected in cases:
+    for note, text, expected, span in cases:
         [mismatch] = _check(note, text, [note]).number_mismatches
         assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, expected), text
+        assert mismatch.note_span == span, text
     note = "heart rate 88, RR 20"
     assert _check(note, "Resp rate 20.", [note]).status is LineStatus.SOURCE_FOUND
     note = "pulse rate 88, IV rate 100 mL/hr"
     [mismatch] = _check(note, "IV rate 88 mL/hr.", [note]).number_mismatches
     assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "100")
+    assert mismatch.note_span == Span(start=23, end=26)
 
 
 def test_a_joining_word_before_a_time_or_a_setting_stays_the_label() -> None:
