@@ -13,5 +13,10 @@ export function isWeakPin(pin: string): boolean {
   return steps.every((s) => s === 0) || steps.every((s) => s === 1) || steps.every((s) => s === -1);
 }
 
-export const PIN_FORMAT_MESSAGE = "A PIN is 6 digits, 0 to 9.";
-export const PIN_WEAK_MESSAGE = "Choose a PIN that isn't one digit repeated or a run like 123456.";
+/**
+ * The server's own words on `body.pin`, as it answers them: a PIN that breaks the six-digit pattern
+ * fails its request schema ("invalid value"), and a weak new PIN is "that PIN is too easy". The
+ * screens never show these; they say it in their own words.
+ */
+export const PIN_FORMAT_MESSAGE = "invalid value";
+export const PIN_WEAK_MESSAGE = "that PIN is too easy";

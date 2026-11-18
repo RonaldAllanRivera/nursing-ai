@@ -7,7 +7,7 @@ import type { MockSession } from "./session";
 
 type Schemas = components["schemas"];
 
-/** The sign-in page's options, and the two routes that set and enter a PIN (they work at any gate). */
+/** The sign-in page's options, and the two routes that set and enter a PIN (they answer at any gate). */
 export function sessionRoutes(state: MockSession, options: MockOptions): HttpHandler[] {
   const demo = options.demo ?? true;
 
@@ -29,6 +29,12 @@ export function sessionRoutes(state: MockSession, options: MockOptions): HttpHan
       if (!isPinFormat(pin)) return fieldProblem("body.pin", PIN_FORMAT_MESSAGE);
       const google = state.google();
       if (checked.session.gate !== "set_pin" || !google) return problem(409, "pin_already_set");
+      // Nothing marks a session active before its PIN is set, so this is the time since the
+      // Google sign-in. Past the idle lock she may have walked away: the session ends (the server's rule).
+      if (state.idleSinceActive()) {
+        state.end();
+        return problem(401, "not_signed_in");
+      }
       if (isWeakPin(pin)) return fieldProblem("body.pin", PIN_WEAK_MESSAGE);
       google.pin = pin;
       google.failures = 0;
@@ -40,8 +46,9 @@ export function sessionRoutes(state: MockSession, options: MockOptions): HttpHan
       const checked = state.guardSession(request);
       if (checked.refusal) return checked.refusal;
       const { gate } = checked.session;
-      if (gate === "pin_locked") return problem(423, "pin_locked");
-      if (gate !== "enter_pin" && gate !== "idle_locked") return problem(409, "invalid_request");
+      // As the server: the two gates a PIN can't open answer 423 with the gate; any other gate,
+      // open included, checks the PIN (a wrong one counts).
+      if (gate === "pin_locked" || gate === "set_pin") return problem(423, gate);
       const { pin } = (await request.json()) as Schemas["PinIn"];
       const refusal = state.checkPin(pin);
       if (refusal) return refusal;

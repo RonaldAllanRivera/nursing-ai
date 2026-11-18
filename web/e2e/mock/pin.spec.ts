@@ -111,7 +111,10 @@ test("a new Google user chooses a PIN typed twice", async ({ page }) => {
   await page.getByLabel("New PIN").fill("111111");
   await page.getByLabel("Type it again").fill("111111");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("alert")).toContainText("isn't one digit repeated");
+  // The mock answers in the server's words ("that PIN is too easy"); the screen says it in its own.
+  await expect(page.getByRole("alert")).toHaveText(
+    "Choose a PIN that isn't one digit repeated or a run like 123456.",
+  );
   await checkScreen(page);
   await shot(page, "pin-set-weak");
 

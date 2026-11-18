@@ -157,6 +157,13 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     return { session: current };
   }
 
+  /** The idle-lock time has passed since a request last showed someone at the screen. */
+  function idleSinceActive(): boolean {
+    const current = session();
+    if (!current || !active) return false;
+    return Date.now() - active.lastActive >= current.idle_lock_seconds * 1000;
+  }
+
   /** A request showed someone at the screen: the idle count starts again. */
   function touch() {
     if (active) active.lastActive = Date.now();
@@ -215,6 +222,7 @@ export function createSession(data: DemoApi, options: MockOptions, staff: MockUs
     guardSession,
     guard,
     touch,
+    idleSinceActive,
     checkPin,
     /** The signed-in Google staff member, for the rules that depend on who they are. */
     google: () => (active?.kind === "google" ? staffOf(active.userId) : undefined),

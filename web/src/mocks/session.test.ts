@@ -205,6 +205,47 @@ describe("POST /session/pin", () => {
     await adoptSession();
     expect((await set(MOCK_PIN)).body.code).toBe("pin_already_set");
   });
+
+  it("refuses a weak PIN in the server's own words", async () => {
+    start(newcomer);
+    await adoptSession();
+    const answer = await set("111111");
+    expect(answer.body.errors).toEqual([{ field: "body.pin", message: "that PIN is too easy" }]);
+  });
+
+  describe("a first PIN chosen after the idle-lock time since the sign-in", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("ends the session with a 401, before a weak PIN is looked at", async () => {
+      start(newcomer);
+      await adoptSession();
+      vi.setSystemTime(Date.now() + 300 * 1000);
+      const late = await set("111111");
+      expect([late.status, late.body.code]).toEqual([401, "not_signed_in"]);
+      expect((await raw("GET", "/api/v1/session")).status).toBe(401);
+    });
+
+    it("is taken just under the time, and reading the session does not restart the count", async () => {
+      start(newcomer);
+      await adoptSession();
+      vi.setSystemTime(Date.now() + 150 * 1000);
+      expect((await raw("GET", "/api/v1/session")).body["gate"]).toBe("set_pin");
+      vi.setSystemTime(Date.now() + 149 * 1000);
+      expect((await set(MOCK_PIN)).status).toBe(200);
+    });
+
+    it("still answers 409 first when a PIN is already set", async () => {
+      start(nurse("enter_pin"));
+      await adoptSession();
+      vi.setSystemTime(Date.now() + 300 * 1000);
+      expect((await set(MOCK_PIN)).body.code).toBe("pin_already_set");
+    });
+  });
 });
 
 describe("POST /session/unlock", () => {
@@ -254,13 +295,21 @@ describe("POST /session/unlock", () => {
     expect([next.body.code, next.body.tries_left]).toEqual(["pin_wrong", 4]);
   });
 
-  it("answers 409 at gate open or set_pin", async () => {
+  it("checks the PIN at gate open, as the server does: a right one opens, a wrong one counts", async () => {
     start(nurse("open"));
     await adoptSession();
-    expect((await unlock(MOCK_PIN)).status).toBe(409);
+    const right = await unlock(MOCK_PIN);
+    expect([right.status, right.body["gate"]]).toEqual([200, "open"]);
+    const wrong = await unlock("999999");
+    expect([wrong.status, wrong.body.code, wrong.body.tries_left]).toEqual([403, "pin_wrong", 4]);
+    expect((await unlock("999999")).body.tries_left).toBe(3);
+  });
+
+  it("answers 423 set_pin at set_pin, as the server does", async () => {
     start(newcomer);
     await adoptSession();
-    expect((await unlock(MOCK_PIN)).status).toBe(409);
+    const answer = await unlock(MOCK_PIN);
+    expect([answer.status, answer.body.code]).toEqual([423, "set_pin"]);
   });
 
   it("ends only a persona's session on the fifth wrong try", async () => {

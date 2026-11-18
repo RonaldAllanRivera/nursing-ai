@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
 import { MOCK_EMAILS, MOCK_PIN } from "../mocks/staff";
 import { holdNote, readHeldNote } from "../notes/heldNote";
@@ -9,7 +9,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { chooseAndUnlock, DEMO_PIN, signInAsPersona, typePin } from "../test/signIn";
-import { DEMO_ENDED, DEMO_EXPIRED, PIN_LOCKED } from "./pin";
+import { DEMO_ENDED, DEMO_EXPIRED, PIN_LOCKED, PIN_WAIT_ENDED, PIN_WEAK } from "./pin";
 import { sessionKey, type Session } from "./session";
 
 const SARAH = "Staff nurse · Sarah Navarro, RN";
@@ -180,18 +180,34 @@ describe("the other gates", () => {
     expect(sent).toBe(0);
   });
 
-  it("shows the server's weak-PIN message on the first field and clears both", async () => {
+  it("says a weak PIN in the screen's words on the first field, and clears both", async () => {
     await renderApp("/patients", newcomer);
     await userEvent.type(await screen.findByLabelText("New PIN"), "111111");
     await userEvent.type(screen.getByLabelText("Type it again"), "111111{Enter}");
-    const message = "Choose a PIN that isn't one digit repeated or a run like 123456.";
-    expect(await screen.findByText(message)).toBeVisible();
+    expect(await screen.findByText(PIN_WEAK)).toBeVisible();
+    // The mock answers in the server's own words; the screen never shows them.
+    expect(screen.queryByText(/too easy/)).toBeNull();
     expect(screen.getByLabelText("New PIN")).toHaveAccessibleDescription(
-      expect.stringContaining(message),
+      expect.stringContaining(PIN_WEAK),
     );
     expect(screen.getByLabelText("New PIN")).toHaveValue("");
     expect(screen.getByLabelText("Type it again")).toHaveValue("");
     expect(screen.getByLabelText("New PIN")).toHaveFocus();
+  });
+
+  it("signs her out, saying why, when the first PIN came after the idle-lock time since sign-in", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await renderApp("/patients", newcomer);
+      await userEvent.type(await screen.findByLabelText("New PIN"), "135792");
+      // She walked away before the second field: the mock's idle clock ran out meanwhile.
+      vi.setSystemTime(Date.now() + 300 * 1000);
+      await userEvent.type(screen.getByLabelText("Type it again"), "135792{Enter}");
+      expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+      expect(screen.getByText(PIN_WAIT_ENDED)).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("saves a good PIN and shows the page", async () => {
@@ -510,7 +526,7 @@ describe("a new try drops the last try's words", () => {
     await renderApp("/patients", newcomer);
     await userEvent.type(await screen.findByLabelText("New PIN"), "111111");
     await userEvent.type(screen.getByLabelText("Type it again"), "111111{Enter}");
-    await screen.findByText(/isn't one digit repeated/);
+    await screen.findByText(PIN_WEAK);
     server.use(
       http.post("*/api/v1/session/pin", async () => {
         await held;
@@ -522,7 +538,7 @@ describe("a new try drops the last try's words", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("New PIN")).toHaveAttribute("readonly");
     });
-    expect(screen.queryByText(/isn't one digit repeated/)).toBeNull();
+    expect(screen.queryByText(PIN_WEAK)).toBeNull();
     expect(screen.getByLabelText("New PIN")).not.toHaveAttribute("aria-invalid");
     release();
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
 import { GateFrame, WHO_ID, WhoLine } from "./GateFrame";
-import { PIN_SHORT, PINS_DIFFER, isPinTyped, pinProblemMessage } from "./pin";
+import { PIN_SHORT, PINS_DIFFER, isPinTyped, setPinProblemMessage } from "./pin";
 import { PinField } from "./PinField";
 import { useSetPin, type Session } from "./session";
 
@@ -12,7 +12,7 @@ export function SetPinScreen({ session }: { session: Session }) {
   const setPin = useSetPin();
   const [first, setFirst] = useState("");
   const [again, setAgain] = useState("");
-  // A problem found here, before anything was sent. The server's own words come from `setPin.error`.
+  // A problem found here, before anything was sent. The server's answer is in `setPin.error`.
   const [problem, setProblem] = useState<Problem>(null);
   // Once she edits a field the server's last answer no longer applies.
   const [edited, setEdited] = useState(false);
@@ -22,8 +22,7 @@ export function SetPinScreen({ session }: { session: Session }) {
     firstField.current?.focus();
   }, []);
 
-  const serverWords =
-    setPin.error !== null && !edited ? pinProblemMessage(setPin.error, false) : null;
+  const serverWords = setPin.error !== null && !edited ? setPinProblemMessage(setPin.error) : null;
 
   return (
     <GateFrame heading={`Choose a PIN, ${session.display_name}`}>

@@ -43,6 +43,8 @@ export const PIN_LOCKED_NEXT = "Once it's reset, choose Switch nurse above and s
 export const PIN_CONNECTION = "Couldn't check your PIN. Check your connection and try again.";
 export const PIN_SHORT = "A PIN is 6 digits, 0 to 9.";
 export const PINS_DIFFER = "The two PINs don't match.";
+/** A new PIN the server turned away as too easy to guess. */
+export const PIN_WEAK = "Choose a PIN that isn't one digit repeated or a run like 123456.";
 export const PIN_CHANGED = "Your sign-in changed in another window. Checking where it stands.";
 /** Shown on the sign-in screen after a demo person's fifth wrong PIN ended the session. */
 export const DEMO_ENDED =
@@ -92,9 +94,21 @@ export function pinProblemMessage(error: unknown, persona: boolean): string {
   }
   if (error.status === 423 && problem?.code === "pin_locked") return PIN_LOCKED;
   if (error.status === 409) return PIN_CHANGED;
-  if (error.status === 422) {
-    const field = problem?.errors?.find((e) => e.field === "body.pin");
-    if (field) return field.message;
-  }
+  // The server's words on the field are never shown: a PIN it turned away here broke the format.
+  if (refusesThePin(error)) return PIN_SHORT;
   return PIN_CONNECTION;
+}
+
+/** A 422 that names the PIN field. */
+function refusesThePin(error: ApiError): boolean {
+  return error.status === 422 && (error.problem?.errors ?? []).some((e) => e.field === "body.pin");
+}
+
+/**
+ * The words for a first PIN that was not set. The screen lets only six digits through, so a PIN
+ * the server turned away there was too easy: said in the screen's words, never the server's.
+ */
+export function setPinProblemMessage(error: unknown): string {
+  if (error instanceof ApiError && refusesThePin(error)) return PIN_WEAK;
+  return pinProblemMessage(error, false);
 }

@@ -8,11 +8,14 @@ import {
   PIN_CONNECTION,
   PIN_LOCKED,
   PIN_NEEDED,
+  PIN_SHORT,
+  PIN_WEAK,
   idleLockWords,
   isPinRefusal,
   isPinTyped,
   pinProblemMessage,
   screenForGate,
+  setPinProblemMessage,
 } from "./pin";
 
 const problem = (status: number, code: Problem["code"], extra: Partial<Problem> = {}): ApiError =>
@@ -61,11 +64,11 @@ describe("pinProblemMessage", () => {
     expect(pinProblemMessage(problem(403, "pin_wrong"), false)).toBe("Wrong PIN.");
   });
 
-  it("shows the server's words for a bad PIN on the pin field", () => {
+  it("says a PIN the server turned away in the screen's own words, never the server's", () => {
     const error = problem(422, "invalid_request", {
-      errors: [{ field: "body.pin", message: "Choose a stronger PIN." }],
+      errors: [{ field: "body.pin", message: "invalid value" }],
     });
-    expect(pinProblemMessage(error, false)).toBe("Choose a stronger PIN.");
+    expect(pinProblemMessage(error, false)).toBe(PIN_SHORT);
   });
 
   it("says the PIN is locked", () => {
@@ -102,6 +105,21 @@ describe("pinProblemMessage", () => {
     expect(DEMO_ENDED).toBe(
       "That was the fifth wrong PIN, so the demo session ended. Choose a person to start again.",
     );
+  });
+});
+
+describe("setPinProblemMessage", () => {
+  it("says a PIN that is too easy in the screen's own words, never the server's", () => {
+    const error = problem(422, "invalid_request", {
+      errors: [{ field: "body.pin", message: "that PIN is too easy" }],
+    });
+    expect(setPinProblemMessage(error)).toBe(PIN_WEAK);
+    expect(PIN_WEAK).toBe("Choose a PIN that isn't one digit repeated or a run like 123456.");
+  });
+
+  it("says everything else the way every PIN screen does", () => {
+    expect(setPinProblemMessage(problem(409, "pin_already_set"))).toBe(PIN_CHANGED);
+    expect(setPinProblemMessage(new Error("offline"))).toBe(PIN_CONNECTION);
   });
 });
 
