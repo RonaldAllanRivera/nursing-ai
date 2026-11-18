@@ -19,7 +19,8 @@ class Settings(BaseSettings):
 
     app_env: Literal["dev", "test", "demo", "prod"] = "dev"
     app_role: Literal["api", "worker", "ops"] = "api"
-    database_url: str
+    # The URL carries the database password (live, from SSM), so it stays out of repr and str.
+    database_url: str = Field(repr=False)
     db_ping_timeout_s: float = Field(default=2.0, gt=0)
     db_pool: Literal["queue", "null"] = "queue"
     db_connect_timeout_s: float = Field(default=10.0, gt=0)

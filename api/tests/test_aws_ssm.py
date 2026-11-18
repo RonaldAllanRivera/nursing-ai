@@ -97,15 +97,10 @@ def test_resolved_secret_never_logged(caplog: pytest.LogCaptureFixture) -> None:
     assert "sk-canary-key" not in str(settings)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "needs database_url: str = Field(repr=False) in settings.py; requested from the integrator"
-    ),
-)
 def test_database_url_password_not_in_settings_repr() -> None:
     settings = Settings(database_url="postgresql+asyncpg://u:canary-secret@h/db")
     assert "canary-secret" not in repr(settings)
+    assert "canary-secret" not in str(settings)
 
 
 @pytest.mark.parametrize("service", ["ssm", "sqs"])
