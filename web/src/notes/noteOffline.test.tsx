@@ -156,9 +156,20 @@ describe("a note's writes while the browser is offline", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    expect(
-      within(dialog).getByText(/last change to this note is still being saved/i),
-    ).toBeVisible();
+    const live = () => dialog.querySelector("#sign-live")?.textContent ?? "";
+    const pinField = within(dialog).getByLabelText("Your PIN");
+    expect(dialog.querySelector("#sign-waiting")).toHaveTextContent(/still being saved/i);
+    // The reason is read with the field, and a held Enter says it in the live region.
+    expect(pinField.getAttribute("aria-describedby")).toContain("sign-waiting");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(live()).toMatch(/still being saved/i);
+    });
+    expect(pinField).toHaveFocus();
+    // A held press on Sign keeps the focus on Sign.
+    const signButton = within(dialog).getByRole("button", { name: "Sign note" });
+    await userEvent.click(signButton);
+    expect(signButton).toHaveFocus();
     const waiting = app.queryClient.getMutationCache().getAll();
     expect(JSON.stringify(waiting.map((m) => m.state.variables))).not.toContain(DEMO_PIN);
     expect(waiting.filter((m) => m.state.status === "pending")).toHaveLength(1);
@@ -180,10 +191,78 @@ describe("a note's writes while the browser is offline", () => {
       },
       { timeout: 5000 },
     );
+    await waitFor(() => {
+      expect(live()).toBe("You can sign now.");
+    });
+    expect(dialog.querySelector("#sign-waiting")).toBeNull();
     expect(signs).toBe(0);
     await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
     await waitFor(() => {
       expect(signs).toBe(1);
     });
+    // After the screen settles, exactly one sign went out.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(signs).toBe(1);
+  }, 30000);
+
+  it("keeps Sign held when the change it waited for fails, and says to check the note", async () => {
+    const found = structuredClone(demoApi.notes[NOTE_1]);
+    if (!found) throw new Error("no demo note");
+    for (const item of linesInOrder(found.draft)) {
+      if (item.status !== "source_found") item.review = "confirmed";
+    }
+    let signs = 0;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const app = await renderApp("/sign-in");
+    await chooseAndUnlock(SARAH);
+    await screen.findByRole("heading", { level: 1 });
+    server.use(
+      http.get("*/api/v1/notes/:id", () => HttpResponse.json(found, { headers: { ETag: '"v1"' } })),
+      http.patch("*/api/v1/notes/:id/lines/:line", async () => {
+        await gate;
+        return HttpResponse.json(
+          { type: "about:blank", title: "x", status: 500, code: "boom" },
+          { status: 500 },
+        );
+      }),
+      http.post("*/api/v1/notes/:id/sign", () => {
+        signs += 1;
+        return HttpResponse.json(found, { headers: { ETag: '"v3"' } });
+      }),
+    );
+    await act(() =>
+      app.router.navigate({ to: "/notes/$noteId", params: { noteId: NOTE_1 }, search: {} }),
+    );
+    await screen.findByRole("heading", { name: "Your note" });
+    await userEvent.click(screen.getByRole("button", { name: FOCUS }));
+    const card = within(screen.getByRole("complementary", { name: /came from/ }));
+    await userEvent.click(card.getByRole("button", { name: "Undo" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), DEMO_PIN);
+    expect(dialog.querySelector("#sign-waiting")).toHaveTextContent(/still being saved/i);
+    release();
+    await waitFor(() => {
+      expect(dialog.querySelector("#sign-waiting")).toHaveTextContent(/was not saved/i);
+    });
+    expect(dialog.querySelector("#sign-live")).toHaveTextContent(
+      /Close this and check the note before signing/,
+    );
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(signs).toBe(0);
+    expect(within(dialog).getByRole("button", { name: "Sign note" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(signs).toBe(0);
   }, 30000);
 });

@@ -30,6 +30,11 @@ function noteScope(noteId: string) {
   return `note:${noteId}`;
 }
 
+/** Marks a line change in the mutation cache, so a screen can tell that one of them failed. */
+export function lineWriteKey(noteId: string) {
+  return ["note-line-write", noteId] as const;
+}
+
 /** Any write to this note that is still under way (the sign itself included). */
 function writingFilter(noteId: string): MutationFilters {
   return {
@@ -71,6 +76,7 @@ export function useActOnLine(noteId: string) {
   return useMutation({
     // One write to a note at a time: the next one waits, and then sends the version the last returned.
     scope: { id: noteScope(noteId) },
+    mutationKey: lineWriteKey(noteId),
     networkMode: "always",
     mutationFn: async ({ lineId, body }: { lineId: string; body: LineBody }) => {
       const answer = await api.PATCH("/api/v1/notes/{note_id}/lines/{line_id}", {

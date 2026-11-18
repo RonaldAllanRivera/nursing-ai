@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { DemoPinChip, useDemoPin } from "../session/DemoPin";
 import { asksPinAgain } from "../session/pin";
 import { PinField } from "../session/PinField";
@@ -7,7 +7,7 @@ import { explainDemoEnd, useSession } from "../session/session";
 import { usePinEntry } from "../session/usePinEntry";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
 import { WriteProblem } from "./WriteProblem";
-import { failureOf, useDiscardNote, useNoteWriting, useSignNote } from "./writes";
+import { failureOf, useDiscardNote, lineWriteKey, useNoteWriting, useSignNote } from "./writes";
 
 interface Shared {
   open: boolean;
@@ -115,6 +115,11 @@ function Panel({
   );
 }
 
+const CHANGE_SAVING =
+  "Your last change to this note is still being saved. Sign note will work in a moment; your PIN stays here.";
+const CHANGE_LOST =
+  "Your last change to this note was not saved. Close this and check the note before signing.";
+
 /** "Sign this FDAR note": who is signing, what is missing, her PIN, then Sign note. */
 export function SignDialog({
   format,
@@ -153,10 +158,54 @@ export function SignDialog({
   });
   const field = useRef<HTMLInputElement>(null);
   const { writing, writingNow } = useNoteWriting(shared.noteId);
-  const entry = usePinEntry(sign, persona, field, writingNow);
-  const waitingForWrite = writing && !sign.pending;
+  // A line change that failed while this dialog was open: she must look at the note before signing.
+  const [lostChange, setLostChange] = useState(false);
+  const lostRef = useRef(false);
+  const [said, setSaid] = useState("");
+  const entry = usePinEntry(
+    sign,
+    persona,
+    field,
+    () => lostRef.current || writingNow(),
+    () => {
+      // Said again on every held try: a screen reader hears it even though nothing on screen moved.
+      setSaid("");
+      window.setTimeout(() => {
+        setSaid(lostRef.current ? CHANGE_LOST : CHANGE_SAVING);
+      }, 50);
+    },
+  );
+  const waitingForWrite = (writing && !sign.pending) || lostChange;
+  const wasHeld = useRef(false);
+  useEffect(() => {
+    if (!shared.open) return;
+    return queryClient.getMutationCache().subscribe((event) => {
+      const key = event.mutation?.options.mutationKey;
+      if (
+        event.type === "updated" &&
+        event.action.type === "error" &&
+        key?.[0] === lineWriteKey(shared.noteId)[0] &&
+        key[1] === shared.noteId
+      ) {
+        lostRef.current = true;
+        setLostChange(true);
+        setSaid(CHANGE_LOST);
+      }
+    });
+  }, [shared.open, shared.noteId, queryClient]);
+  useEffect(() => {
+    if (wasHeld.current && !waitingForWrite) setSaid("You can sign now.");
+    wasHeld.current = waitingForWrite;
+  }, [waitingForWrite]);
+  const describedBy =
+    [demoPin ? "sign-demo-pin" : "", waitingForWrite ? "sign-waiting" : ""]
+      .filter(Boolean)
+      .join(" ") || undefined;
   /** Closes the dialog with nothing of the last try left in it (the typed PIN, the words under it). */
   function done() {
+    lostRef.current = false;
+    setLostChange(false);
+    setSaid("");
     entry.reset();
     shared.onOpenChange(false);
   }
@@ -188,7 +237,7 @@ export function SignDialog({
             <PinField
               ref={field}
               id="sign-pin"
-              {...(demoPin ? { describedBy: "sign-demo-pin" } : {})}
+              {...(describedBy ? { describedBy } : {})}
               label="Your PIN"
               value={entry.pin}
               onChange={entry.onChange}
@@ -198,11 +247,14 @@ export function SignDialog({
             />
           </div>
           {waitingForWrite ? (
-            <p id="sign-waiting" role="status" className="mt-3 text-14">
-              Your last change to this note is still being saved. Sign note will work in a moment;
-              your PIN stays here.
+            <p id="sign-waiting" className="mt-3 text-14">
+              {lostChange ? CHANGE_LOST : CHANGE_SAVING}
             </p>
           ) : null}
+          {/* Always here, so what it says is announced as a change, not as a new node. */}
+          <p role="status" className="sr-only" id="sign-live">
+            {said}
+          </p>
           {sign.error !== null && !asksPinAgain(sign.error) ? (
             <WriteProblem
               error={sign.error}

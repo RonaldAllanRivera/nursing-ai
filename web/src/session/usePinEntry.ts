@@ -27,6 +27,8 @@ export function usePinEntry(
   field: RefObject<HTMLInputElement | null>,
   /** True while something must finish before the PIN may be sent: the PIN stays in the field. */
   hold: () => boolean = () => false,
+  /** A submit that was held: nothing was sent, and the focus stays where it was. */
+  onHeld: () => void = () => undefined,
 ) {
   const [pin, setPin] = useState("");
   const [short, setShort] = useState(false);
@@ -58,7 +60,7 @@ export function usePinEntry(
       event.preventDefault();
       if (request.pending) return;
       if (hold()) {
-        field.current?.focus();
+        onHeld();
         return;
       }
       if (!isPinTyped(pin)) {
