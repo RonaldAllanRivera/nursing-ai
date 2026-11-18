@@ -1,6 +1,6 @@
-import { QueryObserver } from "@tanstack/react-query";
+import { onlineManager, QueryObserver } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ApiError, type Problem } from "../api/errors";
 import { sessionKey, sessionQuery, type Session } from "../session/session";
 import { server } from "../test/setup";
@@ -124,5 +124,37 @@ describe("waiting out a waking database", () => {
     expect(wait(0, waking)).toBe(5000);
     expect(wait(0, new Error("x"))).toBe(500);
     expect(wait(1, new Error("x"))).toBe(1000);
+  });
+});
+
+describe("a network that drops and comes back", () => {
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  it("asks nothing again when the browser is back online: every request moves the idle clocks", async () => {
+    let calls = 0;
+    server.use(
+      http.get("*/api/v1/session", () => {
+        calls += 1;
+        return HttpResponse.json(session);
+      }),
+    );
+    const client = createQueryClient();
+    // As the app's provider does: the client listens to the browser going offline and online.
+    client.mount();
+    // Stale at once, so only the reconnect rule decides whether it is asked again.
+    const observer = new QueryObserver(client, { ...sessionQuery, staleTime: 0 });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await expect.poll(() => calls).toBe(1);
+    for (let i = 0; i < 3; i += 1) {
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(calls).toBe(1);
+    expect(client.getDefaultOptions().queries?.refetchOnReconnect).toBe(false);
+    unsubscribe();
+    client.unmount();
   });
 });

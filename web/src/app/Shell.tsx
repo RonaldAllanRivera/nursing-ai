@@ -158,7 +158,10 @@ export function Shell() {
         className="mx-auto max-w-[1280px] px-4 pt-2 pb-12 outline-none sm:px-6"
       >
         {/* A gate replaces the page (same address, header stays): nothing of a patient is left in
-            the page while someone has not proved who they are, and the page comes back as it was. */}
+            the page while someone has not proved who they are. When the gate goes the page is
+            drawn again at the same address. Only the rough note she was typing is kept across the
+            gate (held in the query cache); anything else typed and not saved (a line edit in the
+            trace view, the settings form, an invite's email) starts again. */}
         {!gateUp ? (
           <ShellFrame.Provider value={true}>
             {/* Keyed by who is signed in: if the session turns out to be someone else's, the page starts again, with nothing typed by the last person. */}

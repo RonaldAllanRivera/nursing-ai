@@ -52,6 +52,10 @@ export function createQueryClient() {
       queries: {
         staleTime: 5_000,
         refetchOnWindowFocus: false,
+        // Every request moves both idle clocks (the server's and this browser's), so a network
+        // that keeps dropping and coming back must not ask again by itself: an unattended screen
+        // would never lock.
+        refetchOnReconnect: false,
         retry: retryQuery,
         retryDelay: queryRetryDelay,
       },
