@@ -1833,9 +1833,58 @@ def test_only_at_keeps_a_time_or_a_setting_as_the_label() -> None:
         ("Intake of 1200, output 800", "Intake 800."),
     ):
         assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (("HR at 2400 110", "HR 110."),):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_decimal_after_at_is_a_value_not_a_time() -> None:
     for note, text in (
+        ("K at 3.50, Na 135", "K 135."),
+        ("FiO2 at 0.40, PEEP 5", "FiO2 5."),
         ("BP at 10.30 90/60", "BP 90/60."),
-        ("HR at 2400 110", "HR 110."),
-        ("BP at 8.15 90/60", "BP 90/60."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+
+
+def test_a_symbol_unit_after_an_arrow_counts_as_what_is_written_after_it() -> None:
+    for note, text in (
+        ("HR 88 -> 38.5°C", "HR 38.5."),
+        ("HR 88 -> 101°F", "HR 101."),
+        ("Pain 8 -> 37.9°C", "Pain 37.9."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    note = "T 38.5 °C -> 37.8 °C"
+    assert _check(note, "T 37.8 °C.", [note]).status is LineStatus.SOURCE_FOUND
+
+
+def test_the_next_reading_after_an_arrow_does_not_stop_the_label() -> None:
+    for note, text in (
+        ("HR 88->110 RR 20", "HR 110."),
+        ("BP 90/60->100/70 HR 88", "BP 100/70."),
+        ("HR 88->110 resp rate 20", "HR 110."),
     ):
         assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+    for note, text in (
+        ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
+        ("HR 88->110 sustained", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+
+
+def test_each_line_reads_only_the_note_numbers_its_quotes_overlap() -> None:
+    note = " ".join(f"HR {80 + i}" for i in range(300))
+    calls = 0
+
+    def counting(raw: str, span: Span) -> object:
+        nonlocal calls
+        calls += 1
+        return written_unit(raw, span)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("nursing_core.pipeline.verify.written_unit", counting)
+        for i in (3, 150, 290):
+            calls = 0
+            quotes = [f"HR {80 + i}", f"HR {81 + i}"]
+            line = _check(note, f"HR {80 + i}.", quotes)
+            assert line.status is LineStatus.SOURCE_FOUND
+            assert calls <= 2 + 1

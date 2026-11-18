@@ -16,13 +16,15 @@ A number's label is the word right before it, or a two-word label from the table
 ("heart rate", "pulse rate") as a whole, read past one ":" or "=", one "~" or "(" and a comparator
 ("HR: ~88", "HR (>100)"), and past a joining word ("is", "was", "at", "of": "HR is 88"). "At" is
 read past only when the number after it is a value: for a clock time ("0600", "2400", "10:30",
-"10.30", "2pm") or a number with a dose, volume, drop or oxygen-flow unit ("2L"), and for a joining
+"2pm") or a number with a dose, volume, drop or oxygen-flow unit ("2L"), and for a joining
 word with no label before it ("at 0800"), the word is itself the label. A number with no label of
 its own, written right after an arrow ("HR 88->110", with only spaces, the arrow and its own
 comparator after the previous number and its unit), takes that number's label when both are
 written alike: both "/" groups or neither, and the same thing written right after each, whether a
-"%", a unit the code reads or only knows, a rate or any other word, or nothing after both ("HR 88
-bpm -> 110 bpm" and "SpO2 88%->95%" do; "Pain 8/10 -> 2 mg" and "HR 88 -> 20 cpm" do not). Labels
+"%", a unit the code reads (as typed, "°C") or only knows, a rate or any other word, or nothing
+after both ("HR 88 bpm -> 110 bpm" and "SpO2 88%->95%" do; "Pain 8/10 -> 2 mg" and "HR 88 -> 20
+cpm" do not). A word that is a label of the table of measures starts the next reading and counts
+as nothing ("HR 88->110 RR 20"). Labels
 are read only in the quotes, from the last few characters before the number. A label
 the quotes use says which of their numbers the line's number must be: under that label the line's
 value must be one of theirs. A measure spelled another way is the same measure ("Temp" for "T",
@@ -94,12 +96,14 @@ _TWO_WORD_LABEL = tuple(
 )
 # A clock time written after a number: "10:30", "2pm", "10 am".
 _CLOCK_AFTER = re.compile(r"(?::\d\d|[ \t]*[ap]\.?m(?![^\W_]))", re.IGNORECASE)
-# A clock time written as four digits ("0600", "2400") or as hours and minutes ("10.30", "8.15").
-_CLOCK_DIGITS = re.compile(r"(?:[01]\d|2[0-3])[0-5]\d|2400|(?:[01]?\d|2[0-3])\.[0-5]\d")
+# A clock time written as four digits: "0600", "2400".
+_CLOCK_DIGITS = re.compile(r"(?:[01]\d|2[0-3])[0-5]\d|2400")
 # Only an arrow between two numbers, and the second one's own comparator: "HR 88 -> >110".
 _ARROW = re.compile(rf"[ \t]*(?:-{{1,2}}>|=>)[ \t]*(?:{_COMPARATOR}[ \t]*)?")
 # What is written right after a number: a "%", a unit or other word, or a rate ("/hr").
 _FOLLOWING = re.compile(r"[ \t]*(%|[^\W\d_][^\W_]*(?:[ \t]*/[ \t]*[^\W_]+)?|/[ \t]*[^\W_]+)")
+# The two words right after a number, to tell a label that starts the next reading.
+_NEXT_TWO_WORDS = re.compile(r"[ \t]*([^\W\d_][^\W_]*[ \t]+[^\W\d_][^\W_]*)")
 # How far back from a number its label, joiners and comparator are looked for.
 _LOOK_BACK = 64
 # A comparator right before a number, and the spaces between them.
@@ -237,14 +241,32 @@ class _Read:
     at_is_value: bool  # whether an "at" before it is read past ("HR at 88" but not "at 0600")
 
 
-def _reads(text: str) -> list[_Read]:
-    """Every number of the text with what is written around it, each read once."""
+def _written_after(text: str, span: Span, unit: WrittenUnit | None) -> str:
+    """What is written right after a number, folded, for telling whether two are written alike.
+
+    That is the unit as typed when one is read ("°C", "mL/hr"), else a "%", a rate, or the next
+    word ("tabs"); but a word that is a label of the measures table starts the next reading and
+    does not count ("HR 88->110 RR 20"). Nothing is written after a number that ends the text or
+    is followed by punctuation.
+    """
+    if unit is not None:
+        return "".join(text[span.end : unit.end].split()).casefold()
+    two = _NEXT_TWO_WORDS.match(text, span.end)
+    following = _FOLLOWING.match(text, span.end)
+    if two is not None and " ".join(two[1].casefold().split()) in _MEASURES:
+        return ""
+    if following is None or following[1].casefold() in _MEASURES:
+        return ""
+    return "".join(following[1].split()).casefold()
+
+
+def _reads(text: str, tokens: list[tuple[str, Span]]) -> list[_Read]:
+    """The given numbers of the text with what is written around each, each read once."""
     out: list[_Read] = []
-    for written, span in numbers_in(text):
+    for written, span in tokens:
         unit = written_unit(text, span)
         bare_rate, bare_end = bare_rate_end_after(text, span)
         end = bare_end if unit is None else unit.end
-        following = _FOLLOWING.match(text, span.end)
         out.append(
             _Read(
                 written=written,
@@ -253,10 +275,7 @@ def _reads(text: str) -> list[_Read]:
                 bare_rate=bare_rate,
                 bare_end=bare_end,
                 end=end + (unit is None and text.startswith("%", end)),
-                alike=(
-                    "/" in written,
-                    "" if following is None else "".join(following[1].split()).casefold(),
-                ),
+                alike=("/" in written, _written_after(text, span, unit)),
                 at_is_value=not (
                     (unit is not None and unit.compared is not None)
                     or _CLOCK_DIGITS.fullmatch(written)
@@ -283,10 +302,8 @@ def _label_before(text: str, past_at: bool) -> str | None:
     return None if match is None else match.group(1).casefold()
 
 
-def _labels(
-    text: str, reads: list[_Read], start: int = 0, stop: int | None = None
-) -> dict[int, str | None]:
-    """The label of each number that starts in text[start:stop], by where it starts, in one pass.
+def _labels(text: str, reads: list[_Read], start: int = 0) -> dict[int, str | None]:
+    """The label of each number that starts at or after `start`, by where it starts, in one pass.
 
     Labels are read only after `start`. A number with no label of its own, written right after
     an arrow ("HR 88->110", with only spaces, the arrow and its own comparator after the previous
@@ -298,8 +315,6 @@ def _labels(
     for read in reads:
         if read.span.start < start:
             continue
-        if stop is not None and read.span.start >= stop:
-            break
         label = _label_before(_look_back(text, start, read.span.start), read.at_is_value)
         if label is None and previous is not None:
             before, last = previous
@@ -329,13 +344,14 @@ def _note_numbers(raw: str, quote_spans: list[Span]) -> list[_NoteNumber]:
     only inside the quote, and a comparator right before a number even past the quote's start.
     """
     out: list[_NoteNumber] = []
-    reads = _reads(raw)
+    tokens = numbers_in(raw)
     for quote in quote_spans:
-        labels = _labels(raw, reads, quote.start, quote.end)
+        reads = _reads(
+            raw, [t for t in tokens if t[1].start < quote.end and t[1].end > quote.start]
+        )
+        labels = _labels(raw, reads, quote.start)
         for read in reads:
             written, span, unit = read.written, read.span, read.unit
-            if span.start >= quote.end or span.end <= quote.start:
-                continue
             label = labels.get(span.start)
             with_unit = Span(start=span.start, end=read.bare_end if unit is None else unit.end)
             time = time_after(raw, span)
@@ -431,7 +447,7 @@ def _mismatches(
         for word, span in words_with_numbers(text)
         if not _in_a_quote(word, quote_texts)
     ]
-    reads = _reads(text)
+    reads = _reads(text, numbers_in(text))
     labels = _labels(text, reads)
     for read in reads:
         written, span, drafted = read.written, read.span, read.unit
