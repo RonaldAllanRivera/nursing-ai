@@ -35,6 +35,7 @@ variable "image_uri" {
 variable "alert_email" {
   description = "Address that receives the alarm emails and the budget brake notice."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = strcontains(var.alert_email, "@")

@@ -35,6 +35,7 @@ PLAIN_TOOLS = (
     "basename",
     "tr",
     "head",
+    "tail",
     "sed",
     "grep",
     "printf",
@@ -67,7 +68,19 @@ if tool == "terraform" and "output" in args:
             "ai_spend": f"nursing-ai-{env}-ai-spend",
         }))
     else:
-        sys.stdout.write(outputs[args[-1]])
+        name = args[-1]
+        if name == "ops_function_name":
+            applied = any(
+                '"terraform"' in line and '"apply"' in line
+                for line in open(os.environ["FAKE_LOG"])
+            )
+            if os.environ.get("FAKE_STATE_ENV"):
+                outputs[name] = f"nursing-ai-{os.environ['FAKE_STATE_ENV']}-ops"
+            elif (os.environ.get("FAKE_FIRST_DEPLOY") or os.environ.get("FAKE_NO_STATE")) \
+                    and not applied:
+                sys.stderr.write("Error: Output not found\n")
+                sys.exit(1)
+        sys.stdout.write(outputs[name])
 elif tool == "aws":
     service, command = args[0], args[1]
     if service == "ecr" and command == "describe-repositories":
@@ -75,8 +88,11 @@ elif tool == "aws":
     elif service == "ecr":
         print("stand-in-registry-token")
     elif service == "lambda" and command == "get-function":
+        error = os.environ.get("FAKE_GET_FUNCTION_ERROR")
         if os.environ.get("FAKE_FIRST_DEPLOY"):
-            sys.stderr.write("ResourceNotFoundException\n")
+            error = "ResourceNotFoundException"
+        if error:
+            sys.stderr.write(f"An error occurred ({error}) calling GetFunction\n")
             sys.exit(254)
         print(json.dumps({"Configuration": {"FunctionName": "x"}}))
     elif service == "lambda" and command == "invoke":
@@ -193,7 +209,6 @@ def steps(run: Run) -> list[str]:
 
 NORMAL_DEMO = [
     "terraform init",
-    "first-deploy check",
     "docker build",
     "docker push",
     "point ops function",
@@ -266,6 +281,56 @@ def test_first_deploy_applies_before_it_migrates(sandbox: Path) -> None:
     assert steps(run) == FIRST_DEMO
 
 
+def test_state_without_the_ops_function_and_a_live_function_is_not_a_first_deploy(
+    sandbox: Path,
+) -> None:
+    run = run_deploy(sandbox, "demo", extra={"FAKE_NO_STATE": "1"})
+    assert run.result.returncode == 0, run.result.stderr
+    assert steps(run) == ["terraform init", "first-deploy check", *NORMAL_DEMO[1:]]
+
+
+def test_a_state_that_names_the_ops_function_is_never_a_first_deploy(sandbox: Path) -> None:
+    run = run_deploy(
+        sandbox, "demo", extra={"FAKE_GET_FUNCTION_ERROR": "ResourceNotFoundException"}
+    )
+    assert run.result.returncode == 0, run.result.stderr
+    assert steps(run) == NORMAL_DEMO
+
+
+def test_a_get_function_error_other_than_not_found_stops_the_deploy(sandbox: Path) -> None:
+    extra = {"FAKE_NO_STATE": "1", "FAKE_GET_FUNCTION_ERROR": "TooManyRequestsException"}
+    run = run_deploy(sandbox, "demo", extra=extra)
+    assert run.result.returncode != 0
+    assert "TooManyRequestsException" in run.result.stderr
+    assert steps(run) == ["terraform init", "first-deploy check"]
+
+
+def test_state_of_another_environment_stops_before_the_build(sandbox: Path) -> None:
+    run = run_deploy(sandbox, "demo", extra={"FAKE_STATE_ENV": "prod"})
+    assert run.result.returncode != 0
+    assert "nursing-ai-prod-ops" in run.result.stderr
+    assert steps(run) == ["terraform init"]
+
+
+def test_a_tfvars_environment_that_differs_stops_before_any_step(sandbox: Path) -> None:
+    tfvars = sandbox / "terraform.tfvars"
+    tfvars.write_text('alert_email = "a@example.com"\nenvironment = "prod"\n')
+    run = run_deploy(sandbox, "demo", extra={"DEPLOY_TFVARS": str(tfvars)})
+    assert run.result.returncode != 0
+    assert "environment" in run.result.stderr
+    assert run.calls == []
+    tfvars.write_text('environment = "demo"\n')
+    ok = run_deploy(sandbox, "demo", extra={"DEPLOY_TFVARS": str(tfvars)})
+    assert ok.result.returncode == 0, ok.result.stderr
+
+
+def test_the_log_shows_the_image_tag_but_not_the_registry_host(sandbox: Path) -> None:
+    run = run_deploy(sandbox, "demo")
+    assert run.result.returncode == 0, run.result.stderr
+    assert re.search(r"deploy: .*[0-9a-f]{12}-\d{14}", run.result.stdout)
+    assert REGISTRY not in run.result.stdout + run.result.stderr
+
+
 def test_deploy_stops_when_migrate_fails(sandbox: Path) -> None:
     run = run_deploy(sandbox, "demo", extra={"FAKE_FAIL_TASK": "migrate"})
     assert run.result.returncode != 0
@@ -309,7 +374,7 @@ def test_seed_demo_runs_only_for_demo(sandbox: Path) -> None:
     run = run_deploy(sandbox, "prod")
     assert run.result.returncode == 0, run.result.stderr
     assert steps(run) == [s for s in NORMAL_DEMO if s != "invoke seed-demo"]
-    assert any("nursing-ai-prod-ops" in a for a in run.aws[0])
+    assert any("nursing-ai-prod-ops" in a for a in run.aws)
 
 
 def test_deploy_never_reads_a_secret(sandbox: Path) -> None:

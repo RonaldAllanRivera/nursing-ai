@@ -21,6 +21,7 @@ variable "parameter_path" {
 variable "alarm_email" {
   description = "Address that receives the alarm emails. The owner confirms the subscription from the first email."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = can(regex("^[^@\\s]+@[^@\\s]+$", var.alarm_email))

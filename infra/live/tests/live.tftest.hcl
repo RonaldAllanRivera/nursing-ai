@@ -424,6 +424,16 @@ run "alert_email_must_contain_an_at_sign" {
   expect_failures = [var.alert_email]
 }
 
+run "alert_email_is_sensitive" {
+  command = plan
+
+  # The deploy runs in public CI logs, and a plan prints every plain value.
+  assert {
+    condition     = issensitive(var.alert_email)
+    error_message = "alert_email must be sensitive so a plan never prints it"
+  }
+}
+
 run "environment_must_be_demo_or_prod" {
   command = plan
 

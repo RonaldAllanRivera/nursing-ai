@@ -40,6 +40,7 @@ variable "lambda_roles" {
 variable "notify_email" {
   description = "Address that is emailed when the brake fires."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = strcontains(var.notify_email, "@")

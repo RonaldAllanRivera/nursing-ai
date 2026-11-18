@@ -12,10 +12,14 @@
 #                        OIDC step assumed. When AWS_PROFILE is set it is also given to Terraform.
 #   TF_VAR_*             every Terraform variable but `image_uri` (for example TF_VAR_alert_email and
 #                        TF_VAR_domain_name), or the git-ignored infra/live/terraform.tfvars. The
-#                        script sets TF_VAR_environment itself; a tfvars file must not override it.
+#                        script sets TF_VAR_environment itself; a tfvars file that sets `environment`
+#                        to another name is refused (DEPLOY_TFVARS names a different tfvars file).
 #   docker, terraform, pnpm, python3, git and the AWS CLI on PATH.
 #
 # It never reads a secret: no SSM parameter, no Secrets Manager, no --with-decryption.
+# CI logs of this public repository are public: the script prints the image tag but not the registry
+# host (it carries the account id), and the workflow must not echo environment variables or plans
+# beyond what the script prints.
 #
 # Called the same way from both places:
 #   `make deploy` (the owner's PC) asks for the environment's name, then runs
@@ -35,6 +39,7 @@ ENVIRONMENT=""
 OPS_FUNCTION=""
 FIRST_DEPLOY=""
 IMAGE_URI=""
+IMAGE_TAG=""
 REGISTRY=""
 
 say() { printf 'deploy: %s\n' "$*"; }
@@ -67,13 +72,39 @@ terraform_init() {
   "${TF[@]}" init -input=false "${backend[@]}" >/dev/null
 }
 
+# A simple grep, not an HCL parse: the tfvars file beats TF_VAR_environment, so a different name in
+# it would apply to another environment than the one typed on the command line.
+check_tfvars_environment() {
+  local file="${DEPLOY_TFVARS:-infra/live/terraform.tfvars}" named=""
+  [[ -f "$file" ]] || return 0
+  named="$(sed -n 's/^[[:space:]]*environment[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | tail -n 1)"
+  if [[ -n "$named" && "$named" != "$ENVIRONMENT" ]]; then
+    die "the tfvars file sets environment to \"${named}\", not \"${ENVIRONMENT}\"; nothing was built"
+  fi
+}
+
+# Decides whether this is the first deploy from two signals that must agree: the state has no ops
+# function output AND Lambda says the function does not exist. A state that names the ops function
+# of another environment is refused before anything is built.
 check_first_deploy() {
-  say "check for the ops function"
-  if aws lambda get-function --function-name "$OPS_FUNCTION" >/dev/null 2>&1; then
+  say "check the state and the ops function"
+  local named="" error_file="$WORK/get-function.err"
+  named="$("${TF[@]}" output -raw ops_function_name 2>/dev/null || true)"
+  if [[ -n "$named" ]]; then
+    [[ "$named" == "$OPS_FUNCTION" ]] \
+      || die "the state belongs to ${named}, not ${OPS_FUNCTION}; nothing was built"
     FIRST_DEPLOY=""
-  else
+    return 0
+  fi
+  if aws lambda get-function --function-name "$OPS_FUNCTION" >/dev/null 2>"$error_file"; then
+    FIRST_DEPLOY=""
+  elif grep -q 'ResourceNotFoundException' "$error_file"; then
     FIRST_DEPLOY="yes"
     say "first deploy: the apply runs before the migration"
+  else
+    # An AWS CLI error names the function and the error code, never a secret.
+    cat "$error_file" >&2
+    die "could not tell whether the ops function exists; nothing was built"
   fi
 }
 
@@ -86,10 +117,12 @@ build_and_push_image() {
   REGISTRY="$(aws ecr describe-repositories --repository-names nursing-ai \
     --query 'repositories[0].repositoryUri' --output text)"
   [[ -n "$REGISTRY" && "$REGISTRY" != "None" ]] || die "the nursing-ai registry was not found"
-  IMAGE_URI="${REGISTRY}:$(image_tag)"
+  IMAGE_TAG="$(image_tag)"
+  IMAGE_URI="${REGISTRY}:${IMAGE_TAG}"
+  say "image tag ${IMAGE_TAG}"
   aws ecr get-login-password | docker login --username AWS --password-stdin "${REGISTRY%%/*}" >/dev/null
-  docker build --platform linux/amd64 --provenance=false -f api/Dockerfile -t "$IMAGE_URI" .
-  docker push "$IMAGE_URI"
+  docker build --quiet --platform linux/amd64 --provenance=false -f api/Dockerfile -t "$IMAGE_URI" . >/dev/null
+  docker push --quiet "$IMAGE_URI" >/dev/null
 }
 
 point_ops_function() {
@@ -192,6 +225,7 @@ main() {
   cd "$ROOT"
   WORK="$(mktemp -d)"
   trap cleanup EXIT
+  check_tfvars_environment
   terraform_init
   check_first_deploy
   build_and_push_image
@@ -211,7 +245,7 @@ main() {
   build_web
   upload_web
   check_alarms
-  say "done: ${IMAGE_URI}"
+  say "done: ${IMAGE_TAG}"
 }
 
 main "$@"
