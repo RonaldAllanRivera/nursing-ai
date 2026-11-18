@@ -66,9 +66,11 @@ day, while "fever for a day" has no frequency. That reading takes day, week, mon
 shift but not hour ("1000 units an hour" has no frequency, as it is a rate in practice), and
 never a period followed, past spaces or a line break, by the whole word ago, before, prior,
 earlier, early, later or late: "15 mg a day ago" and "1 L a night before" say when, not how
-often. The abbreviations (OD, QD, BID, TID, QID, QOD, HS, PRN, STAT) each mean only their own
-spelling: "OD" is also the right eye, so it is never "daily". "once" alone is no frequency
-("vomited once").
+often. That reading is a draft line's only: a quote is read without it, as a quote may stop
+before the "ago" that follows ("last dose 15 mg a day"), so a note's "15 mg a day" never stands
+for "daily", while a line's is checked as one. The abbreviations (OD, QD, BID, TID, QID, QOD,
+HS, PRN, STAT) each mean only their own spelling: "OD" is also the right eye, so it is never
+"daily". "once" alone is no frequency ("vomited once").
 """
 
 import re
@@ -327,18 +329,21 @@ def words_with_numbers(text: str) -> list[tuple[str, Span]]:
     return out
 
 
-def frequencies_in(text: str) -> list[WrittenFrequency]:
+def frequencies_in(text: str, *, after_a_unit: bool = True) -> list[WrittenFrequency]:
     """Every frequency in `text` as typed, left to right, each with its meaning.
 
     Where two readings start at the same place the longer wins, and a reading that starts inside
-    an earlier one is dropped, so "once daily" is one frequency.
+    an earlier one is dropped, so "once daily" is one frequency. "a" or "an" and a period right
+    after a dose, volume or drop unit ("15 mg a day") is read only with `after_a_unit`, as a draft
+    line is; a quote is read without it.
     """
     readings = [
         WrittenFrequency(match.group(), Span(start=match.start(), end=match.end()), _meaning(match))
         for pattern in _FREQUENCY_PATTERNS
         for match in pattern.finditer(text)
     ]
-    readings.extend(_after_a_unit(text))
+    if after_a_unit:
+        readings.extend(_after_a_unit(text))
     readings.sort(key=lambda reading: (reading.span.start, -reading.span.end))
     out: list[WrittenFrequency] = []
     for reading in readings:

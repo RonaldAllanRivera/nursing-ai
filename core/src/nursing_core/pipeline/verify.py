@@ -8,12 +8,14 @@ number written with no unit is never checked for one: "PO intake 8." passes for 
 "8 oz", while "PO intake 8 mL." is flagged for its unit. A word whose number can't be compared by
 value ("q4h", "D5W", "two") must appear whole in a found quote. A frequency ("daily", "every
 day", "twice a day", "BID") is read by meaning and needs a frequency of the same meaning in a
-found quote. One that no quote gives is flagged whole, as typed ("3 times a day"), in place of
-every finding it overlaps (a number, a number word or a unit), so a one-click fix of a number
-can't keep a wrong period; one the quotes give leaves those findings as they are, and a finding
-it doesn't overlap stays either way ("15 g" in "MTX 15 g daily."). A time word right after a
-line's number ("every 2 hours") needs the same time, by meaning, right after a note number of
-that value ("q 2 hrs").
+found quote. "a" or "an" and a period after a dose ("15 mg a day") is read in the line only,
+never in a quote, which may stop before an "ago": "MTX 15 mg a day." is flagged for a weekly
+note, and a note's "15 mg a day" stands for no frequency. One that no quote gives is flagged
+whole, as typed ("3 times a day"), in place of every finding it overlaps (a number, a number word
+or a unit), so a one-click fix of a number can't keep a wrong period; one the quotes give leaves
+those findings as they are, and a finding it doesn't overlap stays either way ("15 g" in
+"MTX 15 g daily."). A time word right after a line's number ("every 2 hours") needs the same
+time, by meaning, right after a note number of that value ("q 2 hrs").
 
 A number's label is the word right before it, or a two-word label from the table of measures
 ("heart rate", "pulse rate") as a whole, read past one ":" or "=", one "~" or "(" and a comparator
@@ -695,10 +697,13 @@ def _with_frequencies(
     That frequency becomes one finding over the whole frequency as typed, in place of every
     finding it overlaps ("twice" missing from the quotes, the "3" of "3 times a day" with the
     note's "2" beside it), so no one-click fix to a number can keep a wrong period. A frequency
-    the quotes do give leaves the findings as they are.
+    the quotes do give leaves the findings as they are. The quotes are read without "a" or "an"
+    and a period after a dose ("15 mg a day"): a quote may stop before the "ago" that follows it.
     """
     in_the_quotes = {
-        frequency.meaning for quote in quote_texts for frequency in frequencies_in(quote)
+        frequency.meaning
+        for quote in quote_texts
+        for frequency in frequencies_in(quote, after_a_unit=False)
     }
     wrong = [f for f in frequencies_in(text) if f.meaning not in in_the_quotes]
     kept = [

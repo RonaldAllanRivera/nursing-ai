@@ -1755,14 +1755,53 @@ def test_a_dose_then_a_or_an_and_a_period_is_checked_as_a_frequency() -> None:
     for note, text in (
         ("metformin 500 mg daily", "Metformin 500 mg a day."),
         ("MTX 15 mg weekly", "MTX 15 mg a week."),
-        ("MTX 15 mg a week", "MTX 15 mg weekly."),
         ("metformin 500 mg once a day", "Metformin 500 mg a day."),
-        ("metformin 500 mg a day", "Metformin 500 mg once a day."),
     ):
         assert _frequency_findings(note, text) == [], (note, text)
+    # Only the line reads "a day" after a dose: a note's "15 mg a day" gives no frequency, so it
+    # can't stand for the line's "weekly" or "once a day" (the safe direction, as before "a day"
+    # was read at all).
+    assert _frequency_findings("MTX 15 mg a week", "MTX 15 mg weekly.") == [
+        ("weekly", Span(start=10, end=16))
+    ]
+    assert _frequency_findings("metformin 500 mg a day", "Metformin 500 mg once a day.") == [
+        ("once a day", Span(start=17, end=27))
+    ]
     # "a day" after no dose is no frequency, so it can't stand for "daily".
     note = "fever for a day, MTX 15 mg weekly"
     assert _frequency_findings(note, "MTX 15 mg daily.") == [("daily", Span(start=10, end=15))]
+
+
+def test_a_quote_never_gives_a_frequency_by_a_or_an_and_a_period_after_a_dose() -> None:
+    # A quote may stop before the "ago" ("last dose 15 mg a day"), and a time phrase may have more
+    # words ("a day or two ago"): so a quoted "15 mg a day" can't stand for "daily".
+    note = "MTX 15 mg weekly, last dose 15 mg a day ago"
+    for quotes in (["last dose 15 mg a day"], ["MTX 15 mg weekly", "last dose 15 mg a day"]):
+        [mismatch] = _check(note, "MTX 15 mg daily.", quotes).number_mismatches
+        assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "daily"), quotes
+        assert (mismatch.note_text, mismatch.note_span) == (None, None), quotes
+    note = "started metformin 500 mg a week ago, now 500 mg daily"
+    line = _check(note, "Metformin 500 mg weekly.", ["started metformin 500 mg a week"])
+    [mismatch] = line.number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "weekly")
+    assert (mismatch.note_text, mismatch.note_span) == (None, None)
+    for note, text in (
+        ("MTX 15 mg weekly, last dose 15 mg a day or two ago", "MTX 15 mg daily."),
+        ("metformin 500 mg daily, started 500 mg a week or so ago", "Metformin 500 mg weekly."),
+        ("metformin 500 mg daily, started 500 mg a week back", "Metformin 500 mg weekly."),
+        ("MTX 15 mg weekly, given 15 mg a day after the infusion", "MTX 15 mg daily."),
+        ("metformin 500 mg daily, 500 mg a week and a half ago", "Metformin 500 mg weekly."),
+        ("MTX 15 mg weekly, 15 mg a day since", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day previously", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day (ago)", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day - ago", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day... ago", "MTX 15 mg daily."),
+    ):
+        phrase = text.split()[-1].rstrip(".")
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], note
 
 
 def test_a_dose_then_a_or_an_and_a_period_before_a_time_word_is_no_frequency() -> None:

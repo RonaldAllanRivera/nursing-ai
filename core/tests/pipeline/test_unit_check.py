@@ -630,6 +630,24 @@ def test_a_or_an_and_a_period_before_a_time_word_says_when_not_how_often() -> No
         assert [f.meaning for f in frequencies_in(text)] == [(1, "day")], text
 
 
+def test_a_quote_is_read_without_a_or_an_and_a_period_after_a_unit() -> None:
+    text = "15 mg a day, 15 mg daily, 15 mg once a day, 15 mg 2x/day, 15 mg every day, 1 L a shift"
+    assert [f.text for f in frequencies_in(text, after_a_unit=False)] == [
+        "daily",
+        "once a day",
+        "2x/day",
+        "every day",
+    ]
+    assert [f.text for f in frequencies_in(text)] == [
+        "a day",
+        "daily",
+        "once a day",
+        "2x/day",
+        "every day",
+        "a shift",
+    ]
+
+
 def test_a_count_then_a_slash_and_a_period_is_a_counted_frequency() -> None:
     assert _meanings("2x/day") == [("2x/day", (0, 6), (2, "day"))]
     assert _meanings("give 2 times / week") == [("2 times / week", (5, 19), (2, "week"))]
