@@ -91,6 +91,9 @@ elif tool == "aws":
         error = os.environ.get("FAKE_GET_FUNCTION_ERROR")
         if os.environ.get("FAKE_FIRST_DEPLOY"):
             error = "ResourceNotFoundException"
+        if os.environ.get("FAKE_GET_FUNCTION_MESSAGE"):
+            sys.stderr.write(os.environ["FAKE_GET_FUNCTION_MESSAGE"] + "\n")
+            sys.exit(254)
         if error:
             sys.stderr.write(f"An error occurred ({error}) calling GetFunction\n")
             sys.exit(254)
@@ -302,6 +305,34 @@ def test_a_get_function_error_other_than_not_found_stops_the_deploy(sandbox: Pat
     run = run_deploy(sandbox, "demo", extra=extra)
     assert run.result.returncode != 0
     assert "TooManyRequestsException" in run.result.stderr
+    assert steps(run) == ["terraform init", "first-deploy check"]
+
+
+ACCOUNT = "210987654321"
+ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/deploy-role/session"
+
+
+@pytest.mark.parametrize(
+    ("message", "shown"),
+    [
+        (
+            f"An error occurred (AccessDeniedException) when calling the GetFunction "
+            f"operation: User: {ARN} is not authorized to perform: lambda:GetFunction",
+            "AccessDeniedException",
+        ),
+        (f"Unable to locate credentials for {ARN}", "unknown AWS error"),
+    ],
+)
+def test_an_aws_error_shows_its_code_but_never_the_account_id_or_arn(
+    sandbox: Path, message: str, shown: str
+) -> None:
+    extra = {"FAKE_NO_STATE": "1", "FAKE_GET_FUNCTION_MESSAGE": message}
+    run = run_deploy(sandbox, "demo", extra=extra)
+    assert run.result.returncode != 0
+    assert shown in run.result.stderr
+    everything = run.result.stdout + run.result.stderr
+    assert ACCOUNT not in everything
+    assert ARN not in everything
     assert steps(run) == ["terraform init", "first-deploy check"]
 
 

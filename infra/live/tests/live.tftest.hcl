@@ -434,6 +434,17 @@ run "alert_email_is_sensitive" {
   }
 }
 
+run "image_uri_is_sensitive" {
+  command = plan
+
+  # Its registry host carries the account id, and every deploy changes it, so a
+  # plan in a public CI log would print it each time.
+  assert {
+    condition     = issensitive(var.image_uri)
+    error_message = "image_uri must be sensitive so a plan never prints the account id"
+  }
+}
+
 run "environment_must_be_demo_or_prod" {
   command = plan
 

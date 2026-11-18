@@ -25,6 +25,7 @@ variable "environment" {
 variable "image_uri" {
   description = "Full URI of the application container image, including its tag. CI passes the image it just pushed."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = length(var.image_uri) > 0

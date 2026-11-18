@@ -11,6 +11,7 @@ variable "name" {
 variable "image_uri" {
   description = "Full URI of the application container image, including its tag, that all three functions run."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = length(var.image_uri) > 0

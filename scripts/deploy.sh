@@ -102,9 +102,11 @@ check_first_deploy() {
     FIRST_DEPLOY="yes"
     say "first deploy: the apply runs before the migration"
   else
-    # An AWS CLI error names the function and the error code, never a secret.
-    cat "$error_file" >&2
-    die "could not tell whether the ops function exists; nothing was built"
+    # The raw AWS CLI message can carry the caller's ARN, account id included, and CI logs are
+    # public: print only the error code ("An error occurred (<Code>) when ...").
+    local code
+    code="$(sed -n 's/^An error occurred (\([A-Za-z0-9]*\)).*/\1/p' "$error_file" | head -n 1)"
+    die "could not tell whether the ops function exists (${code:-unknown AWS error}); nothing was built"
   fi
 }
 
