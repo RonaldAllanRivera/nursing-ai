@@ -40,6 +40,11 @@ mock_provider "aws" {
   }
 }
 
+# The custom-domain certificate lives in us-east-1, which is a second provider.
+mock_provider "aws" {
+  alias = "us_east_1"
+}
+
 override_resource {
   target = module.compute.aws_iam_role.api
   values = {
@@ -51,6 +56,13 @@ override_resource {
   target = module.compute.aws_iam_role.worker
   values = {
     arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-worker"
+  }
+}
+
+override_resource {
+  target = module.compute.aws_iam_role.ops
+  values = {
+    arn = "arn:aws:iam::123456789012:role/nursing-ai-demo-ops"
   }
 }
 
@@ -88,6 +100,20 @@ override_resource {
   target = module.ops.aws_ssm_parameter.secret["google-client-secret"]
   values = {
     arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/google-client-secret"
+  }
+}
+
+override_resource {
+  target = module.ops.aws_ssm_parameter.site_url
+  values = {
+    arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/site-url"
+  }
+}
+
+override_resource {
+  target = module.ops.aws_ssm_parameter.bootstrap_admin_email
+  values = {
+    arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/demo/bootstrap-admin-email"
   }
 }
 
@@ -206,6 +232,179 @@ run "site_routes_api_calls_to_the_http_api" {
   }
 }
 
+run "ops_function_is_wired_to_its_log_group_and_outputs" {
+  assert {
+    condition     = module.compute.function_log_groups.ops == module.ops.ops_log_group_name && module.ops.ops_log_group_name == "/aws/lambda/${module.compute.ops_function_name}"
+    error_message = "the ops function must log to the group ops made for it"
+  }
+  assert {
+    condition     = output.ops_function_name == "nursing-ai-demo-ops" && output.http_api_id == "abc123" && output.dlq_name == "${module.compute.dlq_name}"
+    error_message = "the deploy outputs must come from compute"
+  }
+  assert {
+    condition     = output.alarm_names == { api_5xx = "nursing-ai-demo-api-5xx", dead_jobs = "nursing-ai-demo-dead-jobs", ai_spend = "nursing-ai-demo-ai-spend" }
+    error_message = "alarm_names must name the three alarms"
+  }
+  assert {
+    condition     = !contains(module.brake.target_role_names, module.compute.ops_role_name)
+    error_message = "the ops role stays outside the brake"
+  }
+}
+
+run "site_url_parameter_holds_the_distribution_address" {
+  assert {
+    condition     = module.ops.site_url_parameter_name == "/nursing-ai/demo/site-url" && module.ops.bootstrap_admin_email_parameter_name == "/nursing-ai/demo/bootstrap-admin-email"
+    error_message = "the new parameters live under the environment's path"
+  }
+  assert {
+    condition     = module.ops.site_url_parameter_value == "https://${module.web.domain_name}" && module.ops.site_url_parameter_value == output.site_url
+    error_message = "the site-url parameter must be https:// plus the distribution's domain, the same as the site_url output"
+  }
+}
+
+run "custom_domain_off_by_default" {
+  assert {
+    condition     = length(aws_acm_certificate.site) == 0 && length(aws_acm_certificate_validation.site) == 0
+    error_message = "With no domain_name there is no certificate and nothing to validate."
+  }
+  assert {
+    condition     = length(output.dns_records) == 0 && length(module.web.aliases) == 0
+    error_message = "With no domain_name there are no DNS records and no alias."
+  }
+  assert {
+    condition     = output.site_url == "https://${module.web.domain_name}" && module.ops.site_url_parameter_value == output.site_url
+    error_message = "site-url stays the CloudFront domain."
+  }
+}
+
+run "custom_domain_waits_for_the_validation_records" {
+  variables {
+    domain_name = "sourceline.example.com"
+  }
+
+  override_resource {
+    target = aws_acm_certificate.site[0]
+    values = {
+      arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+      domain_validation_options = [{
+        domain_name           = "sourceline.example.com"
+        resource_record_name  = "_abc123.sourceline.example.com."
+        resource_record_type  = "CNAME"
+        resource_record_value = "_def456.acm-validations.aws."
+      }]
+    }
+  }
+
+  assert {
+    condition     = aws_acm_certificate.site[0].domain_name == "sourceline.example.com" && aws_acm_certificate.site[0].validation_method == "DNS"
+    error_message = "The certificate is for the domain, validated by DNS."
+  }
+  assert {
+    condition     = length(aws_acm_certificate_validation.site) == 0
+    error_message = "Nothing may wait for DNS before domain_validated is set."
+  }
+  assert {
+    condition     = length(module.web.aliases) == 0
+    error_message = "The distribution has no alias until domain_validated."
+  }
+  assert {
+    condition     = output.site_url == "https://${module.web.domain_name}" && module.ops.site_url_parameter_value == "https://${module.web.domain_name}"
+    error_message = "site-url stays the CloudFront domain until domain_validated."
+  }
+  assert {
+    condition     = output.dns_records.certificate_validation == { name = "_abc123.sourceline.example.com", type = "CNAME", value = "_def456.acm-validations.aws" }
+    error_message = "The validation record is the certificate's, without the trailing dots."
+  }
+  assert {
+    condition     = output.dns_records.site == { name = "sourceline.example.com", type = "CNAME", value = module.web.domain_name }
+    error_message = "The site record points the domain at the distribution."
+  }
+}
+
+run "custom_domain_adds_the_alias_and_a_us_east_1_certificate" {
+  variables {
+    domain_name      = "sourceline.example.com"
+    domain_validated = true
+  }
+
+  override_resource {
+    target = aws_acm_certificate.site[0]
+    values = {
+      arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+      domain_validation_options = [{
+        domain_name           = "sourceline.example.com"
+        resource_record_name  = "_abc123.sourceline.example.com."
+        resource_record_type  = "CNAME"
+        resource_record_value = "_def456.acm-validations.aws."
+      }]
+    }
+  }
+
+  override_resource {
+    target = aws_acm_certificate_validation.site[0]
+    values = {
+      certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+    }
+  }
+
+  assert {
+    condition     = startswith(aws_acm_certificate_validation.site[0].certificate_arn, "arn:aws:acm:us-east-1:")
+    error_message = "The certificate is in us-east-1."
+  }
+  assert {
+    condition     = join(",", module.web.aliases) == "sourceline.example.com"
+    error_message = "The distribution answers to the domain."
+  }
+  assert {
+    condition     = output.site_url == "https://sourceline.example.com" && module.ops.site_url_parameter_value == "https://sourceline.example.com"
+    error_message = "site-url and the site_url output become the custom domain."
+  }
+  assert {
+    condition     = output.dns_records.site.value == module.web.domain_name
+    error_message = "The DNS records stay in the output once validated."
+  }
+}
+
+run "domain_name_must_be_a_host_name" {
+  command = plan
+
+  variables {
+    domain_name = "https://sourceline.example.com/"
+  }
+
+  expect_failures = [var.domain_name]
+}
+
+run "domain_name_has_no_trailing_dot" {
+  command = plan
+
+  variables {
+    domain_name = "sourceline.example.com."
+  }
+
+  expect_failures = [var.domain_name]
+}
+
+run "domain_name_is_lowercase" {
+  command = plan
+
+  variables {
+    domain_name = "Sourceline.example.com"
+  }
+
+  expect_failures = [var.domain_name]
+}
+
+run "domain_validated_needs_a_domain_name" {
+  command = plan
+
+  variables {
+    domain_validated = true
+  }
+
+  expect_failures = [var.domain_validated]
+}
+
 run "names_follow_the_environment" {
   command = plan
 
@@ -223,6 +422,38 @@ run "alert_email_must_contain_an_at_sign" {
   }
 
   expect_failures = [var.alert_email]
+}
+
+run "alert_email_is_sensitive" {
+  command = plan
+
+  # The deploy runs in public CI logs, and a plan prints every plain value.
+  assert {
+    condition     = issensitive(var.alert_email)
+    error_message = "alert_email must be sensitive so a plan never prints it"
+  }
+}
+
+run "queue_url_is_sensitive" {
+  command = plan
+
+  # An SQS queue URL carries the account id, and terraform apply prints every
+  # output in a public CI log.
+  assert {
+    condition     = issensitive(output.queue_url)
+    error_message = "queue_url must be sensitive so an apply never prints the account id"
+  }
+}
+
+run "image_uri_is_sensitive" {
+  command = plan
+
+  # Its registry host carries the account id, and every deploy changes it, so a
+  # plan in a public CI log would print it each time.
+  assert {
+    condition     = issensitive(var.image_uri)
+    error_message = "image_uri must be sensitive so a plan never prints the account id"
+  }
 }
 
 run "environment_must_be_demo_or_prod" {

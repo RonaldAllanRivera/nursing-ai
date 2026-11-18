@@ -3,18 +3,26 @@ import json
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, Header, Request, Response
+from nursing_core.domain.jobs import JobStatus
 from nursing_core.domain.notes import RoughNote
+from nursing_core.storage.notes import DailyCapReached
 
 from nursing_api.deps import (
     ClockDep,
     NotesDep,
+    Nurse,
     NurseDep,
     PatientsDep,
     QueueDep,
     ensure_own_facility,
 )
-from nursing_api.problems import HeaderRefused, PreconditionRequired, not_built, problems
+from nursing_api.problems import (
+    DailyDraftLimit,
+    HeaderRefused,
+    PreconditionRequired,
+    problems,
+)
 from nursing_api.routes import CSRF, SIGNED_IN, location_header
 from nursing_api.routes.jobs import job_out
 from nursing_api.schemas import DraftJobOut, RoughNoteIn
@@ -25,6 +33,15 @@ MAX_IDEMPOTENCY_KEY = 200
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=SIGNED_IN)
 # A new job counts toward the person's daily draft cap (429).
 POSTED = {202: {"headers": location_header("The draft job to poll")}}
+
+
+def daily_cap_for(request: Request, nurse: Nurse) -> int | None:
+    """The daily draft cap that applies to this nurse, or None.
+
+    Demo personas draft from replays at no cost, so only an invited nurse is capped.
+    """
+    cap: int | None = request.app.state.settings.ai_daily_drafts_per_user
+    return None if nurse.user.persona else cap
 
 
 def body_hash(patient_id: UUID, text: str) -> str:
@@ -54,6 +71,7 @@ async def add_rough_note(
     patients: PatientsDep,
     notes: NotesDep,
     queue: QueueDep,
+    request: Request,
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -78,10 +96,20 @@ async def add_rough_note(
         shift=nurse.shift,  # the session's shift as she signed in, never worked out from the clock
         note_format=patient.facility.default_note_format,
     )
-    stored, job = await notes.add_rough_note(
-        rough, idempotency_key, body_hash(patient_id, body.text)
-    )
-    if stored.id == rough.id:  # a repeat of an earlier request gets that request's job, once
+    try:
+        # A repeat of an earlier request makes no new job, so it is answered even at the cap.
+        stored, job = await notes.add_rough_note(
+            rough,
+            idempotency_key,
+            body_hash(patient_id, body.text),
+            daily_cap=daily_cap_for(request, nurse),
+        )
+    except DailyCapReached:
+        raise DailyDraftLimit from None
+    # A new request sends its message. A repeat sends it again only while the job is still
+    # `queued`, which is what an earlier failed or timed-out send leaves behind; a duplicate
+    # message is harmless, because the claim lets one run win.
+    if stored.id == rough.id or job.status == JobStatus.QUEUED:
         await queue.enqueue(job.id)
     response.headers["Location"] = f"/api/v1/draft-jobs/{job.id}"
     return job_out(job)
@@ -94,6 +122,26 @@ async def add_rough_note(
     responses={**POSTED, **problems(401, 403, 404, 409, 422, 423, 429)},
     dependencies=CSRF,
 )
-async def draft_again(rough_note_id: UUID) -> Response:
+async def draft_again(
+    rough_note_id: UUID,
+    response: Response,
+    nurse: NurseDep,
+    clock: ClockDep,
+    patients: PatientsDep,
+    notes: NotesDep,
+    queue: QueueDep,
+    request: Request,
+) -> DraftJobOut:
     """Try drafting again: a new job after a retryable failure; the open job if one is running."""
-    return not_built()
+    rough = await notes.get_rough_note(rough_note_id)
+    ensure_own_facility(nurse, await patients.get_patient_by_encounter(rough.encounter_id))
+    try:
+        job, is_new = await notes.redraft(
+            rough_note_id, nurse.user.id, clock.now(), daily_cap=daily_cap_for(request, nurse)
+        )
+    except DailyCapReached:
+        raise DailyDraftLimit from None
+    if is_new or job.status == JobStatus.QUEUED:  # a queued open job may never have been sent
+        await queue.enqueue(job.id)
+    response.headers["Location"] = f"/api/v1/draft-jobs/{job.id}"
+    return job_out(job)

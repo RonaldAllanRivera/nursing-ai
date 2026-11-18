@@ -1,9 +1,9 @@
-"""The monthly AI spend cap: checked before every live call. Concurrent calls can still pass it."""
+"""The monthly AI spend cap: a live call first holds its worst case against it."""
 
 import json
 from decimal import Decimal
+from uuid import UUID
 
-from nursing_core.domain.errors import AiBudgetReached
 from nursing_core.domain.model_output import DraftRequest, ProviderResult
 from nursing_core.ports import Clock, LlmProvider
 from nursing_core.prompts import load_prompt
@@ -21,7 +21,8 @@ class BudgetGuard:
     The estimate is the worst case of one call: one token per character of the system prompt, the
     redacted note and the output schema (never fewer tokens than that), plus the largest answer
     the provider allows.
-    Two calls checked at the same moment can both pass; the cap is a safety net, not a ledger.
+    The worst case is held against the cap under a lock (see `PgUsageRepository.hold`), so two
+    calls at the same moment can't both pass it. Recording the call's usage releases the hold.
     """
 
     def __init__(
@@ -31,19 +32,19 @@ class BudgetGuard:
         clock: Clock,
         cap_usd: Decimal,
         model: str,
+        job_id: UUID | None = None,
     ) -> None:
         self._inner = inner
         self._usage = usage
         self._clock = clock
         self._cap = cap_usd
         self._model = model
+        self._job_id = job_id
 
     async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
-        spent, _calls = await self._usage.month_total(self._clock.now())
         input_chars = (
             len(load_prompt(request.prompt_version)) + len(request.redacted_text) + SCHEMA_CHARS
         )
         worst_case = cost_usd(self._model, input_chars, MAX_OUTPUT_TOKENS)
-        if spent + worst_case > self._cap:
-            raise AiBudgetReached("the monthly AI cap would be passed")
+        await self._usage.hold(self._job_id, worst_case, self._cap, self._clock.now())
         return await self._inner.draft_fdar(request)

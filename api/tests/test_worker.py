@@ -1,6 +1,7 @@
 """The draft worker: real pipeline, provider choice per AI_MODE, the budget guard, failures."""
 
 import asyncio
+import json
 import logging
 from datetime import timedelta
 from decimal import Decimal
@@ -11,11 +12,14 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_api.app import create_app
+from nursing_api.providers import DraftProviders
 from nursing_api.settings import Settings
+from nursing_api.worker import DraftWorker
 from nursing_core.db import create_engine
 from nursing_core.demo import DemoCase, load_demo_cases
 from nursing_core.domain.errors import (
     AiBudgetReached,
+    DatabaseWaking,
     InvalidModelOutput,
     ModelRefused,
     PhiLeak,
@@ -41,6 +45,7 @@ from .helpers import (
     running_app,
     sign_in,
 )
+from .test_budget import add_invited_nurse
 
 CASES = load_demo_cases()
 PH_CASE = next(case for case in CASES if case.facility_key == "ph-demo")
@@ -295,7 +300,7 @@ async def test_a_database_error_while_saving_the_draft_fails_the_job(
 
 
 @pytest.mark.asyncio
-async def test_a_database_error_while_failing_a_job_is_logged_not_raised(
+async def test_a_database_error_while_failing_a_job_is_logged_and_reaches_the_queue(
     database_url: str,
     clock: MutableClock,
     monkeypatch: pytest.MonkeyPatch,
@@ -315,7 +320,7 @@ async def test_a_database_error_while_failing_a_job_is_logged_not_raised(
         monkeypatch.setattr(app.state.notes, "fail_job", broken)
         await sign_in(client, PH_STAFF)
         await post_and_finish(app, client)
-    assert "draft job crashed" not in caplog.text
+    assert "draft job crashed" in caplog.text  # the in-process guard logs the class only
     assert "could not be marked failed" in caplog.text
     assert canary not in caplog.text
 
@@ -371,7 +376,7 @@ async def test_cap_reached_fails_job_without_calling_provider(
     async with app.router.lifespan_context(app):
         await record_spend(app, "0.90")  # the worst-case estimate of one call is more than 10c
         async with client_for(app) as client:
-            await sign_in(client, PH_STAFF)
+            await sign_in(client, await add_invited_nurse(app, "ph-demo"))
             job = await post_and_finish(app, client)
         assert (job["status"], job["failure"]) == ("failed", "ai_budget_reached")
         assert spy.requests == []
@@ -388,7 +393,7 @@ async def test_a_call_within_the_cap_goes_through_and_is_recorded(
     async with app.router.lifespan_context(app):
         await record_spend(app, "0.90")
         async with client_for(app) as client:
-            await sign_in(client, PH_STAFF)
+            await sign_in(client, await add_invited_nurse(app, "ph-demo"))
             job = await post_and_finish(app, client)
         assert job["status"] == "succeeded"
         assert len(spy.requests) == 1
@@ -403,7 +408,7 @@ async def test_the_cap_counts_this_utc_month_only(database_url: str, clock: Muta
         await record_spend(app, "0.90")
         clock.set(clock.now().replace(month=12, day=2))
         async with client_for(app) as client:
-            await sign_in(client, PH_STAFF)
+            await sign_in(client, await add_invited_nurse(app, "ph-demo"))
             job = await post_and_finish(app, client)
     assert job["status"] == "succeeded"
 
@@ -506,3 +511,194 @@ async def test_a_billed_failure_is_recorded_once_and_keeps_its_problem_code(
                 )
             ).one()
     assert (row[0], row[1], row[2]) == (1500, 500, Decimal("0.32"))
+
+
+class WakingNotes:
+    """A notes repository whose claim finds the database waking `wakings` times, then claims."""
+
+    def __init__(self, real: PgNoteRepository, wakings: int) -> None:
+        self._real = real
+        self.wakings = wakings
+        self.attempts = 0
+
+    async def claim_job(self, job_id: UUID) -> RoughNote | None:
+        self.attempts += 1
+        if self.attempts <= self.wakings:
+            raise DatabaseWaking("the database is waking up")
+        return await self._real.claim_job(job_id)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_the_connect_while_the_database_wakes(
+    database_url: str, clock: MutableClock
+) -> None:
+    async with running_app(database_url, clock) as app:
+        state = app.state
+        record = await state.patients.get_patient(PH_CASE.patient_id)
+
+        async def queued_job(key: str) -> UUID:
+            rough = PH_CASE.rough_note.model_copy(
+                update={"id": uuid4(), "author_id": PH_STAFF, "encounter_id": record.encounter_id}
+            )
+            _, job = await state.notes.add_rough_note(rough, key, sha256(key.encode()).hexdigest())
+            return job.id
+
+        def worker_for(notes: WakingNotes) -> DraftWorker:
+            return DraftWorker(
+                notes,  # pyright: ignore[reportArgumentType]
+                state.patients,
+                state.usage,
+                clock,
+                DraftProviders(
+                    lambda _patient: FakeProvider(PH_CASE.model_output),
+                    state.usage,
+                    clock,
+                    None,
+                    live=False,
+                ),
+            )
+
+        # Two wakings, then the claim works: the job runs once.
+        job_id = await queued_job("wakes-twice")
+        notes = WakingNotes(state.notes, wakings=2)
+        await worker_for(notes).run(job_id)
+        assert notes.attempts == 3
+        assert (await state.notes.get_job(job_id)).status is JobStatus.SUCCEEDED
+
+        # Three wakings: three attempts in all, then the error goes back to the queue.
+        job_id = await queued_job("wakes-always")
+        notes = WakingNotes(state.notes, wakings=3)
+        with pytest.raises(DatabaseWaking):
+            await worker_for(notes).run(job_id)
+        assert notes.attempts == 3
+        assert (await state.notes.get_job(job_id)).status is JobStatus.QUEUED
+
+
+async def _queued_job(app: FastAPI, key: str = "lease-1") -> UUID:
+    record = await app.state.patients.get_patient(PH_CASE.patient_id)
+    rough = PH_CASE.rough_note.model_copy(
+        update={"id": uuid4(), "author_id": PH_STAFF, "encounter_id": record.encounter_id}
+    )
+    _, job = await app.state.notes.add_rough_note(rough, key, sha256(key.encode()).hexdigest())
+    return job.id
+
+
+@pytest.mark.asyncio
+async def test_running_job_inside_its_lease_is_not_claimed(
+    database_url: str, clock: MutableClock
+) -> None:
+    spy = SpyProvider()
+    async with running_app(
+        database_url, clock, app_role="worker", provider_for=lambda _p: spy
+    ) as app:
+        job_id = await _queued_job(app)
+        assert await app.state.notes.claim_job(job_id) is not None
+        clock.set(clock.now() + timedelta(seconds=149))
+        await app.state.worker.run(job_id)
+        job = await app.state.notes.get_job(job_id)
+    assert (job.status, spy.requests) == (JobStatus.RUNNING, [])
+
+
+@pytest.mark.asyncio
+async def test_claim_after_lease_retries_then_fails_on_the_fourth(
+    database_url: str, clock: MutableClock
+) -> None:
+    spy = SpyProvider()
+    async with running_app(
+        database_url, clock, app_role="worker", provider_for=lambda _p: spy
+    ) as app:
+        job_id = await _queued_job(app)
+        for _ in range(3):  # three workers each claimed it, then timed out
+            assert await app.state.notes.claim_job(job_id) is not None
+            clock.set(clock.now() + timedelta(seconds=151))
+        await app.state.worker.run(job_id)
+        job = await app.state.notes.get_job(job_id)
+    assert (job.status, job.failure) == (JobStatus.FAILED, JobFailure.PROVIDER_ERROR)
+    assert spy.requests == []
+
+
+@pytest.mark.asyncio
+async def test_persona_draft_uses_replay_even_in_live_mode(
+    database_url: str, clock: MutableClock
+) -> None:
+    spy = SpyProvider()
+    clock.set(PH_CASE.rough_note.written_at)
+    app = create_app(live_settings(database_url), clock=clock, provider_for=lambda _p: spy)
+    async with app.router.lifespan_context(app), client_for(app) as client:
+        await sign_in(client, PH_STAFF)  # a demo persona
+        job = await post_and_finish(app, client)
+        assert job["status"] == "succeeded", job
+        assert spy.requests == []  # the live provider was never asked
+        async with app.state.engine.connect() as conn:
+            providers = (await conn.execute(text("select provider from ai_usage"))).scalars().all()
+            holds = (await conn.execute(text("select count(*) from ai_spend_hold"))).scalar_one()
+    assert providers == ["replay"]
+    assert holds == 0
+    assert (await app.state.usage.month_total(clock.now()))[0] == Decimal(0)
+
+
+@pytest.mark.asyncio
+async def test_an_invited_nurses_live_draft_releases_its_hold_when_recorded(
+    database_url: str, clock: MutableClock
+) -> None:
+    spy = SpyProvider()
+    app = create_app(
+        live_settings(database_url, ai_monthly_cap_usd="100.00"),
+        clock=clock,
+        provider_for=lambda _p: spy,
+    )
+    async with app.router.lifespan_context(app), client_for(app) as client:
+        await sign_in(client, await add_invited_nurse(app, "ph-demo"))
+        job = await post_and_finish(app, client)
+        async with app.state.engine.connect() as conn:
+            holds = (await conn.execute(text("select count(*) from ai_spend_hold"))).scalar_one()
+    assert job["status"] == "succeeded"
+    assert len(spy.requests) == 1
+    assert holds == 0
+
+
+async def _worker_job(app: FastAPI, key: str) -> UUID:
+    return await _queued_job(app, key)
+
+
+def _metric_lines(out: str) -> list[dict[str, object]]:
+    parsed = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    return [line for line in parsed if "_aws" in line]  # the request log shares stdout
+
+
+@pytest.mark.asyncio
+async def test_the_worker_role_reports_each_jobs_spend(
+    database_url: str, clock: MutableClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async with running_app(database_url, clock, app_role="worker") as app:
+        first, second = await _worker_job(app, "m-1"), await _worker_job(app, "m-2")
+        await app.state.worker.run(first)
+        await app.state.worker.run(second)
+        await app.state.worker.run(first)  # already done: nothing ran, nothing to report
+    lines = _metric_lines(capsys.readouterr().out)
+    assert [line["AiSpendUsd"] for line in lines] == [0.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_the_api_role_prints_no_metric(
+    database_url: str, clock: MutableClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async with running_app(database_url, clock) as app:
+        await app.state.worker.run(await _worker_job(app, "m-api"))
+    assert _metric_lines(capsys.readouterr().out) == []
+
+
+@pytest.mark.asyncio
+async def test_the_metric_carries_what_the_jobs_calls_cost(
+    database_url: str, clock: MutableClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    billed = _billed(ModelRefused)  # a refused answer is still billed, and still counted
+    provider = FailingProvider(billed)
+    async with running_app(
+        database_url, clock, app_role="worker", provider_for=lambda _p: provider
+    ) as app:
+        await app.state.worker.run(await _worker_job(app, "m-cost"))
+    assert [line["AiSpendUsd"] for line in _metric_lines(capsys.readouterr().out)] == [0.32]

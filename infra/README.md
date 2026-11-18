@@ -3,31 +3,75 @@
 Terraform for the app's AWS hosting in Sydney (`ap-southeast-2`). The decisions behind it are in
 [ADR 0005](../docs/adr/0005-lambda-over-ecs-fargate.md) (Lambda),
 [0006](../docs/adr/0006-ipv6-egress-instead-of-nat.md) (IPv6 instead of NAT),
-[0007](../docs/adr/0007-aurora-serverless-v2-with-auto-pause.md) (Aurora) and
-[0008](../docs/adr/0008-ssm-parameter-store-for-secrets.md) (secrets).
+[0007](../docs/adr/0007-aurora-serverless-v2-with-auto-pause.md) (Aurora),
+[0008](../docs/adr/0008-ssm-parameter-store-for-secrets.md) (secrets),
+[0010](../docs/adr/0010-live-address-on-the-owners-own-domain.md) (the live address) and
+[0012](../docs/adr/0012-drafts-on-sqs-with-a-lease-and-budget-holds.md) (drafts on SQS and the
+budget).
 
 The code is tested against a mocked provider. Nothing in this folder has been applied to AWS yet.
 
-## App changes this stack needs (not built yet)
+## What the app does on this stack
 
-The stack is written for an app that does not exist in this form yet. The app will need these
-changes, and a deploy before they land will not serve requests:
+The app in `api/` is built for this stack. One image (built from `api/Dockerfile`) serves all three
+Lambda functions, and the `APP_ROLE` setting picks what each one is.
 
-- Run behind the Lambda Web Adapter, with the server listening on port 8080.
-- Serve the `/events` route only when `APP_ROLE=worker`, so the public API never exposes it.
-- Read its secrets from SSM Parameter Store once, at cold start, using the
-  `<SETTING>_SSM_PARAMETER` names it is given, through a dual-stack client.
-- Use a dual-stack client for SQS.
-- Use SQLAlchemy `NullPool` and a database connect timeout above 15 seconds, with retries, so the
-  database can pause and wake.
-- Write the `AiSpendUsd` metric (namespace `NursingAI`) that the AI spend alarm watches, as an
-  embedded-metric-format log line with no dimensions. The worker role has no
-  `cloudwatch:PutMetricData`, and any dimension makes the alarm match nothing.
-- Read each secret with one `ssm:GetParameter` call per name, with decryption on. A batched
-  `GetParameters` call is refused.
-- Build absolute URLs, including Google's sign-in callback, from the site's address, never from the
-  request's Host header. Behind CloudFront the API sees the execute-api host.
-- Show a "waking" screen in the web app while the database resumes.
+- **Web Adapter.** The Lambda Web Adapter (version 1.1.0, pinned by digest) is copied into the
+  image. It turns each Lambda event into an HTTP request to the server on port 8080.
+- **Three roles from one image.**
+  - `api` serves the public routes behind the HTTP API. It gets the database URL, the site URL, the
+    Google client ID and secret, the bootstrap admin email, the queue URL and the daily draft limit.
+  - `worker` reads the draft queue (`POST /events`, which only this role and `ops` serve). It gets
+    the database URL, the site URL and the Anthropic key, and is the only function that can call
+    the model. It writes the AI-spend metric. Its function lists `500-599` in
+    `AWS_LWA_ERROR_STATUS_CODES`, so a 5xx fails the invocation and SQS delivers the message again.
+    The API and ops functions do not: the API's 5xx must reach the browser, and the deploy reads
+    the body of an ops 500.
+  - `ops` is called only by a deploy, with a task (see "The ops function and the smoke check"). It
+    gets the database URL, the site URL and the queue URL, and no Anthropic key.
+- **Secrets.** A function is given the names of its parameters, as `<SETTING>_SSM_PARAMETER`
+  settings (for example `DATABASE_URL_SSM_PARAMETER`), never the values. At cold start it reads each
+  one once, with one `GetParameter` call per name (a batched `GetParameters` call is refused),
+  through a dual-stack client. A missing parameter stops the start and names the setting, not a
+  value.
+- **The database can sleep.** The app uses SQLAlchemy's `NullPool` (no pooled connections to freeze
+  and go stale) and a 20-second connect timeout. A connection that times out, or that Aurora refuses
+  because it is still starting, answers 503 `database_waking` with `Retry-After: 5`, and the web app
+  shows a waking screen. The worker tries to claim a job 3 times before it gives up and lets SQS
+  deliver the message again.
+- **Signed-out routes and `/api/v1/health` never touch the database** in demo and prod, so a crawler
+  cannot keep a paused database awake. The ops function's `smoke` task checks the database instead.
+- **The AI-spend metric.** After every job, including free replays, the worker prints one
+  embedded-metric-format line: namespace `NursingAI`, metric `AiSpendUsd`, no dimensions. The worker
+  role has no `cloudwatch:PutMetricData`, and any dimension would make the alarm match nothing.
+- **Absolute URLs** (Google's sign-in callback, for one) are built from `SITE_URL`, which comes from
+  the `site-url` parameter, never from the request's Host header. Behind CloudFront the API sees the
+  execute-api host.
+- **Drafts** go through SQS with a lease, under a budget that holds the worst case of each call
+  first, as [ADR 0012](../docs/adr/0012-drafts-on-sqs-with-a-lease-and-budget-holds.md) explains.
+
+## The ops function and the smoke check
+
+The ops function runs inside the VPC, next to the database, so a deploy can reach what it cannot
+reach from outside. Its `POST /events` takes `{"task": "..."}`:
+
+| Task | What it does |
+|---|---|
+| `migrate` | Runs the database migrations. |
+| `seed-demo` | Loads the synthetic demo data. Demo environment only; prod refuses it. |
+| `smoke` | Checks every dependency, as below. |
+
+It answers with JSON, `{"task": ..., "ok": true|false, "failed": [names]}`, and the deploy script
+reads `ok`. `smoke` checks:
+
+- The database, with `SELECT 1`. The database is exempt from the IPv6 rule because it is inside
+  the VPC, not outbound.
+- Google's discovery document, a TLS handshake with `api.anthropic.com`, and one cheap call each
+  to SSM and SQS (through their `api.aws` dual-stack names). Each is checked **over IPv6 only**: a
+  name with no IPv6 address, or a connection over IPv4, fails the check by name (see ADR 0006).
+
+The ops function sits outside the brake (it is not one of the two roles the brake denies), so a
+deploy in a braked month can still run `smoke` and say what is wrong.
 
 ## What is in each folder
 
@@ -38,11 +82,13 @@ changes, and a deploy before they land will not serve requests:
 | `modules/network/` | VPC, two private dual-stack subnets, the IPv6 egress-only gateway, security groups. |
 | `modules/aurora/` | The Aurora PostgreSQL cluster and the `database-url` parameter. |
 | `modules/registry/` | The ECR image repository (keeps the newest 3 images). |
-| `modules/compute/` | The API and worker Lambda functions, the HTTP API, the job queue and its dead-letter queue. |
+| `modules/compute/` | The API, worker and ops Lambda functions, the HTTP API, the job queue and its dead-letter queue. |
 | `modules/web/` | The S3 bucket and CloudFront distribution for the web app. |
-| `modules/ops/` | Log groups, the three secret parameters, the alarm topic and three alarms. |
+| `modules/ops/` | The four log groups (api, worker, ops and the HTTP API's access log), the three secret parameters, the `bootstrap-admin-email` and `site-url` parameters, the alarm topic and three alarms. |
 | `modules/brake/` | The budget action that cuts the Lambda functions off from AWS at 100% of the budget. |
 | `scripts/check.sh` | One command that runs every check. |
+
+The deploy script is `scripts/deploy.sh` at the repository root, not in this folder.
 
 No AWS account ID, email address or GitHub user name is written in the code. They come from
 variables that have no default. Copy `terraform.tfvars.example` to `terraform.tfvars` (git-ignored)
@@ -112,23 +158,92 @@ That is only safe if you set up two things in GitHub by hand:
 - The deny is a list on top of the `ReadOnlyAccess` policy. The plan role can still pull container
   images and read Lambda configuration. That is fine only while no secret is baked into an image or
   a Lambda environment variable. Secrets live in SSM SecureStrings.
-- **Deploys** run in the `production` environment and assume the `deploy` role. CI builds the image,
-  pushes it to the registry (the `repository_url` output of `bootstrap`), then applies `live`.
-  The job runs after the `production` environment's reviewer approves, so CI adds `-auto-approve`
-  (or applies a reviewed saved plan). The command is:
-
-  ```sh
-  cd infra/live
-  terraform init -backend-config="bucket=<state-bucket>"
-  terraform apply -var="image_uri=<registry-url>:<tag>" -var="alert_email=you@example.com"
-  ```
-
-  On a PC, also pass `-backend-config="profile=nursing-ai"` and `-var="aws_profile=nursing-ai"`.
+- **Deploys** run in the `production` environment and assume the `deploy` role. The only way to
+  deploy is `scripts/deploy.sh` (see "Deploying"). It builds and pushes the image, migrates, applies
+  `live`, seeds, smoke-tests, uploads the web app and checks the alarms. Do not run a bare
+  `terraform apply` against a real environment: it would skip the migration, the smoke check and
+  the guards, and without an `environment` setting it would apply the demo stack. No workflow runs
+  the script yet. When one does, it runs in the `production` environment after its reviewer
+  approves.
 - `image_uri` has no default. Image tags are immutable, so every deploy uses a new tag.
-- **Post-deploy IPv6 check.** The deploy workflow will run a smoke test after each apply. It checks
-  that each outbound dependency answers over IPv6 from inside the VPC: the Anthropic API, Google
-  sign-in, and SQS and SSM through their `api.aws` dual-stack names (see ADR 0006). The test does
-  not exist yet.
+- **Post-deploy IPv6 check.** The deploy runs the ops function's `smoke` task after each apply (see
+  "The ops function and the smoke check").
+
+## Deploying
+
+`scripts/deploy.sh demo|prod` is the one command that deploys an environment. Run it from the
+owner's PC with `DEPLOY_APPROVED=yes scripts/deploy.sh demo`. It is written so that a CI job in the
+`production` environment can run the same line once its reviewer approves; no workflow calls it yet
+(`make deploy` and the deploy workflow are not written).
+
+It needs:
+
+- `DEPLOY_APPROVED=yes`. Without it nothing runs: no build, no push, no apply.
+- `STATE_BUCKET`, the state bucket (the `state_bucket_name` output of `bootstrap`).
+- An AWS sign-in: a signed-in profile (`AWS_PROFILE`, also passed on to Terraform) or, in CI, the
+  role the OIDC step assumed.
+- Every Terraform variable but `image_uri`, as `TF_VAR_*` variables (for example
+  `TF_VAR_alert_email` and `TF_VAR_domain_name`) or in the git-ignored `infra/live/terraform.tfvars`.
+  The script sets `TF_VAR_environment` itself, and refuses a tfvars file that names another
+  environment. A value in `terraform.tfvars` beats the same `TF_VAR_*` variable, so an uncommented
+  `domain_validated` or `aws_profile` in that file wins over what you export.
+- `docker`, `terraform`, `pnpm`, `python3`, `git` and the AWS CLI.
+
+In order, it:
+
+1. Runs `terraform init`, and decides whether this is the first deploy (the state has no ops
+   function and Lambda says it does not exist). A state that belongs to another environment is
+   refused before anything is built.
+2. Builds the image once and pushes it to the registry. The tag is the 12-character git commit plus
+   the UTC time, because tags are immutable.
+3. Points the ops function at the new image, runs `migrate`, then runs `terraform apply` with that
+   image. On the **first deploy** the ops function does not exist yet, so the apply comes first and
+   the migration after it. The first apply is slow, because the functions wait for CloudFront.
+4. In `demo` only, runs `seed-demo`.
+5. Runs `smoke`. Any task whose answer is not `ok` stops the deploy.
+6. Builds the web app and uploads it to S3. Every file except `index.html` gets a one-year
+   `immutable` cache header (this includes the unhashed `fonts/` and `mockServiceWorker.js`).
+   `index.html` gets `no-cache`, so a browser asks again before using it. Then it invalidates
+   `/index.html` in CloudFront.
+7. Checks the alarms: one in `ALARM`, or one watching the wrong HTTP API or queue, fails the
+   deploy. One still in `INSUFFICIENT_DATA` (new alarms start there) prints a warning with its name.
+
+If a first deploy's apply fails after it made the ops function but before the database can be
+reached, the next run no longer looks like a first deploy, so it takes the normal path (migrate
+before apply) and stops at `migrate`. To recover, fix the cause, then run the script once with
+`DEPLOY_APPLY_FIRST=yes DEPLOY_APPROVED=yes scripts/deploy.sh <name>`. That forces the apply
+before the migration. It still needs the approval and still runs every environment and state
+check. Go back to the plain command afterwards.
+
+The script itself makes no SSM or Secrets Manager call and never decrypts anything. (The apply it
+runs refreshes the SSM parameters, which does decrypt them inside Terraform; nothing is printed.)
+CI logs of this public repository are public, so:
+
+- It prints the image tag, not the registry host, which holds the account ID.
+- Every AWS CLI call that fails prints only the AWS error code (or "unknown AWS error"), never the
+  raw message, which can carry the caller's ARN.
+- The output of `terraform apply`, `terraform init` and the docker commands has every 12-digit
+  number replaced, so an ARN's account ID is hidden.
+- `alert_email`, `image_uri` and the `queue_url` output (an SQS URL holds the account ID) are
+  `sensitive` in Terraform. The script could still read sensitive outputs with `terraform output -raw`.
+- Once a custom domain is set, the apply's plan and outputs show it. That is the public address of
+  the site, and CI deploys start only after it is live, so it is not hidden.
+
+### A custom domain
+
+The live site can use a subdomain of the owner's own domain, with its DNS on Cloudflare (see
+[ADR 0010](../docs/adr/0010-live-address-on-the-owners-own-domain.md)). It takes two applies:
+
+1. Set `TF_VAR_domain_name` (for example `app.example.com`) and deploy. This requests the
+   certificate, in `us-east-1`.
+2. Run `terraform output dns_records` in `infra/live/` and add both records in Cloudflare as
+   **DNS only** (the grey cloud, not the orange one).
+3. Set `TF_VAR_domain_validated=true` and deploy again. The functions read `site-url` at cold start,
+   so the new address reaches them as that deploy restarts them.
+
+To change `domain_name` later, set `domain_validated=false` first, apply, then do both steps again.
+In Google's console, the live OAuth client needs the new origin's redirect,
+`<site>/api/v1/auth/google/callback`, and the domain under Authorized domains.
 
 ## Filling the secrets
 
@@ -145,15 +260,18 @@ aws ssm put-parameter --profile nursing-ai --region ap-southeast-2 \
 unset VALUE
 ```
 
-Repeat for `google-client-id` and `google-client-secret`, with `prod` in the path for the prod
-environment. The database URL (`/nursing-ai/<environment>/database-url`) is written by Terraform
-and needs no manual step. Each Lambda function will read its secrets once at cold start (see
-"App changes this stack needs"), so a new value will reach a running function after its next cold
-start.
+Repeat for `google-client-id`, `google-client-secret` and `bootstrap-admin-email` (also a
+SecureString, the address of the first admin; its placeholder is `nobody@example.com`, so the app
+starts before you set it; it must be exactly one email address, or every API cold start fails), with `prod` in the path for the prod environment.
 
-Changing any setting of an SSM parameter other than its tags makes the next apply fail, because the
-provider sends the write-only value only when the parameter's version changes. For the three
-hand-set secrets, raising the version would overwrite the real value with the placeholder. So after
+Two parameters need no manual step. The database URL (`/nursing-ai/<environment>/database-url`) and
+`site-url` (a plain `String`, the site's address, which Terraform writes) are written by Terraform.
+Each Lambda function reads its parameters once at cold start (see "What the app does on this
+stack"), so a new value reaches a running function after its next cold start.
+
+Changing any setting of a write-only SSM parameter (the hand-set ones: the three secrets and
+`bootstrap-admin-email`) other than its tags makes the next apply fail, because the provider sends
+the write-only value only when the parameter's version changes. For these parameters, raising the version would overwrite the real value with the placeholder. So after
 filling the secrets, run a plan and check that the parameters show no change, and never change
 those resources' settings without filling the secrets in again afterwards.
 
@@ -183,7 +301,9 @@ infra/scripts/check.sh
 It runs `terraform fmt -check`, `terraform init -backend=false`, `validate` and `test` in both
 roots and every module, `tflint`, and `trivy config` for HIGH and CRITICAL findings. It also fails
 if the code declares a NAT gateway, an internet gateway or an Elastic IP, or sets a plaintext
-secret argument. It needs no AWS sign-in, and it hides any AWS credentials from the commands it
+secret argument. A plaintext `value` is allowed only on a parameter whose type is `String`. The
+secret scan reads heredocs, comments, strings and interpolations, and fails when it cannot follow a
+file to its end. It needs no AWS sign-in, and it hides any AWS credentials from the commands it
 runs. Allow a few minutes.
 
 ## The brake
@@ -195,6 +315,8 @@ still counts.
 At 100% of actual spend, a budget action attaches a deny-everything policy
 (`<name>-brake-deny-all`) to the API and worker Lambda roles. A deny beats every allow. The brake
 role AWS Budgets runs as can attach and detach only that one policy, and only on those two roles.
+That role's own policies are exclusive: its one inline policy is the only one it can have, and a
+policy added to it by hand is removed on the next apply.
 
 ### Lifting the brake
 
@@ -220,13 +342,28 @@ policy.
 
 ## After the first real apply
 
-The mocked tests cannot prove the alarm wiring. Open CloudWatch and check three things:
+The mocked tests cannot prove the alarm wiring. The deploy checks that the 5xx alarm watches the
+HTTP API and the dead-jobs alarm watches the dead-letter queue, and the state of all three
+alarms, but open CloudWatch too and check:
 
 - Each alarm shows OK, not INSUFFICIENT_DATA for days.
 - The 5xx alarm's `ApiId` dimension is the HTTP API's ID.
 - The dead-letter alarm's `QueueName` dimension is the dead-letter queue's name.
 - The `AiSpendUsd` metric (namespace `NursingAI`) appears only after the first live job, so the AI
-  spend alarm has no data until then.
+  spend alarm has no data until then. Once a job has run, confirm the line really reaches
+  CloudWatch as a metric. The worker's `log_format` is JSON, and a wrapped line would leave the
+  alarm without data.
+- A worker 5xx fails its invocation, and SQS delivers the message again. The worker lists
+  `500-599` in `AWS_LWA_ERROR_STATUS_CODES`; without it the adapter reports the 5xx as a success
+  and SQS deletes the message. Check the worker function's configuration, and watch a message's
+  receive count rise after a forced failure.
+- An ops invoke returns its JSON body as the payload even when the task fails. The deploy reads
+  `ok` from it.
+- The API's 5xx alarm also counts the `database_waking` 503s the app sends while Aurora resumes.
+  After a long idle period a resume can take longer than the 20 s connect timeout, so a few
+  visitors waking it can trip the alarm (an ALARM email, then OK), and a deploy run in that window
+  stops at its alarm check. Watch the alarm through one cold wake; if it fires, raise its threshold
+  or alarm on 500/502/504 only.
 
 Also confirm the alarm-topic email subscription and the budget emails (each must be accepted from
 the link in its first email).
@@ -254,9 +391,11 @@ Assumptions:
 | `network` | VPC, subnets, security groups and the egress-only gateway are not billed. No NAT gateway, no public IPv4 address. | $0 |
 | `aurora` | Capacity 10 to 30 hours at up to $0.20 an hour, plus about 1 GB storage at $0.11. Backup and I/O charges depend on use and were not priced here. | about $2 to $6 |
 | `registry` | 3 images of about 1 GB at $0.10 per GB-month. | about $0.30 |
-| `compute` | 50,000 HTTP API requests at $1.29 per million. Lambda and SQS are inside the free amounts. | about $0.06 |
+| `compute` | 50,000 HTTP API requests at $1.29 per million. Lambda (the API, worker and ops functions; a deploy invokes the ops function a few times) and SQS are inside the free amounts. | about $0.06 |
 | `web` | CloudFront is inside the free 1 TB and 10 million requests. The S3 bucket holds a web build of a few MB; S3 and CloudFront Function prices were not read. | Close to $0 |
-| `ops` | Three alarms (10 are free), SNS email, three log groups (5 GB a month free). Standard SSM parameters are free. | $0 |
+| `ops` | Three alarms (10 are free), SNS email, four log groups (API, worker, ops and API access log; 5 GB a month free). Standard SSM parameters, including `site-url` and `bootstrap-admin-email`, are free. | $0 |
+| certificate | The public ACM certificate for a custom domain is free. | $0 |
+| domain | No AWS cost: the domain is the owner's own, with its DNS on Cloudflare, and there is no Route 53 zone. | $0 on AWS |
 | `brake` | A budget action (the first two are free), one IAM policy and role. | $0 |
 | **Total** | | **about $3 to $7** |
 
@@ -274,7 +413,7 @@ What moves the total:
   kilobytes per draft.
 - Claude API usage is billed by Anthropic, not AWS. The app's own monthly cap limits it
   (`ai_monthly_cap_usd`).
-- A domain name, if you add one, is a yearly fee outside this table.
+- The owner's domain name, if you use one, is a yearly fee paid outside AWS and outside this table.
 
 Budget data can arrive hours late. Because Aurora is capped at 1 ACU, 12 hours of delay adds at
 most about $2.40 of database capacity.

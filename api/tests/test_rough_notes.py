@@ -7,9 +7,22 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from nursing_core.demo import load_demo_cases
+from nursing_core.domain.errors import ProviderUnavailable
 from nursing_core.domain.shifts import ShiftRef
 
-from .helpers import ADMIN, PH_STAFF, US_STAFF, MutableClock, keep_open, post_note, sign_in
+from .helpers import (
+    ADMIN,
+    PH_STAFF,
+    US_STAFF,
+    MutableClock,
+    client_for,
+    keep_open,
+    post_note,
+    running_app,
+    sign_in,
+)
+from .test_budget import add_invited_nurse
+from .test_redraft import SwitchableProvider, draft_path
 
 PH_CASES = [case for case in load_demo_cases() if case.facility_key == "ph-demo"]
 US_CASES = [case for case in load_demo_cases() if case.facility_key == "us-demo"]
@@ -230,3 +243,72 @@ async def test_an_idempotency_key_over_200_characters_is_422_without_echoing_it(
         path, json={"text": "pt resting"}, headers={"Idempotency-Key": "k" * 200}
     )
     assert fine.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_draft_past_the_daily_cap_is_429(database_url: str, clock: MutableClock) -> None:
+    async with running_app(database_url, clock, ai_daily_drafts_per_user=2) as app:
+        async with client_for(app) as client:
+            invited = await add_invited_nurse(app, "ph-demo")
+            await sign_in(client, invited)
+            first = await post_note(client, PH_CASE.patient_id, "pt resting", key="d-1")
+            second = await post_note(client, PH_CASE.patient_id, "pt resting well", key="d-2")
+            third = await post_note(client, PH_CASE.patient_id, "pt resting again", key="d-3")
+            assert (first.status_code, second.status_code) == (202, 202)
+            assert third.status_code == 429
+            assert third.json()["code"] == "daily_draft_limit"
+            # A replay of the first request at the cap returns its job.
+            again = await post_note(client, PH_CASE.patient_id, "pt resting", key="d-1")
+            assert again.status_code == 202
+            assert again.json()["id"] == first.json()["id"]
+            # A day later the count has rolled off.
+            clock.advance(timedelta(hours=24, minutes=1))
+            await sign_in(client, invited)  # her session ended meanwhile
+            later = await post_note(client, PH_CASE.patient_id, "pt resting later", key="d-4")
+            assert later.status_code == 202
+        # A persona with the same setting is never capped.
+        async with client_for(app) as persona_client:
+            await sign_in(persona_client, PH_STAFF)
+            for number in range(4):
+                posted = await post_note(
+                    persona_client, PH_CASE.patient_id, f"persona note {number}", key=f"p-{number}"
+                )
+                assert posted.status_code == 202
+        await app.state.queue.drain()
+
+
+@pytest.mark.asyncio
+async def test_no_daily_cap_setting_means_no_cap(database_url: str, clock: MutableClock) -> None:
+    async with running_app(database_url, clock) as app, client_for(app) as client:
+        await sign_in(client, await add_invited_nurse(app, "ph-demo"))
+        for number in range(3):
+            posted = await post_note(
+                client, PH_CASE.patient_id, f"note {number}", key=f"n-{number}"
+            )
+            assert posted.status_code == 202
+        await app.state.queue.drain()
+
+
+@pytest.mark.asyncio
+async def test_replaying_the_first_post_after_a_retry_returns_the_newest_job(
+    database_url: str, clock: MutableClock
+) -> None:
+    provider = SwitchableProvider(ProviderUnavailable("x"))
+    async with (
+        running_app(database_url, clock, provider_for=provider.for_patient) as app,
+        client_for(app) as client,
+    ):
+        await sign_in(client, PH_STAFF)
+        first = (await post_note(client, PH_CASE.patient_id, "pt resting", key="r-1")).json()
+        await app.state.queue.drain()
+        provider.error = None
+        clock.advance(timedelta(minutes=1))
+        retry = await client.post(draft_path(first["rough_note_id"]))
+        assert retry.status_code == 202
+        await app.state.queue.drain()
+
+        replay = await post_note(client, PH_CASE.patient_id, "pt resting", key="r-1")
+
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["id"] == retry.json()["id"] != first["id"]
+        assert replay.json()["rough_note_id"] == first["rough_note_id"]

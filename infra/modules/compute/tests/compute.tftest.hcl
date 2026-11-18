@@ -57,6 +57,13 @@ override_resource {
 }
 
 override_resource {
+  target = aws_iam_role.ops
+  values = {
+    arn = "arn:aws:iam::123456789012:role/ops-role"
+  }
+}
+
+override_resource {
   target = aws_lambda_function.api
   values = {
     arn        = "arn:aws:lambda:ap-southeast-2:123456789012:function:api-function"
@@ -73,21 +80,26 @@ override_resource {
 }
 
 variables {
-  name                                = "nursing-ai-test"
-  image_uri                           = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/nursing-ai-test:abc123"
-  subnet_ids                          = ["subnet-aaa", "subnet-bbb"]
-  security_group_ids                  = ["sg-111"]
-  database_url_parameter_arn          = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/database-url"
-  database_url_parameter_name         = "/nursing-ai/test/database-url"
-  anthropic_api_key_parameter_arn     = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/anthropic-api-key"
-  anthropic_api_key_parameter_name    = "/nursing-ai/test/anthropic-api-key"
-  google_client_id_parameter_arn      = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-id"
-  google_client_id_parameter_name     = "/nursing-ai/test/google-client-id"
-  google_client_secret_parameter_arn  = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-secret"
-  google_client_secret_parameter_name = "/nursing-ai/test/google-client-secret"
-  api_log_group_name                  = "/aws/lambda/nursing-ai-test-api"
-  worker_log_group_name               = "/aws/lambda/nursing-ai-test-worker"
-  api_access_log_group_arn            = "arn:aws:logs:ap-southeast-2:123456789012:log-group:/aws/apigateway/nursing-ai-test"
+  site_url_parameter_arn               = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/site-url"
+  site_url_parameter_name              = "/nursing-ai/test/site-url"
+  bootstrap_admin_email_parameter_arn  = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/bootstrap-admin-email"
+  bootstrap_admin_email_parameter_name = "/nursing-ai/test/bootstrap-admin-email"
+  ops_log_group_name                   = "/aws/lambda/nursing-ai-test-ops"
+  name                                 = "nursing-ai-test"
+  image_uri                            = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/nursing-ai-test:abc123"
+  subnet_ids                           = ["subnet-aaa", "subnet-bbb"]
+  security_group_ids                   = ["sg-111"]
+  database_url_parameter_arn           = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/database-url"
+  database_url_parameter_name          = "/nursing-ai/test/database-url"
+  anthropic_api_key_parameter_arn      = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/anthropic-api-key"
+  anthropic_api_key_parameter_name     = "/nursing-ai/test/anthropic-api-key"
+  google_client_id_parameter_arn       = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-id"
+  google_client_id_parameter_name      = "/nursing-ai/test/google-client-id"
+  google_client_secret_parameter_arn   = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-secret"
+  google_client_secret_parameter_name  = "/nursing-ai/test/google-client-secret"
+  api_log_group_name                   = "/aws/lambda/nursing-ai-test-api"
+  worker_log_group_name                = "/aws/lambda/nursing-ai-test-worker"
+  api_access_log_group_arn             = "arn:aws:logs:ap-southeast-2:123456789012:log-group:/aws/apigateway/nursing-ai-test"
 }
 
 run "worker_batch_size_is_one" {
@@ -264,6 +276,14 @@ run "lambdas_use_ipv6_and_the_web_adapter" {
     error_message = "the worker must pass queue events through to /events"
   }
   assert {
+    condition     = aws_lambda_function.worker.environment[0].variables["AWS_LWA_ERROR_STATUS_CODES"] == "500-599"
+    error_message = "the worker must make the adapter fail the invocation on a 5xx, or SQS deletes a message whose job was not finished"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.api.environment[0].variables), "AWS_LWA_ERROR_STATUS_CODES") && !contains(keys(aws_lambda_function.ops.environment[0].variables), "AWS_LWA_ERROR_STATUS_CODES")
+    error_message = "the API (its 5xx must reach the browser) and ops (the deploy reads its 500 body) must not turn a 5xx into a Lambda error"
+  }
+  assert {
     condition     = aws_lambda_function.api.environment[0].variables["APP_ROLE"] == "api" && !contains(keys(aws_lambda_function.api.environment[0].variables), "AWS_LWA_PASS_THROUGH_PATH")
     error_message = "the API role is api and has no pass-through path"
   }
@@ -353,23 +373,86 @@ run "swapped_parameter_arn_and_name_is_refused" {
   ]
 }
 
-run "parameter_arn_must_be_an_arn" {
+# Each ARN's shape rule alone: the value is not an ARN, but it still ends with
+# :parameter<name>, so the name rule passes and only the shape rule can fail.
+run "database_url_parameter_arn_must_be_an_arn" {
   command = plan
 
   variables {
-    database_url_parameter_arn = "/nursing-ai/test/database-url"
+    database_url_parameter_arn = "not-an-arn:parameter/nursing-ai/test/database-url"
   }
 
   expect_failures = [var.database_url_parameter_arn]
+}
+
+run "anthropic_api_key_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    anthropic_api_key_parameter_arn = "not-an-arn:parameter/nursing-ai/test/anthropic-api-key"
+  }
+
+  expect_failures = [var.anthropic_api_key_parameter_arn]
+}
+
+run "google_client_id_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    google_client_id_parameter_arn = "not-an-arn:parameter/nursing-ai/test/google-client-id"
+  }
+
+  expect_failures = [var.google_client_id_parameter_arn]
+}
+
+run "google_client_secret_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    google_client_secret_parameter_arn = "not-an-arn:parameter/nursing-ai/test/google-client-secret"
+  }
+
+  expect_failures = [var.google_client_secret_parameter_arn]
+}
+
+run "site_url_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    site_url_parameter_arn = "not-an-arn:parameter/nursing-ai/test/site-url"
+  }
+
+  expect_failures = [var.site_url_parameter_arn]
+}
+
+run "bootstrap_admin_email_parameter_arn_must_be_an_arn" {
+  command = plan
+
+  variables {
+    bootstrap_admin_email_parameter_arn = "not-an-arn:parameter/nursing-ai/test/bootstrap-admin-email"
+  }
+
+  expect_failures = [var.bootstrap_admin_email_parameter_arn]
 }
 
 run "log_groups_are_exposed_by_function" {
   command = plan
 
   assert {
-    condition     = output.function_log_groups == { api = "/aws/lambda/nursing-ai-test-api", worker = "/aws/lambda/nursing-ai-test-worker" }
+    condition     = output.function_log_groups == { api = "/aws/lambda/nursing-ai-test-api", worker = "/aws/lambda/nursing-ai-test-worker", ops = "/aws/lambda/nursing-ai-test-ops" }
     error_message = "function_log_groups must give each function's own log group."
   }
+}
+
+# Each ARN's name rule alone: a well-formed SSM ARN of a different parameter.
+run "database_url_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    database_url_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/site-url"
+  }
+
+  expect_failures = [var.database_url_parameter_arn]
 }
 
 run "parameter_arn_must_match_its_name" {
@@ -380,4 +463,176 @@ run "parameter_arn_must_match_its_name" {
   }
 
   expect_failures = [var.anthropic_api_key_parameter_arn]
+}
+
+run "google_client_id_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    google_client_id_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-secret"
+  }
+
+  expect_failures = [var.google_client_id_parameter_arn]
+}
+
+run "google_client_secret_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    google_client_secret_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/google-client-id"
+  }
+
+  expect_failures = [var.google_client_secret_parameter_arn]
+}
+
+run "site_url_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    site_url_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/database-url"
+  }
+
+  expect_failures = [var.site_url_parameter_arn]
+}
+
+run "bootstrap_admin_email_parameter_arn_must_match_its_name" {
+  command = plan
+
+  variables {
+    bootstrap_admin_email_parameter_arn = "arn:aws:ssm:ap-southeast-2:123456789012:parameter/nursing-ai/test/site-url"
+  }
+
+  expect_failures = [var.bootstrap_admin_email_parameter_arn]
+}
+
+run "ops_function_runs_tasks_only" {
+  command = plan
+
+  assert {
+    condition     = aws_lambda_function.ops.function_name == "nursing-ai-test-ops" && aws_lambda_function.ops.image_uri == aws_lambda_function.api.image_uri && aws_lambda_function.ops.package_type == "Image"
+    error_message = "the ops function runs the same image as the others"
+  }
+  assert {
+    condition     = aws_lambda_function.ops.environment[0].variables["APP_ROLE"] == "ops" && aws_lambda_function.ops.environment[0].variables["AWS_LWA_PASS_THROUGH_PATH"] == "/events"
+    error_message = "the ops function is the ops role and takes its tasks on /events"
+  }
+  assert {
+    condition     = aws_lambda_function.ops.timeout == 300
+    error_message = "a migration may take up to 300 s"
+  }
+  assert {
+    condition     = aws_lambda_function.ops.vpc_config[0].ipv6_allowed_for_dual_stack == true && aws_lambda_function.ops.vpc_config[0].subnet_ids == toset(["subnet-aaa", "subnet-bbb"]) && aws_lambda_function.ops.vpc_config[0].security_group_ids == toset(["sg-111"])
+    error_message = "the ops function sits in the same VPC subnets and groups, with IPv6"
+  }
+  assert {
+    condition     = aws_lambda_function.ops.logging_config[0].log_group == "/aws/lambda/nursing-ai-test-ops" && output.function_log_groups.ops == "/aws/lambda/nursing-ai-test-ops"
+    error_message = "the ops function logs to the group ops made"
+  }
+  assert {
+    condition     = aws_lambda_function.ops.environment[0].variables["DRAFT_QUEUE_URL"] == aws_sqs_queue.jobs.url && aws_lambda_function.ops.environment[0].variables["SITE_URL_SSM_PARAMETER"] == "/nursing-ai/test/site-url"
+    error_message = "smoke needs the queue URL and the site-URL parameter name"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.ops.environment[0].variables), "ANTHROPIC_API_KEY_SSM_PARAMETER") && !contains(keys(aws_lambda_function.ops.environment[0].variables), "GOOGLE_CLIENT_ID_SSM_PARAMETER") && !contains(keys(aws_lambda_function.ops.environment[0].variables), "BOOTSTRAP_ADMIN_EMAIL_SSM_PARAMETER")
+    error_message = "the ops function is given none of the other secrets"
+  }
+  assert {
+    condition     = aws_lambda_permission.api_gateway.function_name == aws_lambda_function.api.function_name && aws_lambda_permission.api_gateway.function_name != aws_lambda_function.ops.function_name
+    error_message = "only the API function is behind the HTTP API"
+  }
+  assert {
+    condition     = output.ops_function_name == "nursing-ai-test-ops" && output.ops_role_name == aws_iam_role.ops.name
+    error_message = "compute must expose the ops function and role names"
+  }
+}
+
+run "ops_role_reads_only_its_parameters" {
+  command = plan
+
+  assert {
+    condition     = sort(flatten([for s in jsondecode(aws_iam_role_policy.ops.policy).Statement : s.Resource if contains(flatten([s.Action]), "ssm:GetParameter")])) == sort([var.database_url_parameter_arn, var.site_url_parameter_arn])
+    error_message = "the ops role reads the database URL and the site URL, nothing else"
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.ops.policy).Statement : s if contains(flatten([s.Action]), "sqs:GetQueueAttributes") && s.Resource == aws_sqs_queue.jobs.arn]) == 1
+    error_message = "the ops role may read the jobs queue's attributes"
+  }
+  assert {
+    condition     = sort(flatten([for s in jsondecode(aws_iam_role_policy.ops.policy).Statement : s.Action])) == sort(["sqs:GetQueueAttributes", "ssm:GetParameter"])
+    error_message = "the ops role has no other action"
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.ops.policy).Statement : !contains(flatten([s.Resource]), "*")])
+    error_message = "no * resource in the ops policy"
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.ops_vpc_access.policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+    error_message = "the ops role attaches to the VPC like the others"
+  }
+  assert {
+    condition     = contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.bootstrap_admin_email_parameter_arn) && contains(flatten([for s in jsondecode(aws_iam_role_policy.api.policy).Statement : s.Resource]), var.site_url_parameter_arn)
+    error_message = "the API reads the bootstrap admin email and the site URL"
+  }
+  assert {
+    condition     = !contains(flatten([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s.Resource]), var.bootstrap_admin_email_parameter_arn) && contains(flatten([for s in jsondecode(aws_iam_role_policy.worker.policy).Statement : s.Resource]), var.site_url_parameter_arn)
+    error_message = "the worker reads the site URL but not the bootstrap admin email"
+  }
+  assert {
+    condition     = !contains(flatten([for s in jsondecode(aws_iam_role_policy.ops.policy).Statement : s.Resource]), var.bootstrap_admin_email_parameter_arn)
+    error_message = "the ops role must not read the bootstrap admin email"
+  }
+}
+
+run "lambdas_use_null_pool_and_a_20_second_connect" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for f in [aws_lambda_function.api, aws_lambda_function.worker, aws_lambda_function.ops] : f.environment[0].variables["DB_POOL"] == "null" && f.environment[0].variables["DB_CONNECT_TIMEOUT_S"] == "20"])
+    error_message = "every function uses no pool and waits 20 s for a pausing database"
+  }
+  assert {
+    condition     = alltrue([for f in [aws_lambda_function.api, aws_lambda_function.worker, aws_lambda_function.ops] : f.environment[0].variables["SITE_URL_SSM_PARAMETER"] == "/nursing-ai/test/site-url"])
+    error_message = "every function is given the site-URL parameter name"
+  }
+}
+
+run "api_gets_the_daily_draft_cap" {
+  command = plan
+
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["AI_DAILY_DRAFTS_PER_USER"] == "20" && aws_lambda_function.api.environment[0].variables["IDLE_LOCK_MINUTES"] == "5"
+    error_message = "the API gets the daily draft cap and the idle lock by default"
+  }
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["BOOTSTRAP_ADMIN_EMAIL_SSM_PARAMETER"] == "/nursing-ai/test/bootstrap-admin-email"
+    error_message = "the API is given the bootstrap admin email parameter name"
+  }
+  assert {
+    condition     = alltrue([for f in [aws_lambda_function.worker, aws_lambda_function.ops] : !contains(keys(f.environment[0].variables), "AI_DAILY_DRAFTS_PER_USER") && !contains(keys(f.environment[0].variables), "IDLE_LOCK_MINUTES") && !contains(keys(f.environment[0].variables), "BOOTSTRAP_ADMIN_EMAIL_SSM_PARAMETER")])
+    error_message = "only the API gets these three settings"
+  }
+}
+
+run "cap_and_idle_lock_follow_their_variables" {
+  command = plan
+
+  variables {
+    ai_daily_drafts_per_user = 7
+    idle_lock_minutes        = 10
+  }
+
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["AI_DAILY_DRAFTS_PER_USER"] == "7" && aws_lambda_function.api.environment[0].variables["IDLE_LOCK_MINUTES"] == "10"
+    error_message = "the variables must reach the API as strings"
+  }
+}
+
+run "daily_cap_must_be_positive" {
+  command = plan
+
+  variables {
+    ai_daily_drafts_per_user = 0
+  }
+
+  expect_failures = [var.ai_daily_drafts_per_user]
 }

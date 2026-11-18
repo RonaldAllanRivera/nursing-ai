@@ -335,3 +335,20 @@ run "target_role_names_are_exposed" {
     error_message = "target_role_names must be the two role names the action targets."
   }
 }
+
+# Only the brake role's own policies are exclusive: anything added to it by
+# hand is removed on the next apply. The Lambda roles are never made exclusive
+# (an apply would detach the deny policy the budget action attached).
+run "brake_role_policies_are_exclusive" {
+  command = apply
+
+  assert {
+    condition     = aws_iam_role_policies_exclusive.brake.role_name == aws_iam_role.brake.name && aws_iam_role_policies_exclusive.brake.policy_names == toset([aws_iam_role_policy.brake.name])
+    error_message = "The brake role may keep only its one inline policy; any other is removed."
+  }
+
+  assert {
+    condition     = aws_iam_role_policy_attachments_exclusive.brake.role_name == aws_iam_role.brake.name && length(aws_iam_role_policy_attachments_exclusive.brake.policy_arns) == 0
+    error_message = "The brake role may have no managed policy attached."
+  }
+}

@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter
+from nursing_core.demo import load_demo_cases
 from nursing_core.domain.patient import PatientSummary
 
 from nursing_api.deps import NotesDep, NurseDep, PatientsDep, ensure_own_facility
@@ -8,6 +9,9 @@ from nursing_api.problems import problems
 from nursing_api.routes import SIGNED_IN
 from nursing_api.routes.jobs import job_out
 from nursing_api.schemas import PatientDetail, ShiftNoteOut
+
+# Replay mode only knows the demo cases' rough notes, so a demo patient offers hers.
+DEMO_NOTES = {case.patient_id: case.rough_note.text for case in load_demo_cases()}
 
 router = APIRouter(prefix="/api/v1/patients", tags=["patients"], dependencies=SIGNED_IN)
 
@@ -40,5 +44,5 @@ async def get_patient(
             )
             for entry in entries
         ],
-        demo_note=None,  # the demo case's rough note, once the p2-cloud lane fills it in
+        demo_note=DEMO_NOTES.get(patient.summary.id),
     )

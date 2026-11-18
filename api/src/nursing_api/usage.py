@@ -1,5 +1,6 @@
 """Counting what the AI costs: one `ai_usage` row for every answer a provider gives."""
 
+from decimal import Decimal
 from uuid import UUID
 
 from nursing_core.domain.errors import BilledError
@@ -23,6 +24,7 @@ class UsageRecorder:
         self._usage = usage
         self._clock = clock
         self._job_id = job_id
+        self.cost_usd = Decimal(0)  # what this recorder has recorded, for the spend metric
 
     async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
         try:
@@ -31,6 +33,8 @@ class UsageRecorder:
             # A billed answer that failed inside the provider still counts; the error goes on.
             if error.generation is not None:
                 await self._usage.record(self._job_id, error.generation, self._clock.now())
+                self.cost_usd += error.generation.cost_usd
             raise
         await self._usage.record(self._job_id, result.generation, self._clock.now())
+        self.cost_usd += result.generation.cost_usd
         return result

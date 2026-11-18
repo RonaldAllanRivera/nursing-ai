@@ -20,6 +20,7 @@ variable "name" {
 variable "alert_email" {
   description = "Email address that receives the budget alerts."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = can(regex("@", var.alert_email))

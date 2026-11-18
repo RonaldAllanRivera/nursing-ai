@@ -4,16 +4,26 @@ Every method is one transaction. Domain errors carry fixed messages: a database 
 echoes row values (note text, keys), so none is ever passed on.
 """
 
+from datetime import datetime, timedelta
 from typing import NoReturn
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from nursing_core.domain.errors import IdempotencyConflict, NoteLocked, NotFound, StaleVersion
+from nursing_core.domain.errors import (
+    AlreadyDrafted,
+    DomainError,
+    Forbidden,
+    IdempotencyConflict,
+    NoteLocked,
+    NotFound,
+    NotRetryable,
+    StaleVersion,
+)
 from nursing_core.domain.hashing import SignedNote
-from nursing_core.domain.jobs import DraftJob, JobFailure, JobStatus, ShiftEntry
+from nursing_core.domain.jobs import DraftJob, JobFailure, JobStatus, ShiftEntry, is_retryable
 from nursing_core.domain.notes import (
     Discard,
     FdarDraft,
@@ -31,6 +41,68 @@ from nursing_core.storage.rows import AnyRow, shift_columns, shift_from_row
 _ROUGH = tables.rough_note
 _JOB = tables.draft_job
 _NOTE = tables.note
+
+# A claim is a lease: the worker's 120 s timeout plus 30 s. A job `running` for longer is taken
+# to have died (SQS delivers at least once) and can be claimed again, up to MAX_JOB_ATTEMPTS.
+JOB_LEASE = timedelta(seconds=150)
+MAX_JOB_ATTEMPTS = 3
+
+# The daily draft cap counts the jobs created in this long.
+DAILY_WINDOW = timedelta(hours=24)
+
+
+class DailyCapReached(DomainError):
+    """The author already has the capped number of draft jobs in the last 24 hours."""
+
+
+async def _lock_author(conn: AsyncConnection, author_id: UUID) -> None:
+    """Serializes one author's draft requests until the transaction ends (always taken first)."""
+    await conn.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:author))"), {"author": str(author_id)}
+    )
+
+
+async def _check_cap(
+    conn: AsyncConnection, author_id: UUID, daily_cap: int | None, now: datetime
+) -> None:
+    if daily_cap is None:
+        return
+    used = (
+        await conn.execute(
+            select(func.count())
+            .select_from(_JOB.join(_ROUGH, _JOB.c.rough_note_id == _ROUGH.c.id))
+            .where(_ROUGH.c.author_id == author_id, _JOB.c.created_at >= now - DAILY_WINDOW)
+        )
+    ).scalar_one()
+    if used >= daily_cap:
+        raise DailyCapReached("the daily draft cap is reached")
+
+
+async def _newest_job(conn: AsyncConnection, rough_note_id: UUID) -> AnyRow:
+    query = (
+        select(_JOB)
+        .where(_JOB.c.rough_note_id == rough_note_id)
+        .order_by(_JOB.c.created_at.desc(), _JOB.c.id.desc())
+        .limit(1)
+    )
+    return (await conn.execute(query)).one()
+
+
+async def _new_job(conn: AsyncConnection, rough_note_id: UUID, now: datetime) -> DraftJob:
+    row = (
+        await conn.execute(
+            insert(_JOB)
+            .values(
+                id=uuid4(),
+                rough_note_id=rough_note_id,
+                status=JobStatus.QUEUED.value,
+                created_at=now,
+                updated_at=now,
+            )
+            .returning(*_JOB.c)
+        )
+    ).one()
+    return _job(row)
 
 
 def _rough_note(row: AnyRow) -> RoughNote:
@@ -100,10 +172,21 @@ class PgNoteRepository:
         self._clock = clock
 
     async def add_rough_note(
-        self, note: RoughNote, idempotency_key: str, body_hash: str
+        self,
+        note: RoughNote,
+        idempotency_key: str,
+        body_hash: str,
+        daily_cap: int | None = None,
     ) -> tuple[RoughNote, DraftJob]:
+        """Saves the rough note and queues its first job; a repeat of the key returns the newest.
+
+        With a `daily_cap`, the author's count and the insert share one lock, so two requests at
+        once can't both pass the cap. A replayed key is answered first, at the cap or not.
+        """
         now = self._clock.now()
         async with self._engine.begin() as conn:
+            if daily_cap is not None:
+                await _lock_author(conn, note.author_id)
             inserted = await conn.execute(
                 pg_insert(_ROUGH)
                 .values(
@@ -122,20 +205,8 @@ class PgNoteRepository:
             )
             stored = inserted.one_or_none()
             if stored is not None:
-                job_row = (
-                    await conn.execute(
-                        insert(_JOB)
-                        .values(
-                            id=uuid4(),
-                            rough_note_id=note.id,
-                            status=JobStatus.QUEUED.value,
-                            created_at=now,
-                            updated_at=now,
-                        )
-                        .returning(*_JOB.c)
-                    )
-                ).one()
-                return _rough_note(stored), _job(job_row)
+                await _check_cap(conn, note.author_id, daily_cap, now)
+                return _rough_note(stored), await _new_job(conn, note.id, now)
             # The key was used before (maybe a moment ago, by a request still committing).
             existing = (
                 await conn.execute(
@@ -147,10 +218,38 @@ class PgNoteRepository:
             ).one()
             if existing.body_hash != body_hash:
                 raise IdempotencyConflict("the idempotency key was used for another request")
-            job_row = (
-                await conn.execute(select(_JOB).where(_JOB.c.rough_note_id == existing.id))
-            ).one()
-            return _rough_note(existing), _job(job_row)
+            return _rough_note(existing), _job(await _newest_job(conn, existing.id))
+
+    async def redraft(
+        self, rough_note_id: UUID, author_id: UUID, now: datetime, daily_cap: int | None = None
+    ) -> tuple[DraftJob, bool]:
+        """ "Try drafting again": the open job as it is, or a new job after a retryable failure.
+
+        Returns the job and whether it is new. Raises NotFound, Forbidden (not the author),
+        AlreadyDrafted, NotRetryable, or DailyCapReached when a new job would pass the cap. The
+        author's lock comes first, then the rough note's row, so two taps at once make one job.
+        """
+        async with self._engine.begin() as conn:
+            if daily_cap is not None:
+                await _lock_author(conn, author_id)
+            rough = (
+                await conn.execute(
+                    select(_ROUGH).where(_ROUGH.c.id == rough_note_id).with_for_update()
+                )
+            ).one_or_none()
+            if rough is None:
+                raise NotFound("no such rough note")
+            if rough.author_id != author_id:
+                raise Forbidden("only the author can draft again")
+            newest = await _newest_job(conn, rough_note_id)
+            if newest.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+                return _job(newest), False
+            if newest.status == JobStatus.SUCCEEDED.value:
+                raise AlreadyDrafted("the rough note already has a draft")
+            if not is_retryable(JobFailure(newest.failure)):
+                raise NotRetryable("drafting again would fail the same way")
+            await _check_cap(conn, author_id, daily_cap, now)
+            return await _new_job(conn, rough_note_id, now), True
 
     async def get_rough_note(self, rough_note_id: UUID) -> RoughNote:
         async with self._engine.begin() as conn:
@@ -161,6 +260,31 @@ class PgNoteRepository:
             raise NotFound("no such rough note")
         return _rough_note(row)
 
+    async def written_by_persona(self, rough_note_id: UUID) -> bool:
+        """Whether the rough note's author is a demo persona. Raises NotFound without the note."""
+        async with self._engine.begin() as conn:
+            persona = (
+                await conn.execute(
+                    select(tables.app_user.c.persona)
+                    .join(_ROUGH, _ROUGH.c.author_id == tables.app_user.c.id)
+                    .where(_ROUGH.c.id == rough_note_id)
+                )
+            ).scalar_one_or_none()
+        if persona is None:
+            raise NotFound("no such rough note")
+        return persona
+
+    async def jobs_since(self, author_id: UUID, since: datetime) -> int:
+        """How many draft jobs were created at or after `since` for this author's rough notes."""
+        async with self._engine.begin() as conn:
+            return (
+                await conn.execute(
+                    select(func.count())
+                    .select_from(_JOB.join(_ROUGH, _JOB.c.rough_note_id == _ROUGH.c.id))
+                    .where(_ROUGH.c.author_id == author_id, _JOB.c.created_at >= since)
+                )
+            ).scalar_one()
+
     async def get_job(self, job_id: UUID) -> DraftJob:
         async with self._engine.begin() as conn:
             row = (await conn.execute(select(_JOB).where(_JOB.c.id == job_id))).one_or_none()
@@ -169,16 +293,53 @@ class PgNoteRepository:
         return _job(row)
 
     async def claim_job(self, job_id: UUID) -> RoughNote | None:
+        """Claims a queued job, or a running one whose lease ran out, and adds an attempt.
+
+        The claim that would be the fourth fails the job (`provider_error`) and returns None.
+        """
+        now = self._clock.now()
         async with self._engine.begin() as conn:
-            rough_note_id = await conn.scalar(
-                update(_JOB)
-                .where(_JOB.c.id == job_id, _JOB.c.status == JobStatus.QUEUED.value)
-                .values(status=JobStatus.RUNNING.value, updated_at=self._clock.now())
-                .returning(_JOB.c.rough_note_id)
-            )
-            if rough_note_id is None:
+            claimed = (
+                await conn.execute(
+                    update(_JOB)
+                    .where(
+                        _JOB.c.id == job_id,
+                        or_(
+                            _JOB.c.status == JobStatus.QUEUED.value,
+                            and_(
+                                _JOB.c.status == JobStatus.RUNNING.value,
+                                or_(
+                                    _JOB.c.claimed_at.is_(None),
+                                    _JOB.c.claimed_at < now - JOB_LEASE,
+                                ),
+                            ),
+                        ),
+                    )
+                    .values(
+                        status=JobStatus.RUNNING.value,
+                        claimed_at=now,
+                        attempts=_JOB.c.attempts + 1,
+                        updated_at=now,
+                    )
+                    .returning(_JOB.c.rough_note_id, _JOB.c.attempts)
+                )
+            ).one_or_none()
+            if claimed is None:
                 return None
-            row = (await conn.execute(select(_ROUGH).where(_ROUGH.c.id == rough_note_id))).one()
+            if claimed.attempts > MAX_JOB_ATTEMPTS:
+                await conn.execute(
+                    update(_JOB)
+                    .where(_JOB.c.id == job_id)
+                    .values(
+                        status=JobStatus.FAILED.value,
+                        failure=JobFailure.PROVIDER_ERROR.value,
+                        updated_at=now,
+                    )
+                )
+                return None
+            row = (
+                await conn.execute(select(_ROUGH).where(_ROUGH.c.id == claimed.rough_note_id))
+            ).one()
             return _rough_note(row)
 
     async def complete_job(self, job_id: UUID, note: Note) -> None:
@@ -264,9 +425,14 @@ class PgNoteRepository:
         async with self._engine.begin() as conn:
             rough_rows = await self._shift_rows(conn, encounter_id, shift)
             ids = [row.id for row in rough_rows]
+            # Oldest first, so the newest job of each rough note is the one that stays.
             jobs = {
                 row.rough_note_id: _job(row)
-                for row in await conn.execute(select(_JOB).where(_JOB.c.rough_note_id.in_(ids)))
+                for row in await conn.execute(
+                    select(_JOB)
+                    .where(_JOB.c.rough_note_id.in_(ids))
+                    .order_by(_JOB.c.created_at, _JOB.c.id)
+                )
             }
             statuses = {
                 row.rough_note_id: NoteStatus(row.status)

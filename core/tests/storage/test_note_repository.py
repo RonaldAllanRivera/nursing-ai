@@ -2,15 +2,26 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from nursing_core.clock import FixedClock
-from nursing_core.domain.errors import IdempotencyConflict, NoteLocked, NotFound, StaleVersion
+from nursing_core.domain.errors import (
+    AlreadyDrafted,
+    Forbidden,
+    IdempotencyConflict,
+    NoteLocked,
+    NotFound,
+    NotRetryable,
+    StaleVersion,
+)
 from nursing_core.domain.hashing import SignedNote, content_hash, signed_content
 from nursing_core.domain.jobs import JobFailure, JobStatus
 from nursing_core.domain.notes import Discard, Note, NoteStatus, RoughNote, Signature
+from nursing_core.storage import notes as notes_module
 from nursing_core.storage import tables
+from nursing_core.storage.notes import JOB_LEASE, MAX_JOB_ATTEMPTS, DailyCapReached
 from nursing_core.storage.repositories import PgNoteRepository
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -415,3 +426,340 @@ async def test_signing_with_another_notes_record_is_refused(engine: AsyncEngine)
         await repo.sign(note.id, 1, record)
 
     assert (await repo.get_note(note.id)).status is NoteStatus.DRAFT
+
+
+class _MovingClock:
+    def __init__(self, at: datetime) -> None:
+        self.at = at
+
+    def now(self) -> datetime:
+        return self.at
+
+
+async def _job_row(engine: AsyncEngine, job_id: UUID) -> tuple[str, str | None, int]:
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(
+                    tables.draft_job.c.status,
+                    tables.draft_job.c.failure,
+                    tables.draft_job.c.attempts,
+                ).where(tables.draft_job.c.id == job_id)
+            )
+        ).one()
+    return row.status, row.failure, row.attempts
+
+
+@pytest.mark.asyncio
+async def test_a_claim_is_a_lease_that_expires_after_150_seconds(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    clock = _MovingClock(CLOCK.now())
+    repo = PgNoteRepository(engine, clock)
+    rough = rough_note(world)
+    _, job = await repo.add_rough_note(rough, "key-1", HASH_A)
+
+    assert await repo.claim_job(job.id) == rough
+    assert await _job_row(engine, job.id) == ("running", None, 1)
+
+    clock.at += JOB_LEASE - timedelta(seconds=1)
+    assert await repo.claim_job(job.id) is None  # inside the lease
+    assert await _job_row(engine, job.id) == ("running", None, 1)
+
+    clock.at += timedelta(seconds=2)
+    assert await repo.claim_job(job.id) == rough  # the lease ran out
+    assert await _job_row(engine, job.id) == ("running", None, 2)
+
+
+@pytest.mark.asyncio
+async def test_the_fourth_claim_fails_the_job_instead_of_running_it(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    clock = _MovingClock(CLOCK.now())
+    repo = PgNoteRepository(engine, clock)
+    _, job = await repo.add_rough_note(rough_note(world), "key-1", HASH_A)
+
+    for _ in range(MAX_JOB_ATTEMPTS):
+        assert await repo.claim_job(job.id) is not None
+        clock.at += JOB_LEASE + timedelta(seconds=1)
+
+    assert await repo.claim_job(job.id) is None
+    status, failure, _ = await _job_row(engine, job.id)
+    assert (status, failure) == ("failed", "provider_error")
+    assert await repo.claim_job(job.id) is None  # a failed job stays failed
+
+
+@pytest.mark.asyncio
+async def test_a_succeeded_job_is_never_claimed_again(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    clock = _MovingClock(CLOCK.now())
+    repo = PgNoteRepository(engine, clock)
+    note = await _drafted(repo, world)
+    del note
+    clock.at += JOB_LEASE * 10
+    async with engine.connect() as conn:
+        job = (await conn.execute(select(tables.draft_job.c.id))).scalars().first()
+    assert job is not None
+    assert await repo.claim_job(job) is None
+
+
+async def _invited_user(engine: AsyncEngine, world: World) -> UUID:
+    """A non-persona user (an invited nurse) with the demo nurse's role and facility."""
+    user_id = uuid4()
+    async with engine.begin() as conn:
+        nurse = (
+            await conn.execute(
+                select(tables.app_user).where(tables.app_user.c.id == world.nurse_id)
+            )
+        ).one()
+        await conn.execute(
+            tables.app_user.insert().values(
+                id=user_id,
+                display_name="Invited Nurse",
+                initials="IN",
+                role=nurse.role,
+                facility_id=nurse.facility_id,
+                email=f"invited-{user_id}@example.com",
+                persona=False,
+            )
+        )
+    return user_id
+
+
+@pytest.mark.asyncio
+async def test_written_by_persona_reads_the_notes_author(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    invited = await _invited_user(engine, world)
+    by_persona = rough_note(world)
+    by_invited = rough_note(world, author_id=invited)
+    await repo.add_rough_note(by_persona, "k1", HASH_A)
+    await repo.add_rough_note(by_invited, "k1", HASH_B)
+
+    assert await repo.written_by_persona(by_persona.id) is True
+    assert await repo.written_by_persona(by_invited.id) is False
+    with pytest.raises(NotFound):
+        await repo.written_by_persona(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_jobs_since_counts_one_authors_jobs_created_after_the_cutoff(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    invited = await _invited_user(engine, world)
+    early = PgNoteRepository(engine, FixedClock(NOW - timedelta(hours=30)))
+    late = PgNoteRepository(engine, FixedClock(NOW - timedelta(hours=2)))
+    await early.add_rough_note(rough_note(world, author_id=invited), "old", HASH_A)
+    await late.add_rough_note(rough_note(world, author_id=invited), "new-1", HASH_A)
+    await late.add_rough_note(rough_note(world, author_id=invited), "new-2", HASH_B)
+    await late.add_rough_note(rough_note(world), "someone-else", HASH_A)
+
+    assert await late.jobs_since(invited, NOW - timedelta(hours=24)) == 2
+    assert await late.jobs_since(invited, NOW - timedelta(hours=1)) == 0
+    assert await late.jobs_since(world.nurse_id, NOW - timedelta(hours=24)) == 1
+
+
+# A retry is made later than the job it follows: the newest job is the one created last.
+LATER = CLOCK.now() + timedelta(minutes=5)
+
+
+async def _failed(repo: PgNoteRepository, world: World, failure: JobFailure, **changes: object):
+    rough = rough_note(world, **changes)
+    _, job = await repo.add_rough_note(rough, str(uuid4()), HASH_A)
+    await repo.fail_job(job.id, failure)
+    return rough, job
+
+
+@pytest.mark.asyncio
+async def test_redraft_after_a_retryable_failure_makes_a_new_job_and_keeps_the_old_one(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough, failed = await _failed(repo, world, JobFailure.PROVIDER_ERROR)
+
+    job, is_new = await repo.redraft(rough.id, world.nurse_id, LATER)
+
+    assert is_new is True
+    assert job.id != failed.id
+    assert (job.status, job.rough_note_id) == (JobStatus.QUEUED, rough.id)
+    assert (await repo.get_job(failed.id)).status is JobStatus.FAILED
+    assert await _count(engine, tables.draft_job) == 2
+
+
+@pytest.mark.asyncio
+async def test_redraft_returns_the_open_job_as_it_is(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough = rough_note(world)
+    _, queued = await repo.add_rough_note(rough, "k", HASH_A)
+
+    assert await repo.redraft(rough.id, world.nurse_id, LATER) == (queued, False)
+    await repo.claim_job(queued.id)
+    job, is_new = await repo.redraft(rough.id, world.nurse_id, LATER)
+    assert (job.id, job.status, is_new) == (queued.id, JobStatus.RUNNING, False)
+
+
+@pytest.mark.asyncio
+async def test_redraft_refuses_a_succeeded_job_and_a_failure_a_retry_would_repeat(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    drafted = await _drafted(repo, world)
+    with pytest.raises(AlreadyDrafted):
+        await repo.redraft(drafted.rough_note_id, world.nurse_id, LATER)
+    for failure in (
+        JobFailure.MODEL_REFUSED,
+        JobFailure.REPLAY_MISSING,
+        JobFailure.AI_BUDGET_REACHED,
+    ):
+        rough, _ = await _failed(repo, world, failure)
+        with pytest.raises(NotRetryable):
+            await repo.redraft(rough.id, world.nurse_id, LATER)
+
+
+@pytest.mark.asyncio
+async def test_redraft_knows_the_note_and_its_author(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough, _ = await _failed(repo, world, JobFailure.PROVIDER_ERROR)
+    with pytest.raises(NotFound):
+        await repo.redraft(uuid4(), world.nurse_id, LATER)
+    with pytest.raises(Forbidden):
+        await repo.redraft(rough.id, await _invited_user(engine, world), LATER)
+    assert await _count(engine, tables.draft_job) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_redrafts_at_once_make_one_job(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough, _ = await _failed(repo, world, JobFailure.INVALID_OUTPUT)
+    # Pause after reading the newest job, so that without the rough note's row lock every tap
+    # would read the failed job before any had inserted (and the losers would hit the unique index).
+    newest = notes_module._newest_job  # pyright: ignore[reportPrivateUsage]
+
+    async def slow_newest(*args: Any) -> Any:
+        row = await newest(*args)
+        await asyncio.sleep(0.2)
+        return row
+
+    monkeypatch.setattr(notes_module, "_newest_job", slow_newest)
+
+    results = await asyncio.gather(
+        *(repo.redraft(rough.id, world.nurse_id, LATER) for _ in range(4))
+    )
+
+    assert sorted(is_new for _, is_new in results) == [False, False, False, True]
+    assert len({job.id for job, _ in results}) == 1
+    assert await _count(engine, tables.draft_job) == 2
+
+
+@pytest.mark.asyncio
+async def test_redraft_counts_toward_the_daily_cap_only_when_it_makes_a_job(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    invited = await _invited_user(engine, world)
+    rough = rough_note(world, author_id=invited)
+    _, job = await repo.add_rough_note(rough, "k", HASH_A, daily_cap=2)
+    await repo.fail_job(job.id, JobFailure.PROVIDER_ERROR)
+
+    second, is_new = await repo.redraft(rough.id, invited, LATER, daily_cap=2)
+    assert is_new
+    # At the cap now: the open job still comes back, a new one would not.
+    assert await repo.redraft(rough.id, invited, LATER, daily_cap=2) == (second, False)
+    await repo.fail_job(second.id, JobFailure.PROVIDER_ERROR)
+    with pytest.raises(DailyCapReached):
+        await repo.redraft(rough.id, invited, LATER, daily_cap=2)
+    assert await _count(engine, tables.draft_job) == 2
+
+
+@pytest.mark.asyncio
+async def test_add_rough_note_at_the_cap_raises_and_saves_nothing_but_a_replay_is_answered(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    invited = await _invited_user(engine, world)
+    first = rough_note(world, author_id=invited)
+    stored, job = await repo.add_rough_note(first, "k1", HASH_A, daily_cap=1)
+
+    with pytest.raises(DailyCapReached):
+        await repo.add_rough_note(rough_note(world, author_id=invited), "k2", HASH_B, daily_cap=1)
+    assert await _count(engine, tables.rough_note) == 1
+    assert await repo.add_rough_note(
+        rough_note(world, author_id=invited), "k1", HASH_A, daily_cap=1
+    ) == (
+        stored,
+        job,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempt", range(5))
+async def test_two_new_keys_at_once_one_below_the_cap_make_exactly_one_job(
+    engine: AsyncEngine, attempt: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    invited = await _invited_user(engine, world)
+    cap = 3
+    for number in range(cap - 1):
+        await repo.add_rough_note(
+            rough_note(world, author_id=invited), f"used-{attempt}-{number}", HASH_A, daily_cap=cap
+        )
+
+    # Pause between the count and the insert, so that without the author's lock both requests
+    # would count before either had inserted.
+    count = notes_module._check_cap  # pyright: ignore[reportPrivateUsage]
+
+    async def slow_count(*args: Any) -> None:
+        await count(*args)
+        await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(notes_module, "_check_cap", slow_count)
+    outcomes = await asyncio.gather(
+        *(
+            repo.add_rough_note(
+                rough_note(world, author_id=invited), f"race-{attempt}-{n}", HASH_B, daily_cap=cap
+            )
+            for n in range(2)
+        ),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(o, DailyCapReached) for o in outcomes) == 1
+    assert sum(isinstance(o, tuple) for o in outcomes) == 1
+    assert await repo.jobs_since(invited, NOW - timedelta(days=2)) == cap
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_key_returns_the_newest_job_after_a_retry(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough = rough_note(world)
+    _, first = await repo.add_rough_note(rough, "k", HASH_A)
+    await repo.fail_job(first.id, JobFailure.PROVIDER_ERROR)
+    retry, _ = await repo.redraft(rough.id, world.nurse_id, LATER)
+
+    _, replayed = await repo.add_rough_note(rough_note(world), "k", HASH_A)
+
+    assert replayed.id == retry.id
+
+
+@pytest.mark.asyncio
+async def test_shift_entries_show_the_newest_job(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough = rough_note(world)
+    _, first = await repo.add_rough_note(rough, "k", HASH_A)
+    await repo.fail_job(first.id, JobFailure.PROVIDER_ERROR)
+    retry, _ = await repo.redraft(rough.id, world.nurse_id, LATER)
+
+    entries = await repo.shift_entries(rough.encounter_id, rough.shift)
+
+    assert [entry.job.id for entry in entries] == [retry.id]

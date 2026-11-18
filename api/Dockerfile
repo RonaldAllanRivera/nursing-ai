@@ -14,6 +14,7 @@ RUN uv sync --locked --no-dev --package nursing-api
 FROM python:3.13-slim-bookworm
 RUN useradd --create-home --uid 1000 app
 WORKDIR /app
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0@sha256:17cfd08eff1dfea3f6a9a1e9c65fdac80aa4919b6085e746615530f43f57d2f1 /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=build --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER app

@@ -268,3 +268,83 @@ run "no_api_origin_without_an_api_domain" {
     error_message = "api_origin_domain must be null when the route is off."
   }
 }
+
+# ---------------------------------------------------------------------------
+# Custom domain (the certificate itself is made by the caller, in us-east-1)
+# ---------------------------------------------------------------------------
+
+run "custom_domain_off_by_default" {
+  assert {
+    condition     = length(aws_cloudfront_distribution.site.aliases) == 0 && length(output.aliases) == 0
+    error_message = "With no custom_domain the distribution has no alias."
+  }
+
+  assert {
+    condition     = one(aws_cloudfront_distribution.site.viewer_certificate).cloudfront_default_certificate == true
+    error_message = "With no custom_domain the distribution keeps the cloudfront.net certificate."
+  }
+}
+
+run "custom_domain_adds_the_alias_and_the_certificate" {
+  variables {
+    custom_domain   = "sourceline.example.com"
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+  }
+
+  assert {
+    condition     = aws_cloudfront_distribution.site.aliases == toset(["sourceline.example.com"]) && join(",", output.aliases) == "sourceline.example.com"
+    error_message = "The distribution must answer to the domain."
+  }
+
+  assert {
+    condition     = one(aws_cloudfront_distribution.site.viewer_certificate).acm_certificate_arn == var.certificate_arn && one(aws_cloudfront_distribution.site.viewer_certificate).cloudfront_default_certificate != true
+    error_message = "The distribution must use the ACM certificate."
+  }
+
+  assert {
+    condition     = one(aws_cloudfront_distribution.site.viewer_certificate).ssl_support_method == "sni-only" && one(aws_cloudfront_distribution.site.viewer_certificate).minimum_protocol_version == "TLSv1.2_2021"
+    error_message = "SNI only (a dedicated IP costs $600 a month) and TLS 1.2 or newer."
+  }
+}
+
+run "custom_domain_needs_a_certificate" {
+  command = plan
+
+  variables {
+    custom_domain = "sourceline.example.com"
+  }
+
+  expect_failures = [var.certificate_arn]
+}
+
+run "certificate_needs_a_custom_domain" {
+  command = plan
+
+  variables {
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+  }
+
+  expect_failures = [var.certificate_arn]
+}
+
+run "certificate_must_be_in_us_east_1" {
+  command = plan
+
+  variables {
+    custom_domain   = "sourceline.example.com"
+    certificate_arn = "arn:aws:acm:ap-southeast-2:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+  }
+
+  expect_failures = [var.certificate_arn]
+}
+
+run "custom_domain_must_be_a_host_name" {
+  command = plan
+
+  variables {
+    custom_domain   = "https://sourceline.example.com"
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+  }
+
+  expect_failures = [var.custom_domain]
+}

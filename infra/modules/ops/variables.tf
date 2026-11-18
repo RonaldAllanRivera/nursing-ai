@@ -21,6 +21,7 @@ variable "parameter_path" {
 variable "alarm_email" {
   description = "Address that receives the alarm emails. The owner confirms the subscription from the first email."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = can(regex("^[^@\\s]+@[^@\\s]+$", var.alarm_email))
@@ -47,6 +48,32 @@ variable "api_function_name" {
 variable "worker_function_name" {
   description = "Name of the worker function. Its log group is created here, before the function, so the function can point at it."
   type        = string
+}
+
+variable "ops_function_name" {
+  description = "Name of the ops function. Its log group is created here, before the function, so the function can point at it."
+  type        = string
+}
+
+variable "site_url" {
+  description = "Address of the site, an http or https origin with no path and no trailing slash, for example https://d111111abcdef8.cloudfront.net. It is stored in the site-url parameter."
+  type        = string
+
+  validation {
+    condition     = can(regex("^https?://[^/?#\\s]+$", var.site_url))
+    error_message = "site_url must be an http or https origin with no path, query or trailing slash."
+  }
+}
+
+variable "bootstrap_admin_email_placeholder" {
+  description = "Write-only placeholder for the bootstrap-admin-email parameter until the owner sets the real address by hand. It must contain exactly one @, because the app checks the setting at every cold start."
+  type        = string
+  default     = "nobody@example.com"
+
+  validation {
+    condition     = length(split("@", var.bootstrap_admin_email_placeholder)) == 2
+    error_message = "bootstrap_admin_email_placeholder must contain exactly one @."
+  }
 }
 
 variable "http_api_id" {
