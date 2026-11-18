@@ -775,6 +775,28 @@ def test_a_two_word_label_names_its_measure() -> None:
         assert _kinds(line) == [MismatchKind.VALUE], (note, swapped)
 
 
+def test_pulse_rate_label_pairs_with_hr() -> None:
+    faithful = _check("HR 88 RR 20", "Pulse rate 88.", ["HR 88 RR 20"])
+    assert faithful.status is LineStatus.SOURCE_FOUND
+    [mismatch] = _check("HR 88 RR 20", "Pulse rate 20.", ["HR 88 RR 20"]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+    note = "pulse rate 88, RR 20"
+    assert _check(note, "HR 88.", [note]).status is LineStatus.SOURCE_FOUND
+    line = _check(note, "HR 20.", [note])
+    assert _kinds(line) == [MismatchKind.VALUE]
+
+
+def test_respirations_label_pairs_with_rr() -> None:
+    note = "HR 88 RR 20"
+    for faithful in ("Respirations 20.", "Respiration 20."):
+        assert _check(note, faithful, [note]).status is LineStatus.SOURCE_FOUND, faithful
+    line = _check(note, "Respirations 88.", [note])
+    assert _kinds(line) == [MismatchKind.VALUE]
+    note = "respirations 20, HR 88"
+    assert _check(note, "RR 20.", [note]).status is LineStatus.SOURCE_FOUND
+    assert _kinds(_check(note, "RR 88.", [note])) == [MismatchKind.VALUE]
+
+
 def test_a_label_the_note_spells_the_same_way_still_decides_as_before() -> None:
     # A value the note gives under another spelling of the label doesn't excuse one the note
     # gives under the same spelling: "HR 92" stays a mismatch for "HR 88 ... PR 92".

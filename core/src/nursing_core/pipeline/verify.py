@@ -55,8 +55,10 @@ _TWO_WORD_LABEL = re.compile(r"(?<!\w)([^\W\d_][^\W_]*[ \t]+[^\W\d_][^\W_]*)[ \t
 # can't take its values from "T 37.8 HR 88".
 _MEASURES = {
     **dict.fromkeys(("t", "temp", "temperature", "bt"), "temp"),
-    **dict.fromkeys(("hr", "pr", "pulse", "heart rate"), "pulse"),
-    **dict.fromkeys(("rr", "resp", "resp rate", "respiratory rate"), "resp"),
+    **dict.fromkeys(("hr", "pr", "pulse", "pulse rate", "heart rate"), "pulse"),
+    **dict.fromkeys(
+        ("rr", "resp", "resp rate", "respiratory rate", "respirations", "respiration"), "resp"
+    ),
     **dict.fromkeys(("bp", "blood pressure"), "bp"),
     **dict.fromkeys(("spo2", "sat", "sats", "o2 sat", "oxygen saturation"), "spo2"),
     **dict.fromkeys(("i", "in", "intake"), "intake"),
