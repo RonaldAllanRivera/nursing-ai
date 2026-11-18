@@ -27,12 +27,16 @@ compared in any case and without spaces, and read even past the quote's end. Wha
 after a number is the unit (one the code reads or only knows) or the rate read there, as typed
 ("°C", "bpm", "/hr"). With neither, a label of the table of measures (one word or two, read as any
 label is) that the joiners above and a number follow starts the next reading and is nothing
-("HR 88->110 RR 20", "HR 88->110 resp rate 20"). Anything else is the run of characters glued to
-the number or after spaces (of any kind but a line break), up to a space, a line break, ",", ";",
-")", an arrow or a "." that ends a sentence (one followed by a space, a line break or the end): "°"
-for "38.5°", "*C" for "38.5*C", "i.u" for "4 i.u.", "sats" for "94 sats". An arrow, the end of the
-text or that punctuation right after a number is nothing, and a run longer than 64 characters is
-alike to none. So "HR 88 bpm -> 110 bpm", "SpO2 88%->95%" and "HR 88->110, RR 20" take the label;
+("HR 88->110 RR 20", "HR 88->110 resp rate 20"), unless it is glued to that number (a letter right
+before it: "O2", "RR20") or that number is a setting, written with a dose, volume, drop or
+oxygen-flow unit ("sat 2L"). Anything else is the run of characters glued to the number or after
+spaces (of any kind but a line break), up to a space, a line break, ",", ";", ")", an arrow or a
+"." that ends a sentence (one followed by a space, a line break or the end): "°" for "38.5°", "*C"
+for "38.5*C", "i.u" for "4 i.u.", "o2" for "94 O2". An arrow, the end of the text or that
+punctuation right after a number is nothing, and so is a run of punctuation only: dashes (a hyphen,
+an en or an em dash), ":", "(", "!", "?" and ellipses ("..." or the one character for it), as in
+"HR 88->110 - MD notified" and "HR 88->110: improving". A run longer than 64 characters is alike to
+none. So "HR 88 bpm -> 110 bpm", "SpO2 88%->95%" and "HR 88->110, RR 20" take the label;
 "Pain 8/10 -> 2 mg", "HR 88 -> 20 cpm", "HR 88 -> 38.5°" and "HR 120 -> 94 sats" do not.
 
 A label the quotes use says which of their numbers the line's number must be: under that label
@@ -47,7 +51,9 @@ comparator, or none, of a note number of that value: "HR 100" for "HR >100" is f
 
 import re
 from bisect import bisect_left, bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 from nursing_core.domain.model_output import ModelLine
 from nursing_core.domain.notes import (
@@ -123,6 +129,12 @@ _READ_AFTER = 64
 # What is written right after a number, glued to it or after spaces: up to `_READ_AFTER`
 # characters of it, then one more when it goes on past them.
 _RUN_AFTER = re.compile(rf"{_SPACE}*({_RUN_CHARACTER}{{1,{_READ_AFTER}}})({_RUN_CHARACTER})?")
+# A mark of punctuation only: a dash (a hyphen where no arrow starts, an en or an em dash), ":",
+# "(", "!", "?" or an ellipsis ("..." or the one character for it).
+_MARK = r"(?:-(?!-?>)|[\u2013\u2014:(!?\u2026]|\.\.\.)"
+# What is written right after a number when it is marks only, to where its run ends: "110 - MD
+# notified", "110: improving", "110!".
+_MARKS_AFTER = re.compile(rf"{_SPACE}*{_MARK}+(?!{_RUN_CHARACTER})")
 # Spaces after a number, a label of one word or two, then the joiners before the next number
 # ("110 RR 20"), indexed by whether "at" is read past.
 _LABEL_AFTER = tuple(
@@ -291,24 +303,26 @@ def _label_after(text: str, start: int, end: int, past_at: bool) -> bool:
 
 
 def _starts_the_next_reading(
-    text: str, start: int, number: tuple[str, Span], at_is_value: bool | None
+    text: str, start: int, number: tuple[str, Span], unit: Callable[[], WrittenUnit | None]
 ) -> bool:
     """Whether all that is written from `start` to the next number is a label of the measures
     table and the joiners before that number ("HR 88->110 RR 20", "110 resp rate is 20").
 
-    The label is looked for as far back as any label is. An "at" there is read past only when
-    the number is a value (`at_is_value`; its unit is read here when that is None).
+    The label is looked for as far back as any label is, and is not glued to the number ("O2",
+    "RR20"). The number is no setting, written with a dose, volume, drop or oxygen-flow unit
+    ("sat 2L"), and an "at" there is read past only when the number is a value. `unit` reads the
+    number's unit, only once the label is found.
     """
     written, span = number
-    if span.start - start > _LOOK_BACK:
+    if span.start - start > _LOOK_BACK or text[span.start - 1].isalpha():
         return False
-    if _label_after(text, start, span.start, past_at=False):
-        return True
-    if not _label_after(text, start, span.start, past_at=True):
+    without_at = _label_after(text, start, span.start, past_at=False)
+    if not without_at and not _label_after(text, start, span.start, past_at=True):
         return False
-    if at_is_value is None:
-        at_is_value = _at_is_value(text, written, span, written_unit(text, span))
-    return at_is_value
+    read = unit()
+    if read is not None and read.compared is not None:
+        return False
+    return without_at or _at_is_value(text, written, span, read)
 
 
 def _written_after(text: str, span: Span, end: int, next_reading: bool) -> str | None:
@@ -318,9 +332,9 @@ def _written_after(text: str, span: Span, end: int, next_reading: bool) -> str |
     without spaces ("°C" is "°c", "/ hr" is "/hr"). Otherwise a label of the measures table that
     the next number follows starts the next reading and is nothing (`next_reading`); and anything
     else is the run of characters glued to the number or after spaces, up to a space, a line
-    break, ",", ";", ")", an arrow or a "." that ends a sentence ("°", "*c", "tabs", "i.u"). It is
-    nothing when an arrow, the end of the text or that punctuation comes first, and None when
-    the run is longer than can be read.
+    break, ",", ";", ")", an arrow or a "." that ends a sentence ("°", "*c", "tabs", "i.u", "o2").
+    It is nothing when an arrow, the end of the text or that punctuation comes first, or when the
+    run is punctuation only ("-", ":", "!", "..."); and None when it is longer than can be read.
     """
     if end > span.end:
         return "".join(text[span.end : end].split()).casefold()
@@ -329,7 +343,9 @@ def _written_after(text: str, span: Span, end: int, next_reading: bool) -> str |
     run = _RUN_AFTER.match(text, span.end)
     if run is None:
         return ""
-    return run.group(1).casefold() if run.group(2) is None else None
+    if run.group(2) is not None:
+        return None
+    return "" if _MARKS_AFTER.match(text, span.end) else run.group(1).casefold()
 
 
 def _reads(
@@ -337,29 +353,31 @@ def _reads(
 ) -> list[_Read]:
     """The numbers tokens[first:stop] of the text with what is written around each, each read once.
 
-    `tokens` are all the numbers of the text, so what follows the last one read is seen too: the
-    number after it has its unit read only when an "at" before it may start the next reading.
+    `tokens` are all the numbers of the text, so what follows the last one read is seen too, up
+    to the next number. A label there is looked for only when the last one comes right after an
+    arrow, the only case where what follows it is compared (`_labels`), and only then is the
+    next number's unit read.
     """
     stop = len(tokens) if stop is None else stop
     units = [written_unit(text, span) for _, span in tokens[first:stop]]
-    values = [
-        _at_is_value(text, written, span, unit)
-        for (written, span), unit in zip(tokens[first:stop], units, strict=True)
-    ]
+
+    def unit_at(index: int) -> WrittenUnit | None:
+        """The unit after tokens[index]: read above in the range, read here past it."""
+        return units[index - first] if index < stop else written_unit(text, tokens[index][1])
+
     out: list[_Read] = []
     for index in range(first, stop):
         written, span = tokens[index]
         unit = units[index - first]
         bare_rate, bare_end = bare_rate_end_after(text, span)
         end = bare_end if unit is None else unit.end
+        after_arrow = bool(out) and _ARROW.fullmatch(text, out[-1].end, span.start) is not None
         next_reading = (
             end == span.end
             and index + 1 < len(tokens)
+            and (index + 1 < stop or after_arrow)
             and _starts_the_next_reading(
-                text,
-                span.end,
-                tokens[index + 1],
-                values[index + 1 - first] if index + 1 < stop else None,
+                text, span.end, tokens[index + 1], partial(unit_at, index + 1)
             )
         )
         key = _written_after(text, span, end, next_reading)
@@ -372,7 +390,7 @@ def _reads(
                 bare_end=bare_end,
                 end=end + (unit is None and text.startswith("%", end)),
                 alike=None if key is None else ("/" in written, key),
-                at_is_value=values[index - first],
+                at_is_value=_at_is_value(text, written, span, unit),
             )
         )
     return out

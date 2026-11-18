@@ -1944,3 +1944,62 @@ def test_a_measures_word_after_an_arrow_starts_the_next_reading_only_before_a_nu
         ("HR 88 -> 110.", "HR 110."),
     ):
         assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_measures_word_glued_to_the_next_number_does_not_start_the_next_reading() -> None:
+    for note, text in (
+        ("HR 120 -> 94 O2", "HR 94."),
+        ("HR 120 -> 94 O2 via NC", "HR 94."),
+        ("HR 120 -> 94 o2 on RA", "HR 94."),
+        ("HR 120 -> 94 O2 sat", "HR 94."),
+        ("Temp 39.1 -> 94 o2 RA", "Temp 94."),
+        ("Pain 8 -> 2 O2 started", "Pain 2."),
+        ("RR 30 -> 2 o2 lpm", "RR 2."),
+        ("HR 88 -> 37 t2", "HR 37."),
+        ("Pain 8 -> 2 i2", "Pain 2."),
+        ("HR 88->110 RR20", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    note = "HR 120 -> 94 O2"
+    assert _kinds(_check(note, "HR 94.", ["HR 120 -> 94"])) == [MismatchKind.VALUE]
+    note = "CBG 94 -> >0800 o2"
+    [mismatch] = _check(note, "CBG 0800.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "94")
+
+
+def test_a_measures_word_before_a_setting_does_not_start_the_next_reading() -> None:
+    for form in ("sat 2L", "sat (2L)", "sat: 2L", "sat is 2L", "sat of 2L", "sat 2 lpm"):
+        note = f"HR 120 -> 94 {form}"
+        assert _kinds(_check(note, "HR 94.", [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("HR 88->110 RR 20", "HR 110."),
+        ("HR 88->110 RR 20 cpm", "HR 110."),
+        ("HR 88->110 T 37.8 C", "HR 110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_punctuation_alone_after_a_number_after_an_arrow_is_nothing() -> None:
+    for after in (
+        " - MD notified",
+        ": improving",
+        " ... improving",
+        "!",
+        "?",
+        " \u2013 MD aware",
+        " \u2014 MD aware",
+        "\u2026 improving",
+        " (",
+        " -- stable",
+    ):
+        note = f"HR 88->110{after}"
+        assert _check(note, "HR 110.", [note]).status is LineStatus.SOURCE_FOUND, note
+    for note, text in (
+        ("HR 88 -> 38.5°", "HR 38.5."),
+        ("HR 88 -> 38.5*C", "HR 38.5."),
+        ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
+        ("HR 88->110 (after bolus)", "HR 110."),
+        ("HR 88->110.Given", "HR 110."),
+        ("HR 88->110 -x", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
