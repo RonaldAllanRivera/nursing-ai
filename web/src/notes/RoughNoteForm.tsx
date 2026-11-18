@@ -33,6 +33,9 @@ const FEW_SECONDS = "This usually takes a few seconds.";
 const COULDNT_CHECK = "Couldn't check on the draft just now.";
 const NOTE_SAVED = "Your note is saved.";
 const STILL_TRYING = "Still trying.";
+/** What became of the earlier note while she writes the next one. */
+const EARLIER_DRAFTED = "Your earlier note has its draft.";
+const EARLIER_DRAFTING = "Your earlier note is being drafted again.";
 
 /** One visible line under the note. Only a failure is a live alert; progress is said by the status region. */
 function Line({
@@ -104,16 +107,25 @@ export function RoughNoteForm({
   const hasNewer = newest !== undefined && newest.id !== jobId;
   const followTarget = failed && sameAsSent && listIsNewer && hasNewer ? newest.id : undefined;
   if (followTarget !== undefined) setJobId(followTarget);
-  // She has gone on to other text, and the earlier note was drafted somewhere else: its failure is
-  // history, and trying again would only be refused.
-  const elsewhere =
-    failed &&
-    !sameAsSent &&
-    (draftedElsewhereFor === jobId || (listIsNewer && hasNewer && newest.status !== "failed"));
+  // The earlier note's newest job, when the list names a newer one than the job followed here.
+  const newer = listIsNewer && hasNewer ? newest : undefined;
+  // She has gone on to other text, and the earlier note was tried again somewhere else (another
+  // tab, the list's button): its old failure is history. It has its draft only once that job
+  // succeeded (a 409 `already_drafted` says so too); while the job runs it is being drafted again.
+  const earlier =
+    !failed || sameAsSent
+      ? null
+      : draftedElsewhereFor === jobId || newer?.status === "succeeded"
+        ? "drafted"
+        : newer !== undefined && newer.status !== "failed"
+          ? "drafting"
+          : null;
+  // The failure to show is the earlier note's newest: a newer try that failed too says why it did.
+  const failedJob = !sameAsSent && newer?.status === "failed" ? newer : job.data;
   // While a new note saves the last one's failure is not the news.
-  const showFailure = failed && !elsewhere && !save.isPending;
+  const showFailure = failed && earlier === null && !save.isPending;
   // Only a failure worth another try offers it; the same text would fail the same way otherwise.
-  const canDraftAgain = showFailure && job.data?.retryable === true;
+  const canDraftAgain = showFailure && failedJob?.retryable === true;
   // One primary at a time: re-drafting the saved note while its text is as sent, Save note once she has edited it.
   const savePrimary = !canDraftAgain || !sameAsSent;
 
@@ -248,6 +260,32 @@ export function RoughNoteForm({
       <p role="status" className="sr-only">
         {announcement}
       </p>
+      {/* What became of the earlier note, in a region that is always on the page, so a screen
+          reader hears the line when it comes or changes (the 409 path moves the cursor to the
+          note box, and no alert says it). It takes no room while it is empty. */}
+      <div aria-live="polite">
+        {earlier !== null ? (
+          <div className="mt-3">
+            <Line icon={earlier === "drafted" ? "check" : "box"} tone="text-ink-2">
+              {earlier === "drafted" ? EARLIER_DRAFTED : EARLIER_DRAFTING}
+              {earlier === "drafted" &&
+              newest?.status === "succeeded" &&
+              newest.note_id !== null ? (
+                <>
+                  {" "}
+                  <Link
+                    to="/notes/$noteId"
+                    params={{ noteId: newest.note_id }}
+                    className="inline-flex min-h-11 items-center text-pen underline underline-offset-4"
+                  >
+                    Open it
+                  </Link>
+                </>
+              ) : null}
+            </Line>
+          </div>
+        ) : null}
+      </div>
 
       <div className="mt-3 grid gap-3">
         {save.isPending && !save.isPaused ? (
@@ -284,24 +322,7 @@ export function RoughNoteForm({
         ) : null}
         {showFailure ? (
           <Line icon="flag" tone="font-semibold text-stop" role="alert">
-            {failureMessage(job.data?.failure)}
-          </Line>
-        ) : null}
-        {elsewhere ? (
-          <Line icon="check" tone="text-ink-2">
-            Your earlier note has its draft.
-            {newest?.status === "succeeded" && newest.note_id !== null ? (
-              <>
-                {" "}
-                <Link
-                  to="/notes/$noteId"
-                  params={{ noteId: newest.note_id }}
-                  className="inline-flex min-h-11 items-center text-pen underline underline-offset-4"
-                >
-                  Open it
-                </Link>
-              </>
-            ) : null}
+            {failureMessage(failedJob?.failure)}
           </Line>
         ) : null}
         {againWords?.kind === "words" ? (

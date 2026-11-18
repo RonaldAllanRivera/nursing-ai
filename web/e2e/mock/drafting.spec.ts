@@ -111,6 +111,9 @@ test("the shift list offers Try drafting again on a row, says Drafting, then off
   await rowButton.click();
   await expect(list.getByText("Drafting")).toBeVisible();
   await expect(rowButton).toHaveCount(0);
+  // While the list says Drafting, the form says so too: no old failure, no draft yet.
+  await expect(page.getByText("Your earlier note is being drafted again.")).toBeVisible();
+  await expect(page.getByText("Your earlier note has its draft.")).toHaveCount(0);
   await expect(list.getByRole("link", { name: "Draft ready" })).toBeVisible({ timeout: 10000 });
   // The form drops the old failure and its button: the earlier note has its draft.
   await expect(page.getByText("Your earlier note has its draft.")).toBeVisible();
