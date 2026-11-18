@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
+import { DemoPinChip } from "./DemoPin";
 import { GateFrame, IDLE_ID, WHO_ID, WhoLine } from "./GateFrame";
 import { PIN_SHORT, idleLockWords, isPinTyped, pinProblemMessage } from "./pin";
 import { PinField } from "./PinField";
@@ -37,9 +38,7 @@ export function UnlockScreen({ session }: { session: Session }) {
           {idleLockWords(session.idle_lock_seconds)}
         </p>
       ) : null}
-      {demoPin ? (
-        <p className="mt-3 inline-block rounded-control border border-rule-strong bg-sheet px-2 py-0.5 font-note text-ink">{`Demo PIN: ${demoPin}`}</p>
-      ) : null}
+      {demoPin ? <DemoPinChip pin={demoPin} className="mt-3" /> : null}
       <form
         className="mt-4 grid gap-4"
         onSubmit={(event) => {

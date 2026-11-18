@@ -192,7 +192,8 @@ export function resetFailureText(status: number | null): string {
   if (status === 403) return "Only the demo's admin can put the demo settings back.";
   if (status === 404) return "This facility is no longer there. Reload the page to see the list.";
   if (status >= 500) return "The server had a problem. Wait a moment, then try again.";
-  return "The settings were not put back because this page is out of date. Reload the page, then try again.";
+  // 422 and anything not named above: the server said no, and gave no reason this screen can show.
+  return "The server did not accept the reset. Reload the page, then try again.";
 }
 
 /** Why a save was refused, in words that say what to do next. 412 and a mapped 422 have their own lines. */

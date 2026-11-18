@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, type ReactNode, type RefObject } from "react";
+import { DemoPinChip, useDemoPin } from "../session/DemoPin";
 import { isPinRefusal } from "../session/pin";
 import { PinField } from "../session/PinField";
 import { explainDemoEnd, useSession } from "../session/session";
@@ -130,6 +131,7 @@ export function SignDialog({
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const persona = session?.kind === "persona";
+  const demoPin = useDemoPin();
   const sign = useSignNote(shared.noteId, {
     onSuccess: () => {
       onSigned();
@@ -171,10 +173,14 @@ export function SignDialog({
           </div>
         ) : null}
         <form noValidate onSubmit={entry.onSubmit}>
-          <div className="mt-4">
+          <div className="mt-4 grid gap-2">
+            {demoPin ? (
+              <DemoPinChip pin={demoPin} id="sign-demo-pin" className="justify-self-start" />
+            ) : null}
             <PinField
               ref={field}
               id="sign-pin"
+              {...(demoPin ? { describedBy: "sign-demo-pin" } : {})}
               label="Your PIN"
               value={entry.pin}
               onChange={entry.onChange}

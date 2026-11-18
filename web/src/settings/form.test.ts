@@ -3,6 +3,7 @@ import { demoApi } from "../mocks/demo-api";
 import {
   isUsableTimeZone,
   mapProblems,
+  resetFailureText,
   saveFailureText,
   settingsSchema,
   timeZoneSuggestions,
@@ -74,6 +75,23 @@ describe("timeZoneSuggestions", () => {
     expect(list).toContain("Europe/Paris");
     expect(new Set(list).size).toBe(list.length);
     expect(timeZoneSuggestions("Europe/Paris").filter((z) => z === "Europe/Paris")).toHaveLength(1);
+  });
+});
+
+describe("resetFailureText", () => {
+  it("says what happened for each way the reset can be refused", () => {
+    expect(resetFailureText(null)).toContain("connection");
+    expect(resetFailureText(403)).toContain("demo's admin");
+    expect(resetFailureText(404)).toContain("no longer there");
+    expect(resetFailureText(500)).toContain("try again");
+  });
+
+  it("does not blame an out-of-date page for a 422 or a status it does not know", () => {
+    for (const status of [422, 409, 423, 418]) {
+      const text = resetFailureText(status);
+      expect(text).not.toContain("out of date");
+      expect(text).toContain("did not accept");
+    }
   });
 });
 

@@ -1,5 +1,6 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { DemoPinChip } from "./DemoPin";
 import { AidLine } from "../components/AidLine";
 import { Icon } from "../components/Icon";
 import { Skeleton } from "../components/ui/Skeleton";
@@ -102,8 +103,7 @@ export function SignIn() {
               >
                 {offered.google ? <h2 className="text-18 font-bold">Try the demo</h2> : null}
                 {offered.demoPin ? (
-                  // Its own paper patch, so a ruled line never runs through the digits.
-                  <p className="mt-1 mb-3 inline-block rounded-control border border-rule-strong bg-sheet px-2 py-0.5 font-note text-ink">{`Demo PIN: ${offered.demoPin}`}</p>
+                  <DemoPinChip pin={offered.demoPin} className="mt-1 mb-3" />
                 ) : null}
                 {personas.isPending ? (
                   <div className="grid gap-3" aria-busy="true">

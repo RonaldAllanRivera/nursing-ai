@@ -2,7 +2,7 @@ import { useState, type KeyboardEvent, type RefObject, type SyntheticEvent } fro
 import { PIN_NEEDED, isPinRefusal, isPinTyped, pinProblemMessage } from "./pin";
 
 /** The part of `usePinRequest` a PIN dialog reads. */
-interface PinRequest {
+export interface PinRequest {
   run: (pin: string) => Promise<boolean>;
   pending: boolean;
   error: unknown;
@@ -38,7 +38,6 @@ export function usePinEntry(
   return {
     pin,
     message,
-    pending: request.pending,
     onChange: (value: string) => {
       setPin(value);
       setShort(false);

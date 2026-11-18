@@ -134,7 +134,6 @@ function Editor({
   useEffect(() => {
     const wanted = focusWanted.current;
     focusWanted.current = null;
-    if (wanted) focusMoved.current = true;
     if (wanted === "table") problemsElement.current?.focus();
     else if (wanted === "field") {
       formElement.current
@@ -151,6 +150,7 @@ function Editor({
       focusAfterRender("table");
       return;
     }
+    focusMoved.current = false;
     setAsking(submitted);
   };
 
@@ -170,6 +170,7 @@ function Editor({
       }
       setServerTable(mapped.table);
       setServerOther(mapped.other);
+      focusMoved.current = true;
       focusAfterRender(mapped.fields.length > 0 ? "field" : "table");
     } else {
       // Nothing to put next to a field: a plain line says what happened and what to do.
@@ -435,6 +436,7 @@ function Editor({
             <Button
               ref={resetButton}
               onClick={() => {
+                focusMoved.current = false;
                 setResetting(true);
               }}
             >

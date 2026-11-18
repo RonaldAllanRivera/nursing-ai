@@ -356,6 +356,12 @@ describe("saving with your own PIN", () => {
     });
     expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
     expect(seen.count).toBe(0);
+    // A try with another PIN sends that PIN: what is sent is what was typed.
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), "999999{Enter}");
+    await within(dialog).findByText("Wrong PIN. 4 tries left.");
+    await waitFor(() => {
+      expect(seen.body).toMatchObject({ pin: "999999", name: "SYNTHETIC Demo Hospital (PH)!" });
+    });
     await userEvent.type(within(dialog).getByLabelText("Your PIN"), `${DEMO_PIN}{Enter}`);
     await waitFor(() => {
       expect(pageStatus()).toHaveTextContent("Saved.");
@@ -366,7 +372,37 @@ describe("saving with your own PIN", () => {
       session_max_hours: 12,
     });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(JSON.stringify(queryClient.getMutationCache().getAll())).not.toContain(DEMO_PIN);
+    await waitFor(() => {
+      expect(JSON.stringify(queryClient.getMutationCache().getAll())).not.toContain(DEMO_PIN);
+    });
+  });
+
+  it("shows a demo person the demo PIN in the PIN question, and a Google user none", async () => {
+    await openSettings();
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
+      expect.stringContaining(`Demo PIN: ${DEMO_PIN}`),
+    );
+  });
+
+  it("gives the focus back to Save settings after a gap was fixed and the PIN question closed", async () => {
+    await openSettings();
+    fireEvent.change(within(shift(2)).getByLabelText("Starts"), { target: { value: "15:00" } });
+    await screen.findByText("There's a gap between 14:00 and 15:00.");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(document.getElementById("shift-problems")).toHaveFocus();
+    fireEvent.change(within(shift(2)).getByLabelText("Starts"), { target: { value: "14:00" } });
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save settings" })).toHaveFocus();
+    });
   });
 
   it("does not ask while the form still has a problem", async () => {
@@ -583,6 +619,30 @@ describe("Reset demo settings", () => {
     expect(within(dialog).getByText("Changes you haven't saved are dropped.")).toBeVisible();
   });
 
+  it("keeps the PIN out of TanStack's mutation cache", async () => {
+    const { queryClient } = await openSettings();
+    await userEvent.click(screen.getByRole("button", RESET));
+    const dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), `${DEMO_PIN}{Enter}`);
+    await waitFor(() => {
+      expect(pageStatus()).toHaveTextContent("Settings are back to how the demo started.");
+    });
+    await waitFor(() => {
+      expect(JSON.stringify(queryClient.getMutationCache().getAll())).not.toContain(DEMO_PIN);
+    });
+  });
+
+  it("shows the demo PIN in the reset question, and says the dropped changes in its description", async () => {
+    const { name } = await openSettings();
+    await userEvent.type(name, "!");
+    await userEvent.click(screen.getByRole("button", RESET));
+    const dialog = await screen.findByRole("dialog", { name: "Reset demo settings" });
+    expect(within(dialog).getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+    expect(dialog).toHaveAccessibleDescription(
+      "Put this facility's settings back to how the demo started? Changes you haven't saved are dropped.",
+    );
+  });
+
   it("a wrong PIN keeps the dialog open and says the tries left", async () => {
     await openSettings();
     await userEvent.click(screen.getByRole("button", RESET));
@@ -590,6 +650,15 @@ describe("Reset demo settings", () => {
     await userEvent.type(within(dialog).getByLabelText("Your PIN"), "999999{Enter}");
     expect(await within(dialog).findByText("Wrong PIN. 4 tries left.")).toBeVisible();
     expect(within(dialog).getByLabelText("Your PIN")).toHaveValue("");
+  });
+
+  it("shows a Google admin no demo PIN in the save question", async () => {
+    await renderApp("/settings", { account: { user: MOCK_EMAILS.admin, gate: "open" } });
+    await screen.findByRole("textbox", { name: "Facility name" });
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Your PIN")).toBeVisible();
+    expect(within(dialog).queryByText(/Demo PIN/)).toBeNull();
   });
 
   it("is not there for a Google admin", async () => {

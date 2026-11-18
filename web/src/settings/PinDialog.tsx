@@ -2,15 +2,8 @@ import { useRef } from "react";
 import { Button } from "../components/ui/Button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/Dialog";
 import { PinField } from "../session/PinField";
-import { usePinEntry } from "../session/usePinEntry";
-
-/** The part of `usePinRequest` this dialog reads. */
-interface PinRequest {
-  run: (pin: string) => Promise<boolean>;
-  pending: boolean;
-  error: unknown;
-  clear: () => void;
-}
+import { DemoPinChip, useDemoPin } from "../session/DemoPin";
+import { usePinEntry, type PinRequest } from "../session/usePinEntry";
 
 /** What the dialog asks and what its buttons say. */
 interface Words {
@@ -64,8 +57,16 @@ export function PinDialog({
         onInteractOutside={hold}
       >
         <DialogTitle>{words.title}</DialogTitle>
-        <DialogDescription>{words.question}</DialogDescription>
-        {words.note ? <p className="mt-2 text-ink-2">{words.note}</p> : null}
+        <DialogDescription>
+          {words.question}
+          {/* Inside the description, so a screen reader hears the consequence as the dialog opens. */}
+          {words.note ? (
+            <>
+              {" "}
+              <span className="mt-2 block text-ink-2">{words.note}</span>
+            </>
+          ) : null}
+        </DialogDescription>
         <PinForm
           request={request}
           persona={persona}
@@ -99,6 +100,7 @@ function PinForm({
 }) {
   const field = useRef<HTMLInputElement>(null);
   const entry = usePinEntry(request, persona, field);
+  const demoPin = useDemoPin();
   return (
     <form
       noValidate
@@ -106,9 +108,13 @@ function PinForm({
 
       className="mt-4 grid gap-4"
     >
+      {demoPin ? (
+        <DemoPinChip pin={demoPin} id="action-demo-pin" className="justify-self-start" />
+      ) : null}
       <PinField
         ref={field}
         id={FIELD_ID}
+        {...(demoPin ? { describedBy: "action-demo-pin" } : {})}
         label="Your PIN"
         value={entry.pin}
         onChange={entry.onChange}

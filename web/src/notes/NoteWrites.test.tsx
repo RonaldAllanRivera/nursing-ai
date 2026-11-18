@@ -6,6 +6,7 @@ import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
 import { pageStatus } from "../test/status";
+import { MOCK_EMAILS } from "../mocks/staff";
 import { DEMO_ENDED } from "../session/pin";
 import { noteQuery } from "./note";
 import { linesInOrder } from "./trace";
@@ -468,9 +469,18 @@ describe("signing with your own PIN", () => {
     const { app, dialog } = await openSignDialog();
     const seen = watchSigns();
     const cached = app.queryClient.getQueryData(noteQuery(NOTE_1).queryKey)?.etag;
+    // A try with another PIN sends that PIN: what is sent is what was typed.
+    await signWithPin(dialog, "999999");
+    await within(dialog).findByText("Wrong PIN. 4 tries left.");
+    await waitFor(() => {
+      expect(seen.body).toEqual({ pin: "999999" });
+    });
+    expect(seen.ifMatch).toBe(cached);
     await signWithPin(dialog);
     expect(await screen.findByText(/^Signed by you at/)).toBeVisible();
-    expect(seen.body).toEqual({ pin: DEMO_PIN });
+    await waitFor(() => {
+      expect(seen.body).toEqual({ pin: DEMO_PIN });
+    });
     expect(seen.ifMatch).toBe(cached);
   });
 
@@ -489,7 +499,7 @@ describe("signing with your own PIN", () => {
     await signWithPin(dialog, "1357");
     expect(await within(dialog).findByText("Enter your 6-digit PIN.")).toBeVisible();
     expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
-      "Enter your 6-digit PIN.",
+      expect.stringContaining("Enter your 6-digit PIN."),
     );
     expect(seen.count).toBe(0);
     expect(screen.getByRole("dialog")).toBeVisible();
@@ -511,6 +521,26 @@ describe("signing with your own PIN", () => {
     expect(seen.count).toBe(0);
     expect(within(dialog).queryByText("Enter your 6-digit PIN.")).toBeNull();
     expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("shows a demo person the demo PIN, and ties it to the field", async () => {
+    const { dialog } = await openSignDialog();
+    expect(within(dialog).getByText(`Demo PIN: ${DEMO_PIN}`)).toBeVisible();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
+      expect.stringContaining(`Demo PIN: ${DEMO_PIN}`),
+    );
+  });
+
+  it("does not show the demo PIN to a Google user", async () => {
+    await renderApp("/notes/" + NOTE_1, { account: { user: MOCK_EMAILS.phStaff, gate: "open" } }, [
+      http.get("*/api/v1/notes/:id", () =>
+        HttpResponse.json(resolveAll(demoNote(NOTE_1)), { headers: { ETag: '"v1"' } }),
+      ),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Your PIN")).toBeVisible();
+    expect(within(dialog).queryByText(/Demo PIN/)).toBeNull();
   });
 
   it("signs from the keyboard: type the PIN and press Enter", async () => {

@@ -23,6 +23,7 @@ import {
   ROUGH_NOTE,
   SARAH,
   card,
+  checkDialog,
   checkScreen,
   expectHeaderAtMostTwoRows,
   isSmall,
@@ -140,8 +141,9 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await page.getByRole("button", { name: "Sign note" }).click();
   const dialog = page.getByRole("dialog", { name: "Sign this FDAR note" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Demo PIN: 135790")).toBeVisible();
   await expect(dialog.getByText("Not in this note:")).toBeVisible();
-  await checkScreen(page);
+  await checkDialog(page);
   await shot(page, "sign-dialog");
 
   // Signed: locked, with its hash. The removed line is not in the record.
@@ -244,7 +246,7 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   // It opens in the empty PIN field: a held Enter on Sign note can't go on to sign.
   await expect(dialog.getByLabel("Your PIN")).toBeFocused();
   await expect(dialog.getByLabel("Your PIN")).toHaveValue("");
-  await checkScreen(page);
+  await checkDialog(page);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(sign).toBeFocused();
