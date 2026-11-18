@@ -69,6 +69,7 @@ so it is never "daily". "once" alone is no frequency ("vomited once").
 
 import re
 import unicodedata
+from bisect import bisect_right
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -154,12 +155,9 @@ _FREQUENCY_PATTERNS = tuple(
 # The periods "a" or "an" takes with no count, right after a dose, volume or drop unit: not hour
 # or minute, as "1000 units an hour" is a rate in practice.
 _DOSE_PERIODS = "day|week|month|night|shift"
-# "a" or "an" and one of those periods, whole words: whether a text has any, and the reading
-# right after a unit ("15 mg a day"), its span starting at the "a".
-_A_PERIOD = re.compile(_WHOLE_WORD.format(rf"an?{_SEP}(?:{_DOSE_PERIODS})"), re.IGNORECASE)
-_A_PERIOD_AFTER_A_UNIT = re.compile(
-    rf"{_SEP}(?P<reading>an?{_SEP}(?P<period>{_DOSE_PERIODS}))(?![^\W_])", re.IGNORECASE
-)
+# "a" or "an" and one of those periods, whole words ("a day", "an-night"), read as a frequency
+# only right after such a unit ("15 mg a day").
+_A_PERIOD = re.compile(_WHOLE_WORD.format(rf"an?{_SEP}(?P<period>{_DOSE_PERIODS})"), re.IGNORECASE)
 
 # Longest first, so "lbs" is tried before "lb". These short spellings are read in the case shown;
 # the degree sign and the word spellings are read apart (see _read_unit).
@@ -345,20 +343,27 @@ def _after_a_unit(text: str) -> list[WrittenFrequency]:
     """Each "a" or "an" and a period right after a dose, volume or drop unit written with no rate
     ("15 mg a day"), as typed from the "a": one per that period.
 
-    The numbers and their units are read only when the text has "a" or "an" and such a period.
+    A unit has no digit in it, so only the number right before each "a" or "an" is read with its
+    unit, which must end where the spaces, line breaks or hyphens before the "a" start.
     """
-    if _A_PERIOD.search(text) is None:
+    found = list(_A_PERIOD.finditer(text))
+    if not found:
         return []
+    numbers = numbers_in(text)
     out: list[WrittenFrequency] = []
-    for _, span in numbers_in(text):
-        unit = written_unit(text, span)
-        if unit is None or unit.compared is None or unit.rate:
+    for match in found:
+        gap = match.start()
+        while gap > 0 and (text[gap - 1].isspace() or text[gap - 1] == "-"):
+            gap -= 1
+        before = bisect_right(numbers, gap, key=lambda number: number[1].end) - 1
+        if gap == match.start() or before < 0:
             continue
-        found = _A_PERIOD_AFTER_A_UNIT.match(text, unit.end)
-        if found is not None:
-            start, end = found.span("reading")
-            meaning = (Decimal(1), found["period"].casefold())
-            out.append(WrittenFrequency(found["reading"], Span(start=start, end=end), meaning))
+        unit = written_unit(text, numbers[before][1])
+        if unit is None or unit.compared is None or unit.rate or unit.end != gap:
+            continue
+        span = Span(start=match.start(), end=match.end())
+        meaning = (Decimal(1), match["period"].casefold())
+        out.append(WrittenFrequency(match.group(), span, meaning))
     return out
 
 

@@ -1,5 +1,6 @@
 """Finding numbers in a line and reading the unit written right after one."""
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.domain.notes import Span
@@ -630,3 +631,22 @@ def test_each_adverb_is_read_alone_and_after_once_or_twice() -> None:
         assert _only_meaning(adverb.upper()) == (1, period)
         assert _only_meaning(f"once {adverb}") == (1, period)
         assert _only_meaning(f"twice {adverb}") == (2, period)
+
+
+def test_a_or_an_and_a_period_reads_only_the_unit_of_the_number_right_before_it() -> None:
+    text = ", ".join(f"{i} mg" for i in range(200)) + " a day, 3 tabs a week, 1 L a shift"
+    calls = 0
+
+    def counting(raw: str, span: Span) -> WrittenUnit | None:
+        nonlocal calls
+        calls += 1
+        return written_unit(raw, span)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("nursing_core.pipeline.unit_check.written_unit", counting)
+        found = frequencies_in(text)
+    assert [(f.text, f.meaning) for f in found] == [
+        ("a day", (1, "day")),
+        ("a shift", (1, "shift")),
+    ]
+    assert calls == 3
