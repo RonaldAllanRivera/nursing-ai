@@ -1,9 +1,11 @@
 """The CI workflow is pinned and least-privilege."""
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -234,6 +236,52 @@ def test_deploy_skips_a_run_that_is_not_the_tip_of_main() -> None:
     assert "token" not in first["run"].lower()
     for step in rest:
         assert step["if"] == "steps.tip.outputs.current == 'true'", step
+
+
+HEAD = "a" * 40
+
+
+@pytest.mark.parametrize(
+    ("git_says", "exit_code", "output"),
+    [
+        (f"printf '{HEAD}\\trefs/heads/main\\n'", 0, "current=true\n"),  # still the tip: deploy
+        (f"printf '{'b' * 40}\\trefs/heads/main\\n'", 0, ""),  # main moved on: skip, green
+        ("echo 'fatal: unable to access' >&2; exit 128", 1, ""),  # can't tell: red, not skipped
+    ],
+)
+def test_the_tip_step_deploys_skips_or_fails_as_main_says(
+    tmp_path: Path, git_says: str, exit_code: int, output: str
+) -> None:
+    # Run the step as GitHub runs `shell: bash` (bash -eo pipefail), with a stand-in git.
+    step = _load(DEPLOY)["jobs"]["deploy"]["steps"][0]
+    assert step["shell"] == "bash"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git = bin_dir / "git"
+    git.write_text(f"#!/bin/sh\n{git_says}\n")
+    git.chmod(0o755)
+    script = tmp_path / "tip.sh"
+    script.write_text(step["run"])
+    github_output = tmp_path / "output"
+    github_output.touch()
+    result = subprocess.run(  # noqa: S603
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],  # noqa: S607
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HEAD_SHA": HEAD,
+            "REPO_URL": "https://example.com/owner/repo",
+            "GITHUB_OUTPUT": str(github_output),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == exit_code, result.stderr
+    assert github_output.read_text() == output
+    # An honest message either way, and never the address it read.
+    assert "example.com" not in result.stdout + result.stderr
+    if exit_code:
+        assert "Could not read" in result.stderr
 
 
 def test_deploy_waits_for_the_production_reviewer_and_never_overlaps() -> None:

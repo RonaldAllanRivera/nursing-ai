@@ -36,12 +36,22 @@ jobs:
       # A re-run of an old commit's CI also ends as a success on a push to main. Deploy only the
       # commit that is main's tip now, read from the public repository with no credentials. When it
       # is not, every later step is skipped and the run still ends green.
+      # `shell: bash` runs it with pipefail, so a failed ls-remote fails the run instead of reading
+      # as "main moved on".
       - id: tip
+        shell: bash
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          tip="$(git ls-remote "$REPO_URL" refs/heads/main | cut -f1)"
+          tip="$(git ls-remote "$REPO_URL" refs/heads/main | cut -f1)" || {
+            printf 'Could not read the tip of main, so nothing is deployed.\n' >&2
+            exit 1
+          }
+          if [ -z "$tip" ]; then
+            printf 'Could not read the tip of main, so nothing is deployed.\n' >&2
+            exit 1
+          fi
           if [ "$tip" = "$HEAD_SHA" ]; then
             printf 'current=true\n' >> "$GITHUB_OUTPUT"
           else
