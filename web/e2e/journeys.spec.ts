@@ -17,6 +17,9 @@ import {
   editOneLine,
   expectNoViolations,
   noSidewaysScroll,
+  pageStatus,
+  SAVE_PIN_DIALOG,
+  enterPinInDialog,
   openPatient,
   resolveEveryLine,
   saveNote,
@@ -152,6 +155,8 @@ test("Admin path: save a facility's settings, then put the label back (one origi
         new URL(r.url()).pathname.startsWith("/api/v1/facilities/"),
     );
     await page.getByRole("button", { name: "Save settings" }).click();
+    // Saving asks for her own PIN first.
+    await enterPinInDialog(page, SAVE_PIN_DIALOG);
     const response = await answered;
     // The ETag and the cookie went through the dev server's /api proxy: a 428 would mean they didn't.
     const sent = await response.request().allHeaders();
@@ -159,7 +164,7 @@ test("Admin path: save a facility's settings, then put the label back (one origi
     expect(sent["cookie"]).toContain("sl_session=");
     expect(response.status()).toBeGreaterThanOrEqual(200);
     expect(response.status()).toBeLessThan(300);
-    await expect(page.getByRole("status")).toContainText("Saved.");
+    await expect(pageStatus(page)).toContainText("Saved.");
     await expect(label).toHaveValue(value);
   };
 

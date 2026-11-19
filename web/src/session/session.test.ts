@@ -1,12 +1,18 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { clearPersonData, sessionKey, personasQuery } from "./session";
+import { clearPersonData, sessionKey, personasQuery, signInOptionsQuery } from "./session";
 
 describe("clearPersonData", () => {
   it("drops the last person's queries and mutations, and keeps who is signed in and the sign-in list", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(sessionKey, { id: "s" });
     queryClient.setQueryData(personasQuery.queryKey, []);
+    queryClient.setQueryData(signInOptionsQuery.queryKey, {
+      google: true,
+      personas: true,
+      demo: true,
+      demo_pin: "135790",
+    });
     queryClient.setQueryData(["patients"], ["a patient"]);
 
     const done = queryClient.getMutationCache().build(queryClient, {
@@ -25,5 +31,6 @@ describe("clearPersonData", () => {
     expect(queryClient.getQueryData(["patients"])).toBeUndefined();
     expect(queryClient.getQueryData(sessionKey)).toEqual({ id: "s" });
     expect(queryClient.getQueryData(personasQuery.queryKey)).toEqual([]);
+    expect(queryClient.getQueryData(signInOptionsQuery.queryKey)).toMatchObject({ google: true });
   });
 });

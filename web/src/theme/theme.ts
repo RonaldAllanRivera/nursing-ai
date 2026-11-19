@@ -19,6 +19,11 @@ export function saveTheme(theme: Theme): void {
   }
 }
 
+/** The theme the page shows now (what `applyTheme` last set), which is the truth when storage could not keep it. */
+export function appliedTheme(): Theme {
+  return document.documentElement.dataset["theme"] === "night" ? "night" : "day";
+}
+
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset["theme"] = theme;
 }

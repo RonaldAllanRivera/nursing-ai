@@ -6,6 +6,8 @@ import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { linesInOrder } from "./trace";
 import { server } from "../test/setup";
+import { pageStatus } from "../test/status";
+import { chooseAndUnlock } from "../test/signIn";
 
 const NOTE_1 = "00000000-0000-4000-8000-000000000015";
 const NOTE_2 = "00000000-0000-4000-8000-000000000025";
@@ -15,7 +17,7 @@ const EMILY = "Staff nurse · Emily Carter, RN";
 
 async function signIn(persona = SARAH) {
   const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await screen.findByRole("heading", { level: 1 });
   return app;
 }
@@ -302,7 +304,7 @@ describe("the trace view", () => {
 
   it("Sign note jumps to the next line that needs you and says so, then goes on round", async () => {
     const app = await openNote(NOTE_1);
-    const status = screen.getByRole("status");
+    const status = pageStatus();
     expect(status).toHaveTextContent("");
     expect(screen.getByRole("button", { name: "Sign note" })).not.toHaveAttribute("disabled");
 
@@ -317,7 +319,7 @@ describe("the trace view", () => {
     expect(lineButton(/^Dizziness with low/)).toHaveFocus();
     expect(app.router.state.location.search).toEqual({ line: "e1-F" });
     await said();
-    expect(screen.getByRole("status")).toBe(status);
+    expect(pageStatus()).toBe(status);
 
     await sign();
     expect(lineButton(/^BP 90\/60 mmHg/)).toHaveFocus();

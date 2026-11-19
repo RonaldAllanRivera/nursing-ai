@@ -3,6 +3,21 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page } from "@playwright/test";
 
+// The page global the mock reads (MOCK_OPTIONS_GLOBAL in src/mocks/options.ts; the e2e project
+// does not import app code).
+const MOCK_OPTIONS_GLOBAL = "__SOURCELINE_MOCK__";
+
+/** The fields of the app's `MockOptions` a spec sets. */
+export interface MockOptions {
+  google?: boolean;
+  demo?: boolean;
+  personaGate?: "open" | "enter_pin";
+  account?: { user: string; gate?: "open" | "set_pin" | "enter_pin" | "pin_locked" };
+  /** Keep in step with `JobFailure` in src/api/schema.d.ts, which `failDraft` in src/mocks/options.ts uses (e2e can not import app code). */
+  failDraft?:
+    "ai_budget_reached" | "model_refused" | "invalid_output" | "provider_error" | "replay_missing";
+}
+
 export const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 export const SARAH = "Staff nurse · Sarah Navarro, RN";
 export const EMILY = "Staff nurse · Emily Carter, RN";
@@ -52,6 +67,18 @@ export async function shot(page: Page, screen: string) {
   await page.screenshot({ path: `${folder}/shot-${screen}-${String(width)}.png`, fullPage: true });
 }
 
+/** `shot` in the night theme, set on the page directly (a dialog covers the theme button), then back to day. */
+export async function shotNight(page: Page, screen: string) {
+  if (!process.env["E2E_SHOTS"]) return;
+  await page.evaluate(() => {
+    document.documentElement.setAttribute("data-theme", "night");
+  });
+  await shot(page, `${screen}-night`);
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute("data-theme");
+  });
+}
+
 /**
  * The header takes at most two rows (on a phone: who is signed in and Sign out, then the shift,
  * the link and the theme). Rows are counted from the vertical centres of the header's controls
@@ -97,6 +124,19 @@ export async function checkScreen(page: Page, opts: { night?: boolean } = {}) {
   else await expectNoViolations(page);
 }
 
+/** Like `checkScreen` with night, for an open dialog: the theme button is behind it, so the theme is set on the page directly. */
+export async function checkDialog(page: Page) {
+  await noSidewaysScroll(page);
+  await expectNoViolations(page);
+  await page.evaluate(() => {
+    document.documentElement.setAttribute("data-theme", "night");
+  });
+  await expectNoViolations(page);
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute("data-theme");
+  });
+}
+
 /** Tab (never click) until `target` has the focus, failing if it never does. */
 export async function tabTo(page: Page, target: Locator, limit = 80) {
   for (let i = 0; i < limit; i++) {
@@ -106,9 +146,48 @@ export async function tabTo(page: Page, target: Locator, limit = 80) {
   await expect(target).toBeFocused();
 }
 
+/** Sets the mock API's options for this page, before the app loads (call it before `page.goto`). */
+export async function setMockOptions(page: Page, options: MockOptions) {
+  await page.addInitScript(
+    ([name, value]) => {
+      (globalThis as Record<string, unknown>)[name as string] = value;
+    },
+    [MOCK_OPTIONS_GLOBAL, options] as const,
+  );
+}
+
+export const DEMO_BANNER_TEXT = "Synthetic patients only. Never type real patient details.";
+
+export const DEMO_PIN = "135790";
+
+/**
+ * On the PIN screen that every sign-in ends at: the field already has the focus, so type the demo
+ * PIN and press Enter, with the keyboard only (a keyboard journey uses this too).
+ */
+export async function enterDemoPin(page: Page) {
+  await expect(page.getByLabel("PIN", { exact: true })).toBeFocused();
+  await page.keyboard.type(DEMO_PIN);
+  await page.keyboard.press("Enter");
+}
+
+/**
+ * In a dialog that asks for the PIN (signing, saving settings, resetting the demo): the PIN field
+ * already has the focus, so type the demo PIN and press Enter, with the keyboard only.
+ */
+export async function enterPinInDialog(page: Page, name: string | RegExp) {
+  const dialog = page.getByRole("dialog", { name });
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await page.keyboard.type(DEMO_PIN);
+  await page.keyboard.press("Enter");
+  return dialog;
+}
+
+export const SAVE_PIN_DIALOG = "Enter your PIN to save these settings";
+
 export async function signInAs(page: Page, persona: string, landing: string) {
   await page.goto("/sign-in");
   await page.getByRole("button", { name: persona }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: landing })).toBeVisible();
 }
 
@@ -144,3 +223,6 @@ export async function resolveThreeLines(page: Page) {
   await expect(line(page, PHYSICIAN)).toContainText("Removed by you");
   await expect(page.getByText("All lines checked. Ready to sign.")).toBeVisible();
 }
+
+/** The page's own status line: the app-wide "waking" line is a status too, and is not what a spec means. */
+export const pageStatus = (page: Page) => page.locator('[role="status"]:not(#waking-notice)');

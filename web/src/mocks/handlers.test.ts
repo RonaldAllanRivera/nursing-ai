@@ -1,15 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../api/client";
 import type { components } from "../api/schema";
+import { signInAs } from "../test/mockSession";
 import { server } from "../test/setup";
 import { demoApi } from "./demo-api";
 import { createHandlers } from "./handlers";
-
-function persona(role: string, facility: string | null) {
-  const found = demoApi.personas.find((p) => p.role === role && p.facility_key === facility);
-  if (!found) throw new Error(`no ${role} persona`);
-  return found;
-}
 
 function firstPatient(facility: "ph-demo" | "us-demo") {
   const found = demoApi.patients[facility][0];
@@ -17,9 +12,7 @@ function firstPatient(facility: "ph-demo" | "us-demo") {
   return found;
 }
 
-async function signIn(role: string, facility: string | null) {
-  await api.POST("/api/v1/session", { body: { persona_id: persona(role, facility).id } });
-}
+const signIn = signInAs;
 
 describe("demo API mocks", () => {
   it("serves the demo note with its ETag", async () => {

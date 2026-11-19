@@ -1,11 +1,16 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { delay, http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
+import { pageStatus } from "../test/status";
+import { MOCK_EMAILS } from "../mocks/staff";
+import { DEMO_ENDED } from "../session/pin";
+import { noteQuery } from "./note";
 import { linesInOrder } from "./trace";
+import { chooseAndUnlock, DEMO_PIN, demoPinHint } from "../test/signIn";
 
 const NOTE_1 = "00000000-0000-4000-8000-000000000015";
 const NOTE_US = "00000000-0000-4000-8000-000000000035";
@@ -22,7 +27,7 @@ function demoNote(id: string): Note {
 
 async function openNote(noteId = NOTE_1, persona = SARAH) {
   const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await screen.findByRole("heading", { level: 1 });
   await act(() => app.router.navigate({ to: "/notes/$noteId", params: { noteId }, search: {} }));
   await screen.findByRole("heading", { name: "Your note" });
@@ -38,7 +43,7 @@ async function openChanged(
 ) {
   const app = await renderApp("/sign-in");
   before?.();
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await screen.findByRole("heading", { level: 1 });
   server.use(
     http.get("*/api/v1/notes/:id", () =>
@@ -57,11 +62,17 @@ const resolveAll = (note: Note) => {
   return note;
 };
 
+/** Types the PIN into the sign dialog and presses its Sign note button. */
+async function signWithPin(dialog: HTMLElement, pin = DEMO_PIN) {
+  await userEvent.type(within(dialog).getByLabelText("Your PIN"), pin);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+}
+
 const line = (name: RegExp) => screen.getByRole("button", { name });
 const card = () => within(screen.getByRole("complementary", { name: /came from/ }));
 const said = (words: string) =>
   waitFor(() => {
-    expect(screen.getByRole("status")).toHaveTextContent(words);
+    expect(pageStatus()).toHaveTextContent(words);
   });
 const FOCUS = /^Dizziness with low blood pressure/;
 const ACTIONS = /Wording is right|Edit line|Undo|Remove line|Put line back|Use \d/;
@@ -302,7 +313,7 @@ describe("signing", () => {
     ).toBeVisible();
     expect(within(dialog).getByText("Not in this note:")).toBeVisible();
     expect(within(dialog).getByText(/CBC, Fall risk\. You can still sign\./)).toBeVisible();
-    expect(within(dialog).queryByLabelText(/pin/i)).toBeNull();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveValue("");
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).toBeNull();
@@ -345,7 +356,7 @@ describe("signing", () => {
     await said("Line removed.");
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await signWithPin(dialog);
 
     expect(await screen.findByText(/^Signed by you at \d\d:\d\d\.$/)).toBeVisible();
     expect(screen.getByText("Note hash 9f2c7a41d83b")).toBeVisible();
@@ -379,7 +390,7 @@ describe("signing", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await signWithPin(dialog);
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
@@ -402,13 +413,180 @@ describe("signing", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await signWithPin(dialog);
     expect(
       await within(dialog).findByText(
         "This note changed somewhere else. Reload to see the latest version.",
       ),
     ).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Reload note" })).toBeVisible();
+  });
+});
+
+describe("signing with your own PIN", () => {
+  /** Counts the sign requests, and keeps the last one's body and If-Match. */
+  function watchSigns() {
+    const seen: { count: number; body: unknown; ifMatch: string | null } = {
+      count: 0,
+      body: null,
+      ifMatch: null,
+    };
+    server.events.on("request:start", ({ request }) => {
+      if (request.method === "POST" && request.url.endsWith("/sign")) {
+        seen.count += 1;
+        seen.ifMatch = request.headers.get("If-Match");
+        void request
+          .clone()
+          .json()
+          .then((body: unknown) => {
+            seen.body = body;
+          });
+      }
+    });
+    return seen;
+  }
+
+  /** Checks every line through the screen, so the mock's own note is ready to sign. */
+  async function openSignDialog() {
+    const app = await openNote();
+    await userEvent.click(line(FOCUS));
+    await userEvent.click(card().getByRole("button", { name: "Wording is right" }));
+    await userEvent.click(line(/^BP 90\/60 mmHg, HR 121/));
+    await userEvent.click(card().getByRole("button", { name: "Use 112 from your note" }));
+    await userEvent.click(line(PHYSICIAN));
+    await userEvent.click(card().getByRole("button", { name: "Remove line" }));
+    await said("Line removed.");
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    return { app, dialog };
+  }
+
+  afterEach(() => {
+    server.events.removeAllListeners();
+  });
+
+  it("sends the PIN that was typed, against the cached version", async () => {
+    const { app, dialog } = await openSignDialog();
+    const seen = watchSigns();
+    const cached = app.queryClient.getQueryData(noteQuery(NOTE_1).queryKey)?.etag;
+    // A try with another PIN sends that PIN: what is sent is what was typed.
+    await signWithPin(dialog, "999999");
+    await within(dialog).findByText("Wrong PIN. 4 tries left.");
+    await waitFor(() => {
+      expect(seen.body).toEqual({ pin: "999999" });
+    });
+    expect(seen.ifMatch).toBe(cached);
+    await signWithPin(dialog);
+    expect(await screen.findByText(/^Signed by you at/)).toBeVisible();
+    await waitFor(() => {
+      expect(seen.body).toEqual({ pin: DEMO_PIN });
+    });
+    expect(seen.ifMatch).toBe(cached);
+  });
+
+  it("keeps the PIN out of TanStack's mutation cache", async () => {
+    const { app, dialog } = await openSignDialog();
+    await signWithPin(dialog);
+    await screen.findByText(/^Signed by you at/);
+    await waitFor(() => {
+      expect(JSON.stringify(app.queryClient.getMutationCache().getAll())).not.toContain(DEMO_PIN);
+    });
+  });
+
+  it("does not send fewer than 6 digits, and says what to type", async () => {
+    const { dialog } = await openSignDialog();
+    const seen = watchSigns();
+    await signWithPin(dialog, "1357");
+    expect(await within(dialog).findByText("Enter your 6-digit PIN.")).toBeVisible();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
+      expect.stringContaining("Enter your 6-digit PIN."),
+    );
+    expect(seen.count).toBe(0);
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("an Enter held down on the opener lands in an empty PIN field and cannot sign", async () => {
+    await openChanged(resolveAll);
+    const seen = watchSigns();
+    const opener = screen.getByRole("button", { name: "Sign note" });
+    opener.focus();
+    await userEvent.keyboard("{Enter>}");
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
+    });
+    // The key is still down and repeating: a repeat is not a decision.
+    fireEvent.keyDown(within(dialog).getByLabelText("Your PIN"), { key: "Enter", repeat: true });
+    await userEvent.keyboard("{/Enter}");
+    expect(seen.count).toBe(0);
+    expect(within(dialog).queryByText("Enter your 6-digit PIN.")).toBeNull();
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("shows a demo person the demo PIN, and ties it to the field", async () => {
+    const { dialog } = await openSignDialog();
+    expect(within(dialog).getByText(demoPinHint())).toBeVisible();
+    expect(within(dialog).getByLabelText("Your PIN")).toHaveAccessibleDescription(
+      expect.stringContaining(`Demo PIN: ${DEMO_PIN}`),
+    );
+  });
+
+  it("does not show the demo PIN to a Google user", async () => {
+    await renderApp("/notes/" + NOTE_1, { account: { user: MOCK_EMAILS.phStaff, gate: "open" } }, [
+      http.get("*/api/v1/notes/:id", () =>
+        HttpResponse.json(resolveAll(demoNote(NOTE_1)), { headers: { ETag: '"v1"' } }),
+      ),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign note" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Your PIN")).toBeVisible();
+    expect(within(dialog).queryByText(/Demo PIN/)).toBeNull();
+  });
+
+  it("signs from the keyboard: type the PIN and press Enter", async () => {
+    const { dialog } = await openSignDialog();
+    await userEvent.type(within(dialog).getByLabelText("Your PIN"), `${DEMO_PIN}{Enter}`);
+    expect(await screen.findByText(/^Signed by you at/)).toBeVisible();
+  });
+
+  it("a wrong PIN keeps the dialog open, clears the field and says the tries left", async () => {
+    const { dialog } = await openSignDialog();
+    await signWithPin(dialog, "999999");
+    expect(await within(dialog).findByText("Wrong PIN. 4 tries left.")).toBeVisible();
+    const field = within(dialog).getByLabelText("Your PIN");
+    expect(field).toHaveValue("");
+    await waitFor(() => {
+      expect(field).toHaveFocus();
+    });
+    expect(within(dialog).queryByText(/not saved/)).toBeNull();
+    // The right PIN then signs.
+    await signWithPin(dialog);
+    expect(await screen.findByText(/^Signed by you at/)).toBeVisible();
+  });
+
+  it("clears the last try's words, and the field, when the dialog is closed", async () => {
+    const { dialog } = await openSignDialog();
+    await signWithPin(dialog, "999999");
+    await within(dialog).findByText("Wrong PIN. 4 tries left.");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
+    const again = await screen.findByRole("dialog");
+    expect(within(again).queryByText(/Wrong PIN/)).toBeNull();
+    expect(within(again).getByLabelText("Your PIN")).toHaveValue("");
+  });
+
+  it("sends a demo person back to sign-in after the fifth wrong PIN", async () => {
+    const { dialog } = await openSignDialog();
+    for (let i = 0; i < 4; i += 1) {
+      await signWithPin(dialog, "999999");
+      await within(dialog).findByText(new RegExp(`^Wrong PIN\\. ${String(4 - i)} tr`));
+    }
+    await signWithPin(dialog, "999999");
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(screen.getByText(DEMO_ENDED)).toBeVisible();
   });
 });
 
@@ -419,12 +597,12 @@ const problem = (status: number, code: string, extra: object = {}) =>
   );
 
 describe("the dialogs open on the safe choice", () => {
-  it("puts the focus on Cancel in the sign dialog", async () => {
+  it("puts the focus on the empty PIN field in the sign dialog", async () => {
     await openChanged(resolveAll);
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => {
-      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+      expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
     });
   });
 
@@ -449,7 +627,7 @@ describe("while a write is under way", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await signWithPin(dialog);
     expect(await within(dialog).findByRole("button", { name: "Signing…" })).toBeVisible();
     await userEvent.keyboard("{Escape}");
     const cancel = within(dialog).getByRole("button", { name: "Cancel" });
@@ -537,7 +715,7 @@ describe("after a sign or a discard", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await signWithPin(dialog);
     const lock = (await screen.findByText(/^Signed by you at/)).closest(".signed");
     await waitFor(() => {
       expect(lock).toHaveFocus();
@@ -553,7 +731,7 @@ describe("after a sign or a discard", () => {
     await waitFor(() => {
       expect(answer).toHaveFocus();
     });
-    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(pageStatus()).toHaveTextContent("");
   });
 
   it("says in the discard dialog that the note changed, and offers Reload note", async () => {
@@ -589,7 +767,7 @@ describe("after a sign or a discard", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Sign note" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));
+    await signWithPin(dialog);
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "Some lines still need a check. Cancel, then look at each flagged line.",
     );

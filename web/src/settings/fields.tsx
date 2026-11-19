@@ -29,12 +29,15 @@ export function Field({
   id,
   label,
   error,
+  hint,
   className,
   children,
 }: {
   id: string;
   label: string;
   error: string | undefined;
+  /** What the field does, under it; the input is described by it too. */
+  hint?: string;
   className?: string;
   children: (props: {
     id: string;
@@ -43,6 +46,8 @@ export function Field({
   }) => ReactNode;
 }) {
   const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
+  const described = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ");
   return (
     <div className={className}>
       <label htmlFor={id} className={LABEL}>
@@ -51,8 +56,13 @@ export function Field({
       {children({
         id,
         "aria-invalid": error ? true : undefined,
-        "aria-describedby": error ? errorId : undefined,
+        "aria-describedby": described || undefined,
       })}
+      {hint ? (
+        <p id={hintId} className="mt-1 text-14 text-ink-2">
+          {hint}
+        </p>
+      ) : null}
       <FieldError id={errorId} message={error} />
     </div>
   );

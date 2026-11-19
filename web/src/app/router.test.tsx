@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { sessionKey } from "../session/session";
+import { DEMO_BANNER } from "../session/signInOptions";
 import { server } from "../test/setup";
 import { PendingScreen, ShellFrame } from "./RouteScreens";
 import { renderApp } from "../test/render";
+import { chooseAndUnlock } from "../test/signIn";
 
 // A patient page that throws on render while `pageBreaks.on` is set, to show a child page failing.
 const pageBreaks = vi.hoisted(() => ({ on: false }));
@@ -54,9 +56,7 @@ function spyOnConsole(expected: { warn: unknown; error: unknown }) {
 
 async function signInAsNurse() {
   const app = await renderApp("/sign-in");
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-  );
+  await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
   await screen.findByRole("heading", { name: "Patients on this ward" });
   return app;
 }
@@ -73,9 +73,7 @@ describe("app router", () => {
 
   it("sends / on to the patients for a nurse", async () => {
     const { router } = await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await screen.findByRole("heading", { name: "Patients on this ward" });
     await router.navigate({ to: "/" });
     expect(await screen.findByRole("heading", { name: "Patients on this ward" })).toBeVisible();
@@ -84,9 +82,7 @@ describe("app router", () => {
 
   it("sends you to sign-in when a request comes back 401 mid-session", async () => {
     const { queryClient } = await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await screen.findByRole("heading", { name: "Patients on this ward" });
     await screen.findAllByRole("link", { name: /Demo patient/ });
     server.use(
@@ -103,7 +99,7 @@ describe("app router", () => {
 
   it("loads the lazy Settings route for the admin, and sends nobody else there", async () => {
     const admin = await renderApp("/sign-in");
-    await userEvent.click(await screen.findByRole("button", { name: "Admin · Victor Lazaro" }));
+    await chooseAndUnlock("Admin · Victor Lazaro");
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
     expect(admin.router.state.location.pathname).toBe("/settings");
     expect(await screen.findByRole("textbox", { name: "Facility name" })).toBeVisible();
@@ -114,9 +110,7 @@ describe("app router", () => {
 
   it("sends you to sign-in when a write comes back 401", async () => {
     await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("button", { name: "Change shift" }));
     const choice = await screen.findByRole("button", { name: /^2-10/ });
     server.use(
@@ -131,6 +125,23 @@ describe("app router", () => {
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
   });
 
+  it("keeps the demo banner on the error screen", async () => {
+    spyOnConsole({
+      warn: "Warning: Error in route match: /app/",
+      error: expect.objectContaining({ name: "ApiError", status: 500 }),
+    });
+    const { router, queryClient } = await renderApp("/sign-in");
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
+    await screen.findByRole("heading", { name: "Patients on this ward" });
+    server.use(http.get("*/api/v1/session", () => HttpResponse.json({}, { status: 500 })));
+    queryClient.removeQueries({ queryKey: sessionKey });
+    await router.navigate({ to: "/patients" });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong loading this page.",
+    );
+    expect(screen.getByText(DEMO_BANNER)).toBeVisible();
+  });
+
   it("shows a plain screen with Try again when the session does not load, and recovers", async () => {
     // The router warns and React reports the caught error for any route that errors; the screen is
     // what counts here, but every console call must be one we expect.
@@ -139,9 +150,7 @@ describe("app router", () => {
       error: expect.objectContaining({ name: "ApiError", status: 500 }),
     });
     const { router, queryClient } = await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await screen.findByRole("heading", { name: "Patients on this ward" });
     let down = true;
     server.use(

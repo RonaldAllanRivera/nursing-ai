@@ -85,10 +85,17 @@ export function PatientPage() {
 
       <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="lg:order-2">
-          <ShiftNotes notes={notes} timeZone={shift.timezone} locale={locale} clock={clock} />
+          <ShiftNotes
+            patientId={patientId}
+            notes={notes}
+            listReadAt={patient.dataUpdatedAt}
+            timeZone={shift.timezone}
+            locale={locale}
+            clock={clock}
+          />
         </div>
         <div className="lg:order-1">
-          <RoughNoteForm key={patientId} patientId={patientId} />
+          <RoughNoteForm key={patientId} patientId={patientId} demoNote={patient.data.demo_note} />
         </div>
       </div>
     </section>

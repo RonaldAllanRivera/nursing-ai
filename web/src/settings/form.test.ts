@@ -3,6 +3,7 @@ import { demoApi } from "../mocks/demo-api";
 import {
   isUsableTimeZone,
   mapProblems,
+  resetFailureText,
   saveFailureText,
   settingsSchema,
   timeZoneSuggestions,
@@ -77,6 +78,27 @@ describe("timeZoneSuggestions", () => {
   });
 });
 
+describe("resetFailureText", () => {
+  it("says what happened for each way the reset can be refused", () => {
+    expect(resetFailureText(null)).toContain("connection");
+    expect(resetFailureText(403)).toContain("demo's admin");
+    expect(resetFailureText(404)).toContain("no longer there");
+    expect(resetFailureText(500)).toContain("try again");
+  });
+
+  it("says a change refused for a stale token was not made, and to try again", () => {
+    expect(resetFailureText(403, "csrf_failed")).toBe("The settings were not put back. Try again.");
+  });
+
+  it("does not blame an out-of-date page for a 422 or a status it does not know", () => {
+    for (const status of [422, 409, 423, 418]) {
+      const text = resetFailureText(status);
+      expect(text).not.toContain("out of date");
+      expect(text).toContain("did not accept");
+    }
+  });
+});
+
 describe("saveFailureText", () => {
   it("gives a next step that fits the failure", () => {
     expect(saveFailureText(null)).toContain("connection");
@@ -85,6 +107,11 @@ describe("saveFailureText", () => {
     expect(saveFailureText(428)).toContain("out of date");
     expect(saveFailureText(500)).toContain("try again");
     expect(saveFailureText(422)).toContain("named no field");
+  });
+
+  it("says a save refused for a stale token was not made, and to try again, not to sign in again", () => {
+    expect(saveFailureText(403, "csrf_failed")).toBe("The settings were not saved. Try again.");
+    expect(saveFailureText(403, "forbidden")).toContain("sign in as the admin");
   });
 });
 

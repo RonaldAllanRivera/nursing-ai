@@ -1,10 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { createQueryClient } from "./app/queryClient";
 import "./styles/app.css";
 import { applyTheme, readTheme } from "./theme/theme";
 
 applyTheme(readTheme());
+
+// Made once, here, outside render: the API client reads the CSRF token from this client's cache.
+const queryClient = createQueryClient();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root element");
@@ -16,7 +20,9 @@ if (import.meta.env.MODE === "mock") {
   try {
     const { worker } = await import("./mocks/browser");
     await worker.start({ onUnhandledFrame: "bypass" });
-  } catch {
+  } catch (error) {
+    // Says why (a bad mock option, say) to whoever opens the console; it never holds a PIN or token.
+    console.error("Mock mode could not start.", error);
     mockFailed = true;
   }
 }
@@ -29,7 +35,7 @@ createRoot(root).render(
         plain http network address.
       </p>
     ) : (
-      <App />
+      <App queryClient={queryClient} />
     )}
   </StrictMode>,
 );

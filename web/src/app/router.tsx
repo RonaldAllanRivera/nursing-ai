@@ -13,15 +13,25 @@ import { PatientList } from "../patients/PatientList";
 import { PatientPage } from "../patients/PatientPage";
 import { SignIn } from "../session/SignIn";
 import { sessionQuery } from "../session/session";
+import { canSeeStaff } from "../staff/permissions";
+import { signInErrorFrom, type SignInError } from "../session/signInOptions";
+import { DemoBanner } from "./DemoBanner";
 import { ErrorScreen, NotFoundScreen, PendingScreen } from "./RouteScreens";
 import { Shell } from "./Shell";
+import { WakingNotice } from "./WakingNotice";
 
 export interface RouterContext {
   queryClient: QueryClient;
 }
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
-  component: Outlet,
+  component: () => (
+    <>
+      <WakingNotice />
+      <DemoBanner />
+      <Outlet />
+    </>
+  ),
 });
 
 /** The session, or a redirect to sign-in. A cached "signed out" answer is kept up to date by the sign-in and sign-out calls and by any 401. */
@@ -46,6 +56,11 @@ const indexRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sign-in",
+  // `error` is why Google sent her back; anything but the three known reasons is dropped.
+  validateSearch: (search: Record<string, unknown>): { error?: SignInError } => {
+    const error = signInErrorFrom(search);
+    return error ? { error } : {};
+  },
   component: SignIn,
 });
 
@@ -107,10 +122,22 @@ const settingsRoute = createRoute({
   component: lazyRouteComponent(() => import("../settings/SettingsPage"), "SettingsPage"),
 });
 
+const staffRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/staff",
+  beforeLoad: async ({ context }) => {
+    const session = await requireSession(context.queryClient);
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- redirect() is thrown on purpose.
+    if (!canSeeStaff(session)) throw redirect({ to: "/" });
+  },
+  // Only a few people have this screen, so a nurse never downloads it.
+  component: lazyRouteComponent(() => import("../staff/StaffPage"), "StaffPage"),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  appRoute.addChildren([patientsRoute, patientRoute, noteRoute, settingsRoute]),
+  appRoute.addChildren([patientsRoute, patientRoute, noteRoute, settingsRoute, staffRoute]),
 ]);
 
 /** Tests pass a memory history to mount any path; the app passes none (the browser's). */

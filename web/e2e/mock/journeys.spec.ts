@@ -13,20 +13,26 @@ import { expect, test } from "@playwright/test";
 import { widths } from "../widths.ts";
 import {
   ADMIN,
+  enterPinInDialog,
+  SAVE_PIN_DIALOG,
   D2,
   EMILY,
+  enterDemoPin,
   FOCUS,
   PHYSICIAN,
   ROUGH_NOTE,
   SARAH,
   card,
+  checkDialog,
   checkScreen,
   expectHeaderAtMostTwoRows,
   isSmall,
   line,
   noSidewaysScroll,
+  pageStatus,
   resolveThreeLines,
   shot,
+  shotNight,
   signInAs,
   tabTo,
 } from "./helpers.ts";
@@ -53,6 +59,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
 
   // The patient list, with the header.
   await page.getByRole("button", { name: SARAH }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   const header = page.getByRole("banner");
   await expect(header.getByText("Sarah Navarro, RN")).toBeVisible();
@@ -88,7 +95,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   const drafting = "Drafting your note. This usually takes a few seconds.";
   // The visible line, not the screen-reader region that says the same words.
   await expect(page.locator("form p:not([role=status]) span").getByText(drafting)).toBeVisible();
-  await expect(page.getByRole("status")).toHaveText(drafting);
+  await expect(pageStatus(page)).toHaveText(drafting);
   await shot(page, "drafting");
   await expect(page).toHaveURL(NOTE_URL, { timeout: 8000 });
   await expect(page.getByRole("heading", { name: "Your note" })).toBeVisible();
@@ -135,12 +142,16 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await page.getByRole("button", { name: "Sign note" }).click();
   const dialog = page.getByRole("dialog", { name: "Sign this FDAR note" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Demo PIN: 135790")).toBeVisible();
   await expect(dialog.getByText("Not in this note:")).toBeVisible();
-  await checkScreen(page);
+  await checkDialog(page);
   await shot(page, "sign-dialog");
+  await shotNight(page, "sign-dialog");
 
   // Signed: locked, with its hash. The removed line is not in the record.
-  await dialog.getByRole("button", { name: "Sign note" }).click();
+  // It asks for her own PIN, with the focus already in the field.
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await enterPinInDialog(page, "Sign this FDAR note");
   await expect(dialog).toBeHidden();
   await expect(page.getByText(SIGNED_AT)).toBeVisible();
   await expect(page.getByText(HASH)).toBeVisible();
@@ -164,6 +175,7 @@ test("PH flow: sign in, write a note, wait for the draft, check three lines, sig
   await header.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: EMILY })).toBeVisible();
   await page.getByRole("button", { name: EMILY }).click();
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this unit" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Demo patient C/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Demo patient/ })).toHaveCount(1);
@@ -182,6 +194,7 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   await checkScreen(page);
   await tabTo(page, sarah, 10);
   await page.keyboard.press("Enter");
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
 
   // The list: Tab to the patient row, Enter.
@@ -232,22 +245,23 @@ test("PH flow by keyboard alone: every step with Tab, Enter, arrows and Escape",
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Sign this FDAR note" });
   await expect(dialog).toBeVisible();
-  // It opens on the safe choice: a held Enter on Sign note can't go on to sign.
-  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
-  await checkScreen(page);
+  // It opens in the empty PIN field: a held Enter on Sign note can't go on to sign.
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await expect(dialog.getByLabel("Your PIN")).toHaveValue("");
+  await checkDialog(page);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(sign).toBeFocused();
 
   await page.keyboard.press("Enter");
   await expect(dialog).toBeVisible();
-  // The focus is trapped in the dialog: Tab goes round its two buttons and never leaves.
-  for (let i = 0; i < 4; i++) {
+  // The focus is trapped in the dialog: Tab goes round its field and two buttons and never leaves.
+  for (let i = 0; i < 5; i++) {
     await page.keyboard.press("Tab");
     expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
   }
-  await tabTo(page, dialog.getByRole("button", { name: "Sign note" }));
-  await page.keyboard.press("Enter");
+  await tabTo(page, dialog.getByLabel("Your PIN"));
+  await enterPinInDialog(page, "Sign this FDAR note");
   await expect(page.getByText(SIGNED_AT)).toBeVisible();
   await expect(page.getByText(HASH)).toBeVisible();
   await expect(page.getByText("Signed. This note is locked.")).toBeVisible();
@@ -334,6 +348,7 @@ test.describe("admin path", () => {
     await expect(admin).toBeVisible();
     await tabTo(page, admin);
     await page.keyboard.press("Enter");
+    await enterDemoPin(page);
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     const header = page.getByRole("banner");
     await expect(header.getByText("Admin")).toBeVisible();
@@ -354,7 +369,8 @@ test.describe("admin path", () => {
     await page.keyboard.type("Night");
     await tabTo(page, page.getByRole("button", { name: "Save settings" }));
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toContainText("Saved.");
+    await enterPinInDialog(page, SAVE_PIN_DIALOG);
+    await expect(pageStatus(page)).toContainText("Saved.");
     await expect(label).toHaveValue("Night");
     await checkScreen(page);
     await shot(page, "settings");
@@ -381,6 +397,7 @@ test.describe("admin path", () => {
     await expect(sarah).toBeVisible();
     await tabTo(page, sarah);
     await page.keyboard.press("Enter");
+    await enterDemoPin(page);
     await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
     await expect(header.getByText("Shift Night")).toBeVisible();
     await expectHeaderAtMostTwoRows(page);

@@ -1,0 +1,82 @@
+import { useEffect, useRef, useState } from "react";
+import { Button } from "../components/ui/Button";
+import { DemoPinChip, useDemoPin } from "./DemoPin";
+import { GateFrame, IDLE_ID, WHO_ID, WhoLine } from "./GateFrame";
+import { PIN_SHORT, idleLockWords, isPinTyped, pinProblemMessage } from "./pin";
+import { PinField } from "./PinField";
+import { useUnlock, type Session } from "./session";
+
+const DEMO_PIN_ID = "unlock-demo-pin";
+
+/** Enter the PIN after signing in, or after the idle lock. A demo person is shown the demo PIN. */
+export function UnlockScreen({ session }: { session: Session }) {
+  const persona = session.kind === "persona";
+  const unlock = useUnlock(persona);
+  const demoPin = useDemoPin();
+  const [pin, setPin] = useState("");
+  const [short, setShort] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+
+  // The page was replaced: the cursor goes to the one thing to do.
+  useEffect(() => {
+    field.current?.focus();
+  }, []);
+
+  const message = short
+    ? PIN_SHORT
+    : unlock.error !== null
+      ? pinProblemMessage(unlock.error, persona)
+      : null;
+  const idle = session.gate === "idle_locked";
+
+  return (
+    <GateFrame heading={`Enter your PIN, ${session.display_name}`}>
+      <WhoLine session={session} />
+      {idle ? (
+        <p id={IDLE_ID} className="mt-1 text-ink-2">
+          {idleLockWords(session.idle_lock_seconds)}
+        </p>
+      ) : null}
+      {demoPin ? <DemoPinChip pin={demoPin} id={DEMO_PIN_ID} className="mt-3" /> : null}
+      <form
+        className="mt-4 grid gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (unlock.pending) return;
+          if (!isPinTyped(pin)) {
+            setShort(true);
+            return;
+          }
+          setShort(false);
+          void unlock.run(pin).then((ok) => {
+            if (ok) return;
+            // A wrong PIN is gone from the field at once, and the cursor is back in it.
+            setPin("");
+            field.current?.focus();
+          });
+        }}
+      >
+        <PinField
+          ref={field}
+          id="unlock-pin"
+          label="PIN"
+          value={pin}
+          onChange={(value) => {
+            setPin(value);
+            setShort(false);
+          }}
+          describedBy={[WHO_ID, idle ? IDLE_ID : null, demoPin ? DEMO_PIN_ID : null]
+            .filter(Boolean)
+            .join(" ")}
+          message={message}
+          readOnly={unlock.pending}
+        />
+        <div>
+          <Button type="submit" variant="primary" disabled={unlock.pending}>
+            {unlock.pending ? "Checking…" : "Unlock"}
+          </Button>
+        </div>
+      </form>
+    </GateFrame>
+  );
+}

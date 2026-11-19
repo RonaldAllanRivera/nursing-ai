@@ -7,6 +7,8 @@ import type { components } from "../api/schema";
 import { demoApi } from "../mocks/demo-api";
 import { renderApp } from "../test/render";
 import { server } from "../test/setup";
+import { pageStatus } from "../test/status";
+import { chooseAndUnlock } from "../test/signIn";
 
 type Schemas = components["schemas"];
 
@@ -15,7 +17,7 @@ const ROUGH_URL = "*/api/v1/patients/:id/rough-notes";
 
 async function openPatientA(persona = "Staff nurse · Sarah Navarro, RN") {
   const app = await renderApp("/sign-in");
-  await userEvent.click(await screen.findByRole("button", { name: persona }));
+  await chooseAndUnlock(persona);
   await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
   await screen.findByLabelText("Your note");
   return app;
@@ -59,9 +61,7 @@ describe("patient page", () => {
 
   it("uses the unit's words for a US patient", async () => {
     const app = await renderApp("/sign-in");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Emily Carter, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Emily Carter, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient C/ }));
     expect(await screen.findByText("Room")).toBeVisible();
     expect(within(screen.getByRole("main")).getByText("Shift 7a-7p")).toBeVisible();
@@ -196,9 +196,9 @@ describe("patient page", () => {
             id: String(params["id"]),
             rough_note_id: "00000000-0000-4000-8000-000000000013",
             status: "failed",
-            failure: "provider_error",
+            failure: "replay_missing",
             note_id: null,
-            retryable: true,
+            retryable: false,
           }),
         ),
       );
@@ -211,7 +211,7 @@ describe("patient page", () => {
       await typeNote("pt c/o hilo");
       await save();
       expect(
-        await screen.findByText("The AI service didn't answer. Your note is saved."),
+        await screen.findByText("No recorded draft matches this note. Your note is saved."),
       ).toBeVisible();
       expect(screen.getByText("To save a new note, change the text.")).toBeVisible();
       expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
@@ -227,9 +227,7 @@ describe("patient page", () => {
       await save();
       await screen.findByText("To save a new note, change the text.");
       await waitFor(() => {
-        expect(screen.getByRole("status")).toHaveTextContent(
-          "To save a new note, change the text in the box.",
-        );
+        expect(pageStatus()).toHaveTextContent("To save a new note, change the text in the box.");
       });
       expect(screen.getByLabelText("Your note")).toHaveAccessibleDescription(
         /To save a new note, change the text\./,
@@ -313,7 +311,7 @@ describe("patient page", () => {
 
   it("says each step in one status region that stays on the page", async () => {
     await openPatientA();
-    const region = screen.getByRole("status");
+    const region = pageStatus();
     expect(region).toHaveTextContent("");
     server.use(
       http.post(ROUGH_URL, async () => {
@@ -329,9 +327,9 @@ describe("patient page", () => {
     await waitFor(() => {
       expect(region).toHaveTextContent("Drafting your note.");
     });
-    expect(screen.getByRole("status")).toBe(region);
+    expect(pageStatus()).toBe(region);
     // The visible lines are not live regions of their own.
-    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(2); // the page's and the waking line
   });
 
   it("says it is waiting for the network when the browser is offline", async () => {
@@ -354,7 +352,7 @@ describe("patient page", () => {
   });
 
   describe("the status region says what the visible line says", () => {
-    const inRegion = () => within(screen.getByRole("status"));
+    const inRegion = () => within(pageStatus());
 
     it("says the whole drafting line", async () => {
       await openPatientA();
@@ -495,9 +493,7 @@ describe("patient page", () => {
     ];
     const app = await renderApp("/sign-in");
     server.use(http.get("*/api/v1/patients/:id", () => HttpResponse.json({ ...detail, notes })));
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
     const list = await screen.findByRole("list", { name: "Notes this shift" });
     const items = within(list).getAllByRole("listitem");
@@ -524,9 +520,7 @@ describe("patient page", () => {
   it("says so when the patient does not load", async () => {
     await renderApp("/sign-in");
     server.use(http.get("*/api/v1/patients/:id", () => HttpResponse.json({}, { status: 500 })));
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }),
-    );
+    await chooseAndUnlock("Staff nurse · Sarah Navarro, RN");
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
     expect(
       await screen.findByText("This patient did not load. Go back and try again."),

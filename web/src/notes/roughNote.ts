@@ -1,7 +1,11 @@
 import { queryOptions, useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
+import { isWaking, wakeRetryDelay } from "../api/waking";
+import type { components } from "../api/schema";
 import { pollDelay } from "./draft";
+
+type Schemas = components["schemas"];
 
 export const MAX_CHARACTERS = 4000;
 const SHOW_COUNT_WITHIN = 200;
@@ -43,12 +47,16 @@ export function announceStep(left: number): 200 | 100 | 50 | 0 | -1 | null {
   return null;
 }
 
-/** Twice, then give up. */
+/** Twice, then give up; a waking database is waited out on its own schedule (nothing was written). */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (isWaking(error)) return wakeRetryDelay(failureCount) !== null;
   return failureCount < 2 && isTransient(error);
 }
 
-export function useSaveRoughNote(patientId: string, onSent: (text: string) => void) {
+export function useSaveRoughNote(
+  patientId: string,
+  onSent: (text: string, job: Schemas["DraftJobOut"]) => void,
+) {
   return useMutation({
     mutationFn: async ({ text, key }: { text: string; key: string }) =>
       unwrap(
@@ -58,8 +66,8 @@ export function useSaveRoughNote(patientId: string, onSent: (text: string) => vo
         }),
       ),
     retry: shouldRetry,
-    onSuccess: (_job, { text }) => {
-      onSent(text);
+    onSuccess: (job, { text }) => {
+      onSent(text, job);
     },
   });
 }

@@ -10,7 +10,10 @@ export {
   SARAH,
   card,
   checkScreen,
+  enterPinInDialog,
   expectNoViolations,
+  pageStatus,
+  SAVE_PIN_DIALOG,
   isSmall,
   line,
   noSidewaysScroll,
@@ -18,7 +21,7 @@ export {
   tabTo,
 } from "../mock/helpers.ts";
 
-import { SARAH, card, isSmall, signInAs, tabTo } from "../mock/helpers.ts";
+import { DEMO_PIN, SARAH, card, isSmall, signInAs, tabTo } from "../mock/helpers.ts";
 
 /** The rough note of a demo case, typed exactly: a replay recording is keyed on this text. */
 export function demoNoteText(caseId: "demo-1" | "demo-3"): string {
@@ -221,6 +224,9 @@ export async function signNote(page: Page, via: "pointer" | "keyboard" = "pointe
   }
   const dialog = page.getByRole("dialog", { name: /^Sign this (FDAR|DAR) note$/ });
   await expect(dialog).toBeVisible();
+  // It asks for her own PIN first, with the cursor already in the field.
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await page.keyboard.type(DEMO_PIN);
   const confirm = dialog.getByRole("button", { name: "Sign note" });
   const answered = page.waitForResponse(
     (r) =>

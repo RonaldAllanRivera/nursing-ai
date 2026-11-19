@@ -20,7 +20,7 @@ export interface FormValues {
   temperature: "Cel" | "[degF]";
   weight: "kg" | "[lb_av]" | "none";
   clock: "24h" | "12h";
-  /** Carried through unchanged until the form shows it, so a save never resets it. */
+  /** Whole hours a sign-in lasts (1 to 24); a change applies to sessions that start after it. */
   session_max_hours: number;
 }
 
@@ -75,8 +75,9 @@ export function settingsSchema() {
     temperature: z.enum(["Cel", "[degF]"], "Choose a temperature unit."),
     weight: z.enum(["kg", "[lb_av]", "none"], "Choose a weight unit."),
     clock: z.enum(["24h", "12h"], "Choose 24-hour or 12-hour."),
+    // An empty box reads as NaN, which is not a number in zod's eyes: say the range, not "invalid".
     session_max_hours: z
-      .number()
+      .number("Enter 1 to 24 hours.")
       .int("Enter whole hours.")
       .min(1, "Enter 1 to 24 hours.")
       .max(24, "Enter 1 to 24 hours."),
@@ -163,9 +164,16 @@ export function mapProblems(errors: readonly Schemas["FieldError"][]): MappedPro
     } else if (zeroLength) {
       mapped.fields.push({ name: `shifts.${zeroLength[1] ?? "0"}.ends_local`, message });
     } else if (
-      ["name", "timezone", "locale", "day_starts_at", "clock", "temperature", "weight"].includes(
-        name,
-      ) ||
+      [
+        "name",
+        "timezone",
+        "locale",
+        "day_starts_at",
+        "clock",
+        "temperature",
+        "weight",
+        "session_max_hours",
+      ].includes(name) ||
       SHIFT_PART.test(name)
     ) {
       mapped.fields.push({ name, message });
@@ -176,8 +184,28 @@ export function mapProblems(errors: readonly Schemas["FieldError"][]): MappedPro
   return mapped;
 }
 
-/** Why a save was refused, in words that say what to do next. 412 and a mapped 422 have their own lines. */
-export function saveFailureText(status: number | null): string {
+/**
+ * Why putting the demo's settings back was refused (a 412 has its own line in the form). `code` is
+ * the problem's: a stale token (`csrf_failed`) is not about who is signed in.
+ */
+export function resetFailureText(status: number | null, code?: string): string {
+  if (code === "csrf_failed") return "The settings were not put back. Try again.";
+  if (status === null) {
+    return "The settings were not put back. Check your connection and try again.";
+  }
+  if (status === 403) return "Only the demo's admin can put the demo settings back.";
+  if (status === 404) return "This facility is no longer there. Reload the page to see the list.";
+  if (status >= 500) return "The server had a problem. Wait a moment, then try again.";
+  // 422 and anything not named above: the server said no, and gave no reason this screen can show.
+  return "The server did not accept the reset. Reload the page, then try again.";
+}
+
+/**
+ * Why a save was refused, in words that say what to do next. 412 and a mapped 422 have their own
+ * lines. `code` is the problem's: a stale token (`csrf_failed`) is not about who is signed in.
+ */
+export function saveFailureText(status: number | null, code?: string): string {
+  if (code === "csrf_failed") return "The settings were not saved. Try again.";
   if (status === null) return "The settings were not saved. Check your connection and try again.";
   if (status === 403)
     return "This account can't change settings. Sign out, then sign in as the admin.";

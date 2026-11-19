@@ -1,8 +1,14 @@
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useQueryClient,
+  type MutationFilters,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ApiError, unwrap } from "../api/errors";
 import type { components } from "../api/schema";
-import { INTERIM_PIN } from "../session/interimPin";
+import { usePinRequest } from "../session/usePinRequest";
 import { noteQuery } from "./note";
 
 type Schemas = components["schemas"];
@@ -14,9 +20,40 @@ function entryKey(noteId: string) {
   return noteQuery(noteId).queryKey;
 }
 
-/** Every write to one note shares this scope, so TanStack runs them one after the other. */
+/**
+ * Every write to one note shares this scope, so TanStack runs them one after the other. A scope
+ * runs one mutation at a time, so no write in it may pause offline (`networkMode: "always"`): a
+ * sign queued behind a paused write would wait with the PIN in the mutation cache and go out by
+ * itself on reconnect. Offline, each write fails at once with the connection words.
+ */
 function noteScope(noteId: string) {
   return `note:${noteId}`;
+}
+
+/** Marks a line change in the mutation cache, so a screen can tell that one of them failed. */
+export function lineWriteKey(noteId: string) {
+  return ["note-line-write", noteId] as const;
+}
+
+/** Any write to this note that is still under way (the sign itself included). */
+function writingFilter(noteId: string): MutationFilters {
+  return {
+    predicate: (m) => m.options.scope?.id === noteScope(noteId) && m.state.status === "pending",
+  };
+}
+
+/**
+ * Whether a write to this note is still under way, and a check of the same thing made at the
+ * moment of a submit. A PIN request never queues behind a write: whatever could hold that write
+ * (a retry while the tab is hidden, the network) must not also hold a PIN in the mutation cache.
+ */
+export function useNoteWriting(noteId: string) {
+  const queryClient = useQueryClient();
+  const count = useIsMutating(writingFilter(noteId));
+  return {
+    writing: count > 0,
+    writingNow: () => queryClient.isMutating(writingFilter(noteId)) > 0,
+  };
 }
 
 /** The tag of the version this screen shows: what a change must be made against. */
@@ -39,6 +76,8 @@ export function useActOnLine(noteId: string) {
   return useMutation({
     // One write to a note at a time: the next one waits, and then sends the version the last returned.
     scope: { id: noteScope(noteId) },
+    mutationKey: lineWriteKey(noteId),
+    networkMode: "always",
     mutationFn: async ({ lineId, body }: { lineId: string; body: LineBody }) => {
       const answer = await api.PATCH("/api/v1/notes/{note_id}/lines/{line_id}", {
         params: {
@@ -57,33 +96,72 @@ export function useActOnLine(noteId: string) {
   });
 }
 
-/** Sign the note, or discard the draft. Either way this shift's list on the patient page is out of date. */
-export function useFinishNote(noteId: string, how: "sign" | "discard") {
+/** A sign or a discard finished: its answer replaces the note, and this shift's list on the patient page is out of date. */
+function keepFinished(
+  queryClient: QueryClient,
+  noteId: string,
+  { note, etag }: { note: Schemas["NoteOut"]; etag: string | null },
+) {
+  keepAnswer(queryClient, noteId, note, etag);
+  void queryClient.invalidateQueries({ queryKey: ["patient"] });
+}
+
+/** Discard the draft. It joins the note's one-at-a-time line of writes. */
+export function useDiscardNote(noteId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     scope: { id: noteScope(noteId) },
+    networkMode: "always",
     mutationFn: async () => {
-      const params = {
+      const answer = await api.POST("/api/v1/notes/{note_id}/discard", {
         params: {
           path: { note_id: noteId },
           header: { "If-Match": currentEtag(queryClient, noteId) },
         },
-      };
-      const answer =
-        how === "sign"
-          ? await api.POST("/api/v1/notes/{note_id}/sign", {
-              ...params,
-              body: { pin: INTERIM_PIN },
-            })
-          : await api.POST("/api/v1/notes/{note_id}/discard", params);
+      });
       return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
     },
     onMutate: () => queryClient.cancelQueries({ queryKey: entryKey(noteId) }),
-    onSuccess: ({ note, etag }) => {
-      keepAnswer(queryClient, noteId, note, etag);
-      void queryClient.invalidateQueries({ queryKey: ["patient"] });
+    onSuccess: (answer) => {
+      keepFinished(queryClient, noteId, answer);
     },
   });
+}
+
+/**
+ * Sign the note with the PIN that was typed. It goes through `usePinRequest`, so the PIN never
+ * stays in TanStack's mutation cache, and it keeps what every write to a note does: it shares the
+ * note's scope (so it waits for the writes before it), and it reads the version tag only when its
+ * turn comes, so it is made against what the last write returned.
+ */
+export function useSignNote(
+  noteId: string,
+  handlers: { onSuccess: () => void; onError: (error: unknown, previous: unknown) => void },
+) {
+  const queryClient = useQueryClient();
+  return usePinRequest(
+    async (pin: string) => {
+      const answer = await api.POST("/api/v1/notes/{note_id}/sign", {
+        params: {
+          path: { note_id: noteId },
+          header: { "If-Match": currentEtag(queryClient, noteId) },
+        },
+        body: { pin },
+      });
+      return { note: unwrap(answer), etag: answer.response.headers.get("ETag") };
+    },
+    {
+      onSuccess: (answer) => {
+        keepFinished(queryClient, noteId, answer);
+        handlers.onSuccess();
+      },
+      onError: handlers.onError,
+    },
+    {
+      scope: noteScope(noteId),
+      onMutate: () => queryClient.cancelQueries({ queryKey: entryKey(noteId) }),
+    },
+  );
 }
 
 /** What went wrong with a write, in the terms a screen acts on. */

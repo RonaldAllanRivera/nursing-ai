@@ -1,11 +1,17 @@
 import { http, HttpResponse, type HttpHandler } from "msw";
 import type { components } from "../api/schema";
 import { demoApi } from "./demo-api";
-import type { FacilitySettings } from "../api/client";
+import { createDrafts, dressed, draftAgainRoute, queuedView } from "./draftJobs";
+import type { MockOptions } from "./options";
+import { problem } from "./problems";
+import { createSession } from "./session";
+import { facilityRoutes } from "./facilityRoutes";
+import { sessionRoutes } from "./sessionRoutes";
+import { createStaff } from "./staff";
+import { staffRoutes } from "./staffRoutes";
 import type { DemoApi } from "./types";
 
 type Schemas = components["schemas"];
-type ProblemCode = Schemas["Problem"]["code"];
 type Line = Schemas["DraftLine"];
 
 // The mock keeps its own copies of the server's rules, so the web's code can't agree with itself.
@@ -23,175 +29,28 @@ function needsReview(line: Line): boolean {
 /** The mock's stand-in for the server's SHA-256 of the signed text. */
 const FIXED_HASH = "9f2c7a41d83be5106a7c4de2f0b19853c6e7a2d4b8f01c93e5a6d7084b2c1f3e";
 
-// The server's rules for a facility's settings (core's `FacilitySettings`), copied here and not
-// imported from the screen, so a disagreement between the screen and the server shows in a test.
-
-type Settings = FacilitySettings;
-
-/** The settings in a save, without the PIN that proves who saved: the PIN is never stored. */
-function settingsOf(sent: Schemas["FacilityUpdateIn"]): Settings {
-  const settings: Partial<Schemas["FacilityUpdateIn"]> = { ...sent };
-  delete settings.pin;
-  return settings as Settings;
-}
-
-/** "HH:MM" or "HH:MM:00" as minutes since midnight, or null (not a whole-minute local time). */
-function localMinutes(value: unknown): number | null {
-  const found = typeof value === "string" ? /^(\d{2}):(\d{2})(?::00)?$/.exec(value) : null;
-  if (!found) return null;
-  const hours = Number(found[1]);
-  const minutes = Number(found[2]);
-  return hours < 24 && minutes < 60 ? hours * 60 + minutes : null;
-}
-
-function wholeTime(minutes: number): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:00`;
-}
-
-function isIanaZone(value: unknown): boolean {
-  if (typeof value !== "string" || value === "") return false;
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function textBetween(value: unknown, max: number): boolean {
-  return typeof value === "string" && value.trim().length >= 1 && value.trim().length <= max;
-}
-
-/** The field-level checks first; the whole-table checks only when those pass (as pydantic does). */
-function settingsErrors(body: Settings): Schemas["FieldError"][] {
-  const errors: Schemas["FieldError"][] = [];
-  const add = (field: string, message: string) => errors.push({ field, message });
-  if (!textBetween(body.name, 120)) add("body.name", "A name is 1 to 120 characters.");
-  if (!isIanaZone(body.timezone)) {
-    add("body.timezone", "Timezone must be an IANA zone such as Europe/Paris.");
-  }
-  // The body is untrusted JSON: the types say what it should be, not what it is.
-  if (!["en-PH", "en-US"].includes(body.locale)) {
-    add("body.locale", "Choose a locale from the list.");
-  }
-  if (!["24h", "12h"].includes(body.clock)) {
-    add("body.clock", "Choose 24-hour or 12-hour.");
-  }
-  if (localMinutes(body.day_starts_at) === null) {
-    add("body.day_starts_at", "A time in whole minutes, like 06:00.");
-  }
-  if (!Array.isArray(body.shifts) || body.shifts.length < 1) {
-    add("body.shifts", "Add at least one shift.");
-  } else {
-    body.shifts.forEach((shift, i) => {
-      if (!textBetween(shift.code, 16))
-        add(`body.shifts.${String(i)}.code`, "A code is 1 to 16 characters.");
-      if (!textBetween(shift.label, 40))
-        add(`body.shifts.${String(i)}.label`, "A label is 1 to 40 characters.");
-      if (localMinutes(shift.starts_local) === null) {
-        add(`body.shifts.${String(i)}.starts_local`, "A time in whole minutes, like 06:00.");
-      }
-      if (localMinutes(shift.ends_local) === null) {
-        add(`body.shifts.${String(i)}.ends_local`, "A time in whole minutes, like 06:00.");
-      }
-      if (!["blue", "black", "red"].includes(shift.ink)) {
-        add(`body.shifts.${String(i)}.ink`, "Choose blue, black or red.");
-      }
-      if (
-        localMinutes(shift.starts_local) !== null &&
-        localMinutes(shift.starts_local) === localMinutes(shift.ends_local)
-      ) {
-        add(`body.shifts.${String(i)}`, "A shift must end at a different time than it starts.");
-      }
-    });
-  }
-  if (errors.length > 0) return errors;
-
-  const whole = (message: string) => [{ field: "body", message }];
-  const codes = body.shifts.map((s) => s.code.trim());
-  if (new Set(codes).size !== codes.length) return whole("Shift codes must be unique.");
-  const shifts = body.shifts
-    .map((s) => ({
-      start: localMinutes(s.starts_local) ?? 0,
-      end: localMinutes(s.ends_local) ?? 0,
-    }))
-    .sort((a, b) => a.start - b.start);
-  for (const [i, current] of shifts.entries()) {
-    const following = shifts[(i + 1) % shifts.length];
-    if (current.end !== following?.start) {
-      return whole("Shifts must cover 24 hours with no gap or overlap.");
-    }
-  }
-  if (!shifts.some((s) => s.start === localMinutes(body.day_starts_at))) {
-    return whole("The day must start when one of the shifts starts.");
-  }
-  return [];
-}
-
-const TITLES: Record<number, string> = {
-  401: "Not signed in",
-  403: "Not allowed",
-  404: "Not found",
-  422: "The request isn't valid",
-  409: "The note can't take this change",
-  412: "The note changed",
-  428: "A required header is missing",
-};
-
-function problem(
-  status: number,
-  code: ProblemCode,
-  errors?: Schemas["FieldError"][],
-  lineIds?: string[],
-) {
-  const body: Schemas["Problem"] = {
-    type: "about:blank",
-    title: TITLES[status] ?? "Error",
-    status,
-    code,
-    ...(errors ? { errors } : {}),
-    ...(lineIds ? { line_ids: lineIds } : {}),
-  };
-  return HttpResponse.json(body, {
-    status,
-    headers: { "Content-Type": "application/problem+json" },
-  });
-}
-
 /**
  * The P1 endpoints answered from the demo cases, with the state a session needs (who is signed
  * in, how often a job was polled). The web lane adds the write behaviours.
  */
-export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
+export function createHandlers(
+  source: DemoApi = demoApi,
+  options: MockOptions = {},
+): HttpHandler[] {
   // Writes change this copy, so every call (every test, every page load) starts clean.
   const data = structuredClone(source);
-  let personaId: string | null = null;
-  let shiftOverride: Schemas["ShiftRef"] | null = null;
+  const staff = createStaff();
+  const state = createSession(data, options, staff);
+  const drafts = createDrafts(data, source, options);
+  const { guard, session } = state;
   const polls = new Map<string, number>();
   const sent = new Map<string, { text: string; jobId: string }>();
 
-  /** A nurse's shift is found by its code in her facility's current shifts: a rename shows at once. */
-  const relabelled = (
-    facilityKey: string | null,
-    shift: Schemas["ShiftRef"],
-  ): Schemas["ShiftRef"] => {
-    const now = facilityKey === null ? undefined : data.facilities[facilityKey];
-    const label = now?.profile.shifts.find((s) => s.code === shift.code)?.label;
-    return label === undefined ? shift : { ...shift, label };
-  };
-
-  const session = () => {
-    const found = personaId === null ? undefined : data.sessions[personaId];
-    if (!found) return undefined;
-    const shift = shiftOverride ?? found.shift;
-    return shift ? { ...found, shift: relabelled(found.facility_key, shift) } : found;
-  };
-
   /**
-   * The checks every write to a note makes, in the API's order: signed in (401), a nurse (403),
-   * If-Match sent (428), the note (404), then locked (409) before stale (412), so a note signed
-   * somewhere else answers "locked" whatever version the screen holds.
+   * The checks every write to a note makes, in the API's order: signed in (401), the CSRF token
+   * (403), the gate (423), a nurse (403), If-Match sent (428), the note (404), then locked (409)
+   * before stale (412), so a note signed somewhere else answers "locked" whatever version the
+   * screen holds.
    */
   function writeGate(
     noteId: string,
@@ -199,8 +58,9 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
   ):
     | { refusal: Response; note?: never; user?: never }
     | { refusal?: never; note: Schemas["NoteOut"]; user: string } {
-    const current = session();
-    if (!current) return { refusal: problem(401, "not_signed_in") };
+    const gated = guard(request);
+    if (gated.refusal) return { refusal: gated.refusal };
+    const current = gated.session;
     if (current.facility_key === null) return { refusal: problem(403, "forbidden") };
     const ifMatch = request.headers.get("If-Match");
     if (!ifMatch) return { refusal: problem(428, "precondition_required") };
@@ -221,7 +81,10 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
   function setShiftNoteStatus(note: Schemas["NoteOut"], status: "signed" | "discarded") {
     for (const detail of Object.values(data.patientDetails)) {
       for (const entry of detail.notes) {
-        if (entry.rough_note_id === note.rough_note_id) entry.note_status = status;
+        // A rough note drafted again names its draft by the job, not by the demo's rough note.
+        if (entry.rough_note_id === note.rough_note_id || entry.job.note_id === note.id) {
+          entry.note_status = status;
+        }
       }
     }
   }
@@ -237,23 +100,28 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
 
     http.get("*/api/v1/personas", () => HttpResponse.json(data.personas)),
 
+    ...sessionRoutes(state, options),
+    ...staffRoutes(state, data, staff),
+    draftAgainRoute(state, data, drafts),
+
     http.post("*/api/v1/session", async ({ request }) => {
       const body = (await request.json()) as Schemas["SessionIn"];
       const found = data.sessions[body.persona_id];
       if (!found) return problem(404, "not_found");
-      personaId = body.persona_id;
-      shiftOverride = null;
-      return HttpResponse.json(session(), { status: 201 });
+      return HttpResponse.json(state.startPersona(body.persona_id), { status: 201 });
     }),
 
     http.get("*/api/v1/session", () => {
       const current = session();
+      // The web's activity heartbeat: reading an open session keeps it open.
+      if (current?.gate === "open") state.touch();
       return current ? HttpResponse.json(current) : problem(401, "not_signed_in");
     }),
 
     http.put("*/api/v1/session/shift", async ({ request }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const body = (await request.json()) as Schemas["ShiftChoiceIn"];
       const wanted = Date.parse(body.starts_at);
@@ -265,91 +133,45 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
           { field: "body.starts_at", message: "That is not one of this facility's shifts." },
         ]);
       }
-      shiftOverride = choice;
+      state.setShift(choice);
       return HttpResponse.json({ ...current, shift: choice });
     }),
 
-    http.delete("*/api/v1/session", () => {
-      personaId = null;
-      shiftOverride = null;
+    http.delete("*/api/v1/session", ({ request }) => {
+      if (session()) {
+        const checked = state.guardSession(request);
+        if (checked.refusal) return checked.refusal;
+      }
+      state.end();
       return new HttpResponse(null, { status: 204 });
     }),
 
-    http.get("*/api/v1/facilities", () => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
-      const all = Object.values(data.facilities);
-      const key = current.facility_key;
-      return HttpResponse.json(key === null ? all : all.filter((f) => f.profile.key === key));
-    }),
+    ...facilityRoutes(state, data, source, options),
 
-    http.get<{ key: string }>("*/api/v1/facilities/:key", ({ params }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
-      const found = data.facilities[params.key];
-      if (!found) return problem(404, "not_found");
-      if (current.facility_key !== null && current.facility_key !== params.key) {
-        return problem(403, "forbidden");
-      }
-      return HttpResponse.json(found, { headers: { ETag: `"f${String(found.version)}"` } });
-    }),
-
-    http.put<{ key: string }>("*/api/v1/facilities/:key", async ({ params, request }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
-      if (current.facility_key !== null) return problem(403, "forbidden");
-      const found = data.facilities[params.key];
-      if (!found) return problem(404, "not_found");
-      const ifMatch = request.headers.get("If-Match");
-      if (!ifMatch) return problem(428, "precondition_required");
-      if (ifMatch !== `"f${String(found.version)}"`) return problem(412, "stale_version");
-      const body = settingsOf((await request.json()) as Schemas["FacilityUpdateIn"]);
-      const errors = settingsErrors(body);
-      if (errors.length > 0) return problem(422, "invalid_request", errors);
-      const shifts = body.shifts.map((s) => ({
-        code: s.code.trim(),
-        label: s.label.trim(),
-        starts_local: wholeTime(localMinutes(s.starts_local) ?? 0),
-        ends_local: wholeTime(localMinutes(s.ends_local) ?? 0),
-        ink: s.ink,
-      }));
-      found.profile = {
-        ...body,
-        key: params.key,
-        name: body.name.trim(),
-        day_starts_at: wholeTime(localMinutes(body.day_starts_at) ?? 0),
-        shifts,
-      };
-      found.version += 1;
-      // The demo's shift choices are fixed dates; a rename shows in them, and a removed code goes.
-      found.shift_choices = found.shift_choices.flatMap((choice) => {
-        const kept = shifts.find((s) => s.code === choice.code);
-        return kept ? [{ ...choice, label: kept.label }] : [];
-      });
-      return HttpResponse.json(found, { headers: { ETag: `"f${String(found.version)}"` } });
-    }),
-
-    http.get("*/api/v1/patients", () => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+    http.get("*/api/v1/patients", ({ request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const key = current.facility_key as keyof DemoApi["patients"];
       return HttpResponse.json(data.patients[key]);
     }),
 
-    http.get<{ id: string }>("*/api/v1/patients/:id", ({ params }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+    http.get<{ id: string }>("*/api/v1/patients/:id", ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const found = data.patientDetails[params.id];
       if (!found) return problem(404, "not_found");
       // The page shows the shift the nurse picked in the header.
-      return HttpResponse.json(shiftOverride ? { ...found, shift: shiftOverride } : found);
+      return HttpResponse.json(state.shift() ? { ...found, shift: state.shift() } : found);
     }),
 
     http.post<{ id: string }>("*/api/v1/patients/:id/rough-notes", async ({ params, request }) => {
-      const current = session();
-      if (!current) return problem(401, "not_signed_in");
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
+      const current = gated.session;
       if (current.facility_key === null) return problem(403, "forbidden");
       const key = request.headers.get("Idempotency-Key");
       if (!key) return problem(428, "precondition_required");
@@ -366,11 +188,16 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       // The frozen demo data has one job per patient, so a second save (new key) replays a job
       // that is already finished. The real API makes a new job each time.
       const jobId = earlier?.jobId ?? data.jobForPatient[params.id];
-      const job = jobId === undefined ? undefined : data.jobs[jobId];
+      let job = jobId === undefined ? undefined : data.jobs[jobId];
       if (!job) return problem(404, "not_found");
-      const queued: Schemas["DraftJobOut"] = { ...job, status: "queued", note_id: null };
       if (!earlier) {
+        // The `failDraft` option swaps this one save's job for a failed one.
+        job = drafts.jobFor(job);
+        drafts.authors.set(job.rough_note_id, current.user_id);
         sent.set(key, { text: body.text, jobId: job.id });
+      }
+      const queued = queuedView(job);
+      if (!earlier) {
         detail.notes.push({
           rough_note_id: job.rough_note_id,
           written_at: new Date().toISOString(),
@@ -384,8 +211,10 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       });
     }),
 
-    http.get<{ id: string }>("*/api/v1/draft-jobs/:id", ({ params }) => {
-      if (!session()) return problem(401, "not_signed_in");
+    http.get<{ id: string }>("*/api/v1/draft-jobs/:id", ({ params, request }) => {
+      // The poll runs with nobody at the screen, so it doesn't count as activity.
+      const gated = guard(request, false);
+      if (gated.refusal) return gated.refusal;
       const job = data.jobs[params.id];
       if (!job) return problem(404, "not_found");
       const seen = (polls.get(job.id) ?? 0) + 1;
@@ -401,13 +230,12 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
         }
       }
       // The first poll still finds the job queued; after that the draft is ready.
-      const answer: Schemas["DraftJobOut"] =
-        seen === 1 ? { ...job, status: "queued", note_id: null } : job;
-      return HttpResponse.json(answer);
+      return HttpResponse.json(seen === 1 ? queuedView(job) : dressed(job));
     }),
 
-    http.get<{ id: string }>("*/api/v1/notes/:id", ({ params }) => {
-      if (!session()) return problem(401, "not_signed_in");
+    http.get<{ id: string }>("*/api/v1/notes/:id", ({ params, request }) => {
+      const gated = guard(request);
+      if (gated.refusal) return gated.refusal;
       const note = data.notes[params.id];
       if (!note) return problem(404, "not_found");
       return HttpResponse.json(note, { headers: { ETag: `"v${String(note.version)}"` } });
@@ -492,10 +320,12 @@ export function createHandlers(source: DemoApi = demoApi): HttpHandler[] {
       },
     ),
 
-    http.post<{ id: string }>("*/api/v1/notes/:id/sign", ({ params, request }) => {
+    http.post<{ id: string }>("*/api/v1/notes/:id/sign", async ({ params, request }) => {
       const gate = writeGate(params.id, request);
       if (gate.refusal) return gate.refusal;
       const { note, user } = gate;
+      const wrongPin = state.checkPin(((await request.json()) as Schemas["SignNoteIn"]).pin);
+      if (wrongPin) return wrongPin;
       const open = linesInOrder(note.draft).filter(needsReview);
       if (open.length > 0) {
         return problem(
