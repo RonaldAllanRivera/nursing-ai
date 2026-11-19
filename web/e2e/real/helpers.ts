@@ -246,3 +246,27 @@ export async function signNote(page: Page, via: "pointer" | "keyboard" = "pointe
   await expect(page.getByText("Signed. This note is locked.")).toBeVisible();
   return response;
 }
+
+/** A throwaway e2e user made through the API's test-only route (APP_ENV=test): her cookie is the page's. */
+export async function startTestSession(
+  page: Page,
+  who: { role: "staff_nurse" | "head_nurse" | "admin"; facilityKey: string | null; pin?: string },
+) {
+  const response = await page.request.post("/api/v1/test/session", {
+    data: {
+      role: who.role,
+      facility_key: who.facilityKey,
+      ...(who.pin === undefined ? {} : { pin: who.pin }),
+    },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+}
+
+/** Revoke every e2e user (no session needed). */
+export async function tearDownTestUsers(page: Page) {
+  const response = await page.request.post("/api/v1/test/teardown");
+  expect(response.ok(), await response.text()).toBe(true);
+}
+
+/** A PIN no rule refuses: not one digit repeated, not a run. */
+export const TEST_PIN = "246813";
