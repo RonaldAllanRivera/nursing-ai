@@ -232,7 +232,8 @@ In order, it:
    first.)
 2. Runs `terraform init`, and decides whether this is the first deploy (the state has no ops
    function and Lambda says it does not exist). A state that belongs to another environment is
-   refused before anything is built. A state that cannot be listed stops the deploy, and so does a
+   refused before the image is built or anything is applied (only the web app has been built by
+   then, locally). A state that cannot be listed stops the deploy, and so does a
    live ops function whose state lists nothing (the wrong state bucket).
 3. Builds the image once and pushes it to the registry. The tag is the 12-character git commit plus
    the UTC time, because tags are immutable.
@@ -428,11 +429,13 @@ alarms, but open CloudWatch too and check:
   one is drafting. After a quiet few days, read the queue's request count (CloudWatch, SQS metrics
   `NumberOfEmptyReceives` and `NumberOfMessagesReceived`, or the bill's SQS lines) and check it stays
   well inside the 1 million requests a month the free tier gives.
-- **A dead-letter redrive.** A job whose message ends in the dead-letter queue shows "Drafting"
-  until it is re-sent. To bring it back, open the dead-letter queue in the SQS console and choose
-  "Start DLQ redrive" to the jobs queue (the default destination). The worker takes the message
-  again, and the job finishes or fails as normal. Try it once on a forced failure, and confirm the
-  `dead-jobs` alarm returns to OK after the queue is empty.
+- **A dead-letter redrive.** A job whose message ended in the dead-letter queue stays "Drafting",
+  and the app sends it again at most once a minute while someone has the job or its patient on
+  screen, so once the cause is fixed it usually finishes by itself. To send the dead messages back
+  anyway, open the dead-letter queue in the SQS console and choose "Start DLQ redrive" to the jobs
+  queue (the default destination). The worker takes each message again, and the job finishes or
+  fails as normal. Try it once on a forced failure, and confirm the `dead-jobs` alarm returns to OK
+  after the queue is empty.
 
 Also confirm the alarm-topic email subscription and the budget emails (each must be accepted from
 the link in its first email).

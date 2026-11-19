@@ -14,8 +14,9 @@
 #   TF_VAR_*             every Terraform variable but `image_uri` (for example TF_VAR_alert_email and
 #                        TF_VAR_domain_name), or the git-ignored infra/live/terraform.tfvars. The
 #                        script sets TF_VAR_environment itself; a tfvars file that sets `environment`
-#                        to another name is refused (DEPLOY_TFVARS names a different tfvars file),
-#                        and so is one that sets database_password_version (CI cannot see it).
+#                        to another name is refused, and so is one that sets
+#                        database_password_version (CI cannot see it). DEPLOY_TFVARS points that
+#                        check at another file; it exists for the tests' sandbox.
 #   docker, terraform, pnpm, python3, git and the AWS CLI on PATH.
 # Optional:
 #   DEPLOY_APPLY_FIRST=yes  apply before migrating even though the ops function exists. For
@@ -127,31 +128,31 @@ check_tfvars_environment() {
 
 # Decides whether this is the first deploy from two signals that must agree: the state has no ops
 # function output AND Lambda says the function does not exist. A state that names the ops function
-# of another environment is refused before anything is built.
+# of another environment is refused before the image is built or anything is applied.
 check_first_deploy() {
   say "check the state and the ops function"
   local named="" error_file="$WORK/get-function.err" listed="" in_state=""
   named="$("${TF[@]}" output -raw ops_function_name 2>/dev/null || true)"
   if [[ -n "$named" ]]; then
     [[ "$named" == "$OPS_FUNCTION" ]] \
-      || die "the state belongs to ${named}, not ${OPS_FUNCTION}; nothing was built"
+      || die "the state belongs to ${named}, not ${OPS_FUNCTION}; nothing was pushed or applied"
     FIRST_DEPLOY=""
     return 0
   fi
   # No output: either a state with nothing applied yet, or one that cannot be read. Listing it
   # tells them apart, and an unreadable state must not pass for an empty one.
   listed="$("${TF[@]}" state list 2>"$WORK/state-list.err")" \
-    || die "could not read the Terraform state; nothing was built"
+    || die "could not read the Terraform state; nothing was pushed or applied"
   [[ -z "$listed" ]] || in_state="yes"
   if aws lambda get-function --function-name "$OPS_FUNCTION" >/dev/null 2>"$error_file"; then
     [[ -n "$in_state" ]] \
-      || die "${OPS_FUNCTION} exists but the Terraform state lists nothing (the wrong state bucket?); nothing was built"
+      || die "${OPS_FUNCTION} exists but the Terraform state lists nothing (the wrong state bucket?); nothing was pushed or applied"
     FIRST_DEPLOY=""
   elif grep -q 'ResourceNotFoundException' "$error_file"; then
     FIRST_DEPLOY="yes"
     say "first deploy: the apply runs before the migration"
   else
-    die "could not tell whether the ops function exists ($(aws_error_code "$error_file")); nothing was built"
+    die "could not tell whether the ops function exists ($(aws_error_code "$error_file")); nothing was pushed or applied"
   fi
 }
 
@@ -225,7 +226,10 @@ check_ops_name() {
 build_web() {
   say "build the web app"
   local unset_args=() name
-  while IFS= read -r name; do unset_args+=(-u "$name"); done < <(compgen -e | grep '^AWS_' || true)
+  # Every AWS sign-in variable, and GitHub's OIDC request variables: with those, build-time code
+  # could ask for a token the deploy role trusts.
+  while IFS= read -r name; do unset_args+=(-u "$name"); done \
+    < <(compgen -e | grep -E '^(AWS_|ACTIONS_ID_TOKEN_REQUEST_)' || true)
   env ${unset_args[@]+"${unset_args[@]}"} pnpm -C web build
 }
 

@@ -52,7 +52,7 @@ import json, os, sys
 tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 with open(os.environ["FAKE_LOG"], "a") as log:
-    aws_env = sorted(k for k in os.environ if k.startswith("AWS_"))
+    aws_env = sorted(k for k in os.environ if k.startswith(("AWS_", "ACTIONS_ID_TOKEN_REQUEST_")))
     log.write(json.dumps({"tool": tool, "argv": args, "aws_env": aws_env}) + "\n")
 
 env = os.environ.get("TF_VAR_environment", "demo")
@@ -502,13 +502,16 @@ def test_the_log_shows_the_image_tag_but_not_the_registry_host(sandbox: Path) ->
 
 def test_the_web_app_is_built_first_and_sees_no_aws_variable(sandbox: Path) -> None:
     # A broken build stops the deploy before anything changes, and build-time code from an npm
-    # dependency never sees the sign-in (B-3).
+    # dependency never sees the sign-in (B-3): neither the AWS credentials nor, in CI, GitHub's
+    # OIDC request variables, with which it could ask for a token the deploy role trusts.
     credentials = {
         "AWS_ACCESS_KEY_ID": "AKIAEXAMPLE",
         "AWS_SECRET_ACCESS_KEY": "stand-in",
         "AWS_SESSION_TOKEN": "stand-in",
         "AWS_PROFILE": "nursing-ai",
         "AWS_REGION": "ap-southeast-2",
+        "ACTIONS_ID_TOKEN_REQUEST_URL": "https://token.example.com/",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "stand-in",
     }
     run = run_deploy(sandbox, "demo", extra=credentials)
     assert run.result.returncode == 0, run.result.stderr
