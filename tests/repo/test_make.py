@@ -219,6 +219,24 @@ def test_e2e_mock_runs_the_mock_journeys_on_the_offset_web_port(fake_repo: Path)
     assert result.stdout.splitlines() == ["WEB_PORT=5183 pnpm -C web e2e:mock"]
 
 
+def test_e2e_starts_the_stack_as_a_test_environment(fake_repo: Path) -> None:
+    # The journeys make throwaway Google-kind users through the test-only sign-in route, which
+    # exists only when APP_ENV=test. `make up` and `make dev` stay dev.
+    for tool in ("docker", "pnpm"):
+        fake = fake_repo / ".tools" / "bin" / tool
+        fake.write_text(f'#!/bin/sh\necho "APP_ENV=${{APP_ENV-unset}} {tool} $*"\n')
+        fake.chmod(0o755)
+    result = run_make("e2e", "PORT_OFFSET=1", cwd=fake_repo)
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in result.stdout.splitlines() if line.startswith("APP_ENV=")]
+    assert lines == [
+        "APP_ENV=test docker compose up -d --build --wait",
+        "APP_ENV=test pnpm -C web e2e",
+    ]
+    up = run_make("up", cwd=fake_repo).stdout.splitlines()
+    assert "APP_ENV=unset docker compose up -d --build --wait" in up
+
+
 def test_record_replays_passes_the_key_only_through_the_environment(fake_repo: Path) -> None:
     key = f"sk-ant-{CANARY}-123"  # the fixture's .env value
     result = run_make("record-replays", "AI_MODE=live", cwd=fake_repo)

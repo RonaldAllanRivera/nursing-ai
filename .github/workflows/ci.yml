@@ -66,6 +66,8 @@ jobs:
     env:
       # The recordings are committed, so the API answers from them and no live model is called.
       AI_MODE: replay
+      # The test-only sign-in route (throwaway Google-kind users) exists only in a test stack.
+      APP_ENV: test
       WEB_PORT: "5173"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

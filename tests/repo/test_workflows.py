@@ -108,6 +108,8 @@ def test_e2e_job_runs_the_real_stack_in_replay_mode_on_a_named_web_port() -> Non
     # The compose file reads AI_MODE, so the stack's own step must see replay too.
     up = next(s for s in job["steps"] if s.get("run", "").startswith("docker compose up"))
     assert {**job.get("env", {}), **up.get("env", {})}["AI_MODE"] == "replay"
+    # The test-only sign-in route (throwaway Google-kind users) exists only when APP_ENV=test.
+    assert {**job.get("env", {}), **up.get("env", {})}["APP_ENV"] == "test"
 
 
 def _triggers(path: Path) -> dict[str, Any]:

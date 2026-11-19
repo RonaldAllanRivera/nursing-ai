@@ -55,7 +55,9 @@ down: ## Stop Postgres and the API (keeps the data volume)
 dev: up ## Start Postgres and the API, then the web app (Ctrl+C stops the web app)
 	pnpm -C web dev
 
-# The stack stays up afterwards: the caller runs `make down`.
+# The stack stays up afterwards: the caller runs `make down`. APP_ENV=test (also for its `up`)
+# turns on the test-only sign-in route the journeys use for throwaway Google-kind users.
+e2e: export APP_ENV := test
 e2e: up ## Start the stack, then run the Playwright tests
 	pnpm -C web e2e
 
