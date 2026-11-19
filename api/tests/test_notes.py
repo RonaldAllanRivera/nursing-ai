@@ -642,9 +642,9 @@ async def test_a_google_nurses_fifth_wrong_pin_on_sign_locks_her_pin(
     # Locked, unlike a persona's ended session: even her right PIN signs nothing now.
     right = await client.post(url(note_id, "/sign"), json={"pin": GOOGLE_PIN}, headers=ifm(version))
     assert (right.status_code, right.json()["code"]) == (423, "pin_locked")
-    async with client_for(app) as other:
-        await sign_in(other, PH_STAFF)
-        assert (await other.get(url(note_id))).json()["status"] == "draft"
+    async with app.state.engine.connect() as conn:
+        status = await conn.scalar(select(tables.note.c.status).where(tables.note.c.id == note_id))
+    assert status == NoteStatus.DRAFT.value
 
 
 @pytest.mark.asyncio

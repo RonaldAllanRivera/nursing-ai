@@ -764,3 +764,68 @@ async def test_shift_entries_show_the_newest_job(engine: AsyncEngine) -> None:
     entries = await repo.shift_entries(rough.encounter_id, rough.shift)
 
     assert [entry.job.id for entry in entries] == [retry.id]
+
+
+SECOND = timedelta(seconds=1)
+MINUTE = timedelta(seconds=60)
+
+
+async def _queued_at(engine: AsyncEngine, world: World, key: str = "key-1") -> UUID:
+    _, job = await PgNoteRepository(engine, CLOCK).add_rough_note(rough_note(world), key, HASH_A)
+    return job.id
+
+
+def _repo_at(engine: AsyncEngine, later: timedelta) -> PgNoteRepository:
+    return PgNoteRepository(engine, FixedClock(CLOCK.now() + later))
+
+
+@pytest.mark.asyncio
+async def test_a_queued_job_is_re_sent_once_a_minute(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    job_id = await _queued_at(engine, world)
+
+    assert await _repo_at(engine, 59 * SECOND).resend_due([job_id]) == []  # just sent
+    assert await _repo_at(engine, 61 * SECOND).resend_due([job_id]) == [job_id]
+    assert await _repo_at(engine, 62 * SECOND).resend_due([job_id]) == []  # sent a second ago
+    assert await _repo_at(engine, 120 * SECOND).resend_due([job_id]) == []  # 59 s after the send
+    assert await _repo_at(engine, 122 * SECOND).resend_due([job_id]) == [job_id]
+
+
+@pytest.mark.asyncio
+async def test_two_polls_at_once_re_send_a_stuck_job_once(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    job_id = await _queued_at(engine, world)
+    repo = _repo_at(engine, 90 * SECOND)
+
+    answers = await asyncio.gather(*(repo.resend_due([job_id]) for _ in range(6)))
+
+    assert sorted(len(a) for a in answers) == [0, 0, 0, 0, 0, 1]
+
+
+@pytest.mark.asyncio
+async def test_a_running_job_is_re_sent_only_after_its_lease_ran_out(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    job_id = await _queued_at(engine, world)
+    assert await PgNoteRepository(engine, CLOCK).claim_job(job_id) is not None
+
+    assert await _repo_at(engine, JOB_LEASE - SECOND).resend_due([job_id]) == []
+    assert await _repo_at(engine, JOB_LEASE + SECOND).resend_due([job_id]) == [job_id]
+    # The send is counted: the lease is still over, but the last send is a second old.
+    assert await _repo_at(engine, JOB_LEASE + 2 * SECOND).resend_due([job_id]) == []
+
+
+@pytest.mark.asyncio
+async def test_finished_jobs_and_other_ids_are_never_re_sent(engine: AsyncEngine) -> None:
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    rough = rough_note(world)
+    _, done = await repo.add_rough_note(rough, "key-done", HASH_A)
+    await repo.claim_job(done.id)
+    await repo.complete_job(done.id, draft_note(rough, world))
+    _, failed = await repo.add_rough_note(rough_note(world), "key-failed", HASH_A)
+    await repo.claim_job(failed.id)
+    await repo.fail_job(failed.id, JobFailure.PROVIDER_ERROR)
+    late = _repo_at(engine, 10 * MINUTE)
+
+    assert await late.resend_due([done.id, failed.id, uuid4()]) == []
+    assert await late.resend_due([]) == []

@@ -355,6 +355,8 @@ draft_job = Table(
     # A claim is a lease (SQS delivers at least once): each claim adds an attempt.
     Column("attempts", Integer, nullable=False, server_default=text("0")),
     _instant("claimed_at", nullable=True),
+    # When the job's message was last re-sent to the queue (None: only the first send, at creation).
+    _instant("sent_at", nullable=True),
     _values("status", JobStatus),
     _values("failure", JobFailure),
     CheckConstraint("(status = 'failed') = (failure IS NOT NULL)", name="failure_only_when_failed"),

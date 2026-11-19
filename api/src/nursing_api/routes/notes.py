@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Response
-from nursing_core.domain.errors import NoteLocked, StaleVersion
+from nursing_core.domain.errors import NoteLocked, NotFound, StaleVersion
 from nursing_core.domain.notes import Discard, Note, NoteStatus, RoughNote
 from nursing_core.domain.patient import PatientRecord
 from nursing_core.storage.signing import signed_record
@@ -67,10 +67,13 @@ def answer(response: Response, found: Found, note: Note) -> NoteOut:
 async def find_note(
     note_id: UUID, nurse: NurseDep, notes: NotesDep, patients: PatientsDep
 ) -> Found:
-    """The note, or 404: a note of another facility looks like no note at all (ids are opaque)."""
+    """The note, or 404: a note of another facility, or of the other side (a demo persona against
+    an invited person, whose notes share the demo facilities), looks like no note at all."""
     note = await notes.get_note(note_id)
     patient = await patients.get_patient_by_encounter(note.encounter_id)
     ensure_own_facility(nurse, patient)
+    if await notes.written_by_persona(note.rough_note_id) is not nurse.user.persona:
+        raise NotFound("no such note")
     return Found(note, await notes.get_rough_note(note.rough_note_id), patient)
 
 

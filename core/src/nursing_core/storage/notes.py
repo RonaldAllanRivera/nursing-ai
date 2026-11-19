@@ -46,6 +46,8 @@ _NOTE = tables.note
 # to have died (SQS delivers at least once) and can be claimed again, up to MAX_JOB_ATTEMPTS.
 JOB_LEASE = timedelta(seconds=150)
 MAX_JOB_ATTEMPTS = 3
+# A job's message is sent again at most this often (see `resend_due`).
+RESEND_AFTER = timedelta(seconds=60)
 
 # The daily draft cap counts the jobs created in this long.
 DAILY_WINDOW = timedelta(hours=24)
@@ -288,6 +290,40 @@ class PgNoteRepository:
             raise NotFound("no such job")
         return _job(row)
 
+    async def resend_due(self, job_ids: list[UUID]) -> list[UUID]:
+        """The jobs, among `job_ids`, whose message should be sent again, marked as sent now.
+
+        A job is due when it is `queued`, or `running` with its lease over, and its last send
+        (`sent_at`, else its creation) is older than `RESEND_AFTER`. One conditional UPDATE both
+        picks and marks, so two polls at once get a job between them only once; the caller then
+        enqueues the ids it got. A duplicate message is harmless (the claim lets one run win).
+        """
+        if not job_ids:
+            return []
+        now = self._clock.now()
+        last_sent = func.coalesce(_JOB.c.sent_at, _JOB.c.created_at)
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(_JOB)
+                .where(
+                    _JOB.c.id.in_(job_ids),
+                    last_sent < now - RESEND_AFTER,
+                    or_(
+                        _JOB.c.status == JobStatus.QUEUED.value,
+                        and_(
+                            _JOB.c.status == JobStatus.RUNNING.value,
+                            or_(
+                                _JOB.c.claimed_at.is_(None),
+                                _JOB.c.claimed_at < now - JOB_LEASE,
+                            ),
+                        ),
+                    ),
+                )
+                .values(sent_at=now)
+                .returning(_JOB.c.id)
+            )
+            return [row.id for row in result]
+
     async def claim_job(self, job_id: UUID) -> RoughNote | None:
         """Claims a queued job, or a running one whose lease ran out, and adds an attempt.
 
@@ -417,9 +453,11 @@ class PgNoteRepository:
         async with self._engine.begin() as conn:
             return [_rough_note(row) for row in await self._shift_rows(conn, encounter_id, shift)]
 
-    async def shift_entries(self, encounter_id: UUID, shift: ShiftRef) -> list[ShiftEntry]:
+    async def shift_entries(
+        self, encounter_id: UUID, shift: ShiftRef, *, persona: bool | None = None
+    ) -> list[ShiftEntry]:
         async with self._engine.begin() as conn:
-            rough_rows = await self._shift_rows(conn, encounter_id, shift)
+            rough_rows = await self._shift_rows(conn, encounter_id, shift, persona)
             ids = [row.id for row in rough_rows]
             # Oldest first, so the newest job of each rough note is the one that stays.
             jobs = {
@@ -447,17 +485,18 @@ class PgNoteRepository:
 
     @staticmethod
     async def _shift_rows(
-        conn: AsyncConnection, encounter_id: UUID, shift: ShiftRef
+        conn: AsyncConnection, encounter_id: UUID, shift: ShiftRef, persona: bool | None = None
     ) -> list[AnyRow]:
-        result = await conn.execute(
-            select(_ROUGH)
-            .where(
-                _ROUGH.c.encounter_id == encounter_id,
-                _ROUGH.c.shift_code == shift.code,
-                _ROUGH.c.shift_starts_at == shift.starts_at,
-            )
-            .order_by(_ROUGH.c.written_at, _ROUGH.c.id)
+        query = select(_ROUGH).where(
+            _ROUGH.c.encounter_id == encounter_id,
+            _ROUGH.c.shift_code == shift.code,
+            _ROUGH.c.shift_starts_at == shift.starts_at,
         )
+        if persona is not None:  # only the notes written by a persona (or by no persona)
+            query = query.join(tables.app_user, tables.app_user.c.id == _ROUGH.c.author_id).where(
+                tables.app_user.c.persona.is_(persona)
+            )
+        result = await conn.execute(query.order_by(_ROUGH.c.written_at, _ROUGH.c.id))
         return list(result.all())
 
     async def get_note(self, note_id: UUID) -> Note:

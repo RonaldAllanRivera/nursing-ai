@@ -4,10 +4,10 @@ from fastapi import APIRouter
 from nursing_core.demo import load_demo_cases
 from nursing_core.domain.patient import PatientSummary
 
-from nursing_api.deps import NotesDep, NurseDep, PatientsDep, ensure_own_facility
+from nursing_api.deps import NotesDep, NurseDep, PatientsDep, QueueDep, ensure_own_facility
 from nursing_api.problems import problems
 from nursing_api.routes import SIGNED_IN
-from nursing_api.routes.jobs import job_out
+from nursing_api.routes.jobs import job_out, resend_stuck
 from nursing_api.schemas import PatientDetail, ShiftNoteOut
 
 # Replay mode only knows the demo cases' rough notes, so a demo patient offers hers.
@@ -26,12 +26,15 @@ async def list_patients(nurse: NurseDep, patients: PatientsDep) -> list[PatientS
     "/{patient_id}", response_model=PatientDetail, responses=problems(401, 403, 404, 422, 423)
 )
 async def get_patient(
-    patient_id: UUID, nurse: NurseDep, patients: PatientsDep, notes: NotesDep
+    patient_id: UUID, nurse: NurseDep, patients: PatientsDep, notes: NotesDep, queue: QueueDep
 ) -> PatientDetail:
     """The patient and this shift's notes."""
     patient = await patients.get_patient(patient_id)
     ensure_own_facility(nurse, patient)
-    entries = await notes.shift_entries(patient.encounter_id, nurse.shift)
+    entries = await notes.shift_entries(
+        patient.encounter_id, nurse.shift, persona=nurse.user.persona
+    )
+    await resend_stuck(notes, queue, [entry.job for entry in entries])
     return PatientDetail(
         summary=patient.summary,
         shift=nurse.shift,

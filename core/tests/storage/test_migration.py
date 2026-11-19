@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 NOW = datetime(2026, 11, 15, 8, 0, tzinfo=UTC)
 HASH = "a" * 64
-LATEST = "0003"
+LATEST = "0004"
 
 
 def _id() -> uuid.UUID:
@@ -919,3 +919,33 @@ async def test_a_reset_row_needs_no_author(engine: AsyncEngine) -> None:
                 reset=True,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_0004_adds_a_nullable_sent_at_and_keeps_every_job(postgres_url: str) -> None:
+    # Additive: a job queued before the upgrade keeps its row and simply has no recorded send.
+    async with fresh_database(postgres_url, "template1") as url:
+        await upgrade(url, "0003")
+        engine = create_engine(url)
+        try:
+            ids = await _build_world(engine)
+            job = _job(ids, JobStatus.QUEUED)
+            async with engine.begin() as conn:
+                await conn.execute(insert(tables.draft_job).values(job))
+            await upgrade(url)
+            async with engine.connect() as conn:
+                head = (await conn.execute(text("SELECT version_num FROM alembic_version"))).one()
+                row = (await conn.execute(select(tables.draft_job))).one()
+                column = (
+                    await conn.execute(
+                        text(
+                            "SELECT is_nullable, column_default FROM information_schema.columns "
+                            "WHERE table_name = 'draft_job' AND column_name = 'sent_at'"
+                        )
+                    )
+                ).one()
+        finally:
+            await engine.dispose()
+    assert head[0] == LATEST
+    assert (row.id, row.status, row.sent_at) == (job["id"], JobStatus.QUEUED.value, None)
+    assert tuple(column) == ("YES", None)
