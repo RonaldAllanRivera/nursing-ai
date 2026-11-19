@@ -214,8 +214,15 @@ upload_web() {
   bucket="$(tf_output web_bucket_name)"
   distribution="$(tf_output distribution_id)"
   say "upload the web app"
-  aws_call s3 sync web/dist "s3://${bucket}" --delete --exclude index.html \
+  # Vite names every file under assets/ by its content, so a year (immutable) is safe there.
+  aws_call s3 sync web/dist/assets "s3://${bucket}/assets" --delete \
     --cache-control "public, max-age=31536000, immutable"
+  # The rest keeps its name from build to build (the fonts, their licence), so browsers and
+  # CloudFront check it again; the deploy invalidates only /index.html. MSW's worker serves the
+  # in-browser mock API only, so it is never uploaded. A file a filter excludes is never deleted.
+  aws_call s3 sync web/dist "s3://${bucket}" --delete --exclude index.html --exclude "assets/*" \
+    --exclude mockServiceWorker.js --cache-control "no-cache"
+  # Last, so a new index.html never names an asset that isn't in the bucket yet.
   aws_call s3 cp web/dist/index.html "s3://${bucket}/index.html" --cache-control "no-cache"
   aws_call cloudfront create-invalidation --distribution-id "$distribution" --paths /index.html >/dev/null
 }

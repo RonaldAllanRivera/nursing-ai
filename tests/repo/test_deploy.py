@@ -5,6 +5,8 @@ under those four names in a folder that is the whole of PATH (plus links to the 
 script needs). Each call is appended to a log as one JSON line.
 """
 
+import fnmatch
+import itertools
 import json
 import os
 import re
@@ -211,13 +213,14 @@ def label(call: Call) -> str | None:
     names = {
         ("lambda", "update-function-code"): "point ops function",
         ("lambda", "get-function"): "first-deploy check",
-        ("s3", "sync"): "s3 sync",
         ("s3", "cp"): "s3 cp index",
         ("cloudfront", "create-invalidation"): "invalidate",
         ("cloudwatch", "describe-alarms"): "check alarms",
     }
     if argv[:2] == ["lambda", "invoke"]:
         return f"invoke {json.loads(argv[argv.index('--payload') + 1])['task']}"
+    if argv[:2] == ["s3", "sync"]:
+        return f"s3 sync {argv[2]}"
     return names.get((argv[0], argv[1]))
 
 
@@ -235,7 +238,8 @@ NORMAL_DEMO = [
     "invoke seed-demo",
     "invoke smoke",
     "pnpm build",
-    "s3 sync",
+    "s3 sync web/dist/assets",
+    "s3 sync web/dist",
     "s3 cp index",
     "invalidate",
     "check alarms",
@@ -250,7 +254,8 @@ FIRST_DEMO = [
     "invoke seed-demo",
     "invoke smoke",
     "pnpm build",
-    "s3 sync",
+    "s3 sync web/dist/assets",
+    "s3 sync web/dist",
     "s3 cp index",
     "invalidate",
     "check alarms",
@@ -277,20 +282,89 @@ def test_deploy_runs_the_steps_in_order(sandbox: Path) -> None:
     assert "deploy: migrate" in printed
 
 
-def test_deploy_uploads_index_uncached_and_assets_immutable(sandbox: Path) -> None:
+# What `pnpm build` leaves in web/dist: Vite's output under assets/, named by content hash, and
+# web/public's files under the names they have in the repo.
+WEB_DIST = (
+    "index.html",
+    "assets/index-Bx3kT9aZ.js",
+    "assets/index-Cq1vR7mP.css",
+    "assets/StaffPage-D4hN2sLw.js",
+    "fonts/AtkinsonHyperlegibleNext-latin.woff2",
+    "fonts/AtkinsonHyperlegibleMono-latin.woff2",
+    "fonts/OFL.txt",
+    "mockServiceWorker.js",
+)
+A_YEAR = "public, max-age=31536000, immutable"
+WEB_BUCKET = "s3://nursing-ai-demo-web"
+
+
+def sync_takes(argv: list[str], path: str) -> bool:
+    """Whether `aws s3 sync` uploads `path`, applying its filters the way the AWS CLI does.
+
+    The CLI joins each `--exclude`/`--include` pattern to the source folder and matches it with
+    fnmatch, whose `*` also crosses `/`; the last pattern that matches decides.
+    """
+    taken = True
+    for flag, pattern in itertools.pairwise(argv):
+        if flag in ("--exclude", "--include") and fnmatch.fnmatchcase(path, f"{argv[2]}/{pattern}"):
+            taken = flag == "--include"
+    return taken
+
+
+def web_uploads(run: Run) -> dict[str, str]:
+    """The bucket key and Cache-Control of each web/dist file the deploy uploads (the last wins)."""
+    uploads: dict[str, str] = {}
+    for argv in run.aws:
+        if argv[:2] not in (["s3", "sync"], ["s3", "cp"]):
+            continue
+        source, target = argv[2], argv[3]
+        cache_control = argv[argv.index("--cache-control") + 1]
+        if argv[1] == "cp":
+            uploads[target.removeprefix(f"{WEB_BUCKET}/")] = cache_control
+            continue
+        for name in WEB_DIST:
+            path = f"web/dist/{name}"
+            if path.startswith(f"{source}/") and sync_takes(argv, path):
+                key = f"{target}/{path.removeprefix(f'{source}/')}"
+                uploads[key.removeprefix(f"{WEB_BUCKET}/")] = cache_control
+    return uploads
+
+
+def test_deploy_caches_only_the_hashed_assets_for_a_year(sandbox: Path) -> None:
+    # A file whose name stays the same from build to build (index.html, the fonts, their licence)
+    # must be checked again after a deploy: a year's `immutable` would pin the old bytes in
+    # browsers and in CloudFront, and the deploy invalidates only /index.html.
     run = run_deploy(sandbox, "demo")
     assert run.result.returncode == 0, run.result.stderr
-    sync = next(a for a in run.aws if a[:2] == ["s3", "sync"])
-    assert sync[2:4] == ["web/dist", "s3://nursing-ai-demo-web"]
-    assert "--delete" in sync
-    assert sync[sync.index("--exclude") + 1] == "index.html"
-    assert sync[sync.index("--cache-control") + 1] == "public, max-age=31536000, immutable"
-    copy = next(a for a in run.aws if a[:2] == ["s3", "cp"])
-    assert copy[2:4] == ["web/dist/index.html", "s3://nursing-ai-demo-web/index.html"]
-    assert copy[copy.index("--cache-control") + 1] == "no-cache"
+    assert web_uploads(run) == {
+        "index.html": "no-cache",
+        "assets/index-Bx3kT9aZ.js": A_YEAR,
+        "assets/index-Cq1vR7mP.css": A_YEAR,
+        "assets/StaffPage-D4hN2sLw.js": A_YEAR,
+        "fonts/AtkinsonHyperlegibleNext-latin.woff2": "no-cache",
+        "fonts/AtkinsonHyperlegibleMono-latin.woff2": "no-cache",
+        "fonts/OFL.txt": "no-cache",
+    }
+    syncs = [a for a in run.aws if a[:2] == ["s3", "sync"]]
+    assert syncs, "the web app is never synced"
+    assert all("--delete" in a for a in syncs)
     invalidation = next(a for a in run.aws if a[:2] == ["cloudfront", "create-invalidation"])
     assert invalidation[invalidation.index("--distribution-id") + 1] == "E123EXAMPLE"
     assert invalidation[invalidation.index("--paths") + 1] == "/index.html"
+
+
+def test_deploy_never_uploads_the_mock_service_worker(sandbox: Path) -> None:
+    # MSW's worker serves the in-browser mock API only; the live site has no use for it.
+    run = run_deploy(sandbox, "demo")
+    assert run.result.returncode == 0, run.result.stderr
+    assert "mockServiceWorker.js" not in web_uploads(run)
+
+
+def test_index_html_is_uploaded_after_every_asset(sandbox: Path) -> None:
+    # A new index.html names the new build's assets; they must be in the bucket first.
+    run = run_deploy(sandbox, "demo")
+    order = [s for s in steps(run) if s.startswith("s3 ")]
+    assert order[-1] == "s3 cp index"
 
 
 def test_first_deploy_applies_before_it_migrates(sandbox: Path) -> None:
