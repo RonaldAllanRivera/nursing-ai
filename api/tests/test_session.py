@@ -6,15 +6,19 @@ import json
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from fastapi import FastAPI
+from nursing_api.auth.pin_check import SessionEnded, prove_pin
+from nursing_api.deps import SignedIn
 from nursing_api.logging import ALLOWED_KEYS
+from nursing_api.problems import NotSignedIn
 from nursing_core.auth.pins import MAX_PIN_TRIES, hash_pin, verify_pin
 from nursing_core.demo import DEMO_PERSONAS, DEMO_PIN
-from nursing_core.domain.users import Role
+from nursing_core.domain.users import Role, SessionGate
 from nursing_core.storage import tables
 from sqlalchemy import insert, select, update
 
@@ -649,3 +653,48 @@ async def test_persona_session_starts_at_enter_pin(app: FastAPI, client: httpx.A
     assert verified is None
     locked = await client.get("/api/v1/patients")
     assert (locked.status_code, locked.json()["code"]) == (423, "enter_pin")
+
+
+async def persona_proof_after_the_token_was_swapped(
+    app: FastAPI, client: httpx.AsyncClient, pin: str, *, swapped: bool = True
+) -> None:
+    """Runs `prove_pin` with the session as read before another proof swapped its token (with
+    `swapped`, the old row is gone, as after the swap), and raises what it raises."""
+    await sign_in(client, PH_STAFF)
+    token = client.cookies["sl_session"]
+    now = app.state.clock.now()
+    stored = await app.state.sessions.get(token, now)
+    assert stored is not None
+    signed_in = SignedIn(
+        user=await app.state.users.get_user(PH_STAFF),
+        session=stored,
+        gate=SessionGate.OPEN,
+        token=token,
+    )
+    if swapped:
+        await app.state.sessions.delete(token)
+    await prove_pin(
+        signed_in, pin, users=app.state.users, sessions=app.state.sessions, clock=app.state.clock
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_proof_that_lost_the_race_for_a_persona_session_is_a_plain_401(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    for pin in (WRONG, DEMO_PIN):  # the claim finds no row
+        with pytest.raises(NotSignedIn) as caught:
+            await persona_proof_after_the_token_was_swapped(app, client, pin)
+        assert not isinstance(caught.value, SessionEnded)  # SessionEnded would clear the cookie
+
+
+@pytest.mark.asyncio
+async def test_a_right_pin_that_lost_the_race_to_the_fifth_wrong_try_is_a_plain_401(
+    app: FastAPI, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        app.state.sessions, "clear_session_pin_failures", AsyncMock(return_value=False)
+    )
+    with pytest.raises(NotSignedIn) as caught:
+        await persona_proof_after_the_token_was_swapped(app, client, DEMO_PIN, swapped=False)
+    assert not isinstance(caught.value, SessionEnded)

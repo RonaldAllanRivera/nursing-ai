@@ -53,7 +53,7 @@ ROUTES: list[tuple[str, str, Any, dict[str, str], int, set[int]]] = [
     ("GET", "/api/v1/session", None, {}, 200, {401}),
     ("DELETE", "/api/v1/session", None, {}, 204, {403}),
     ("POST", "/api/v1/session/pin", PIN, {}, 200, {401, 403, 409, 422}),
-    ("POST", "/api/v1/session/unlock", PIN, {}, 200, {401, 403, 409, 422, 423}),
+    ("POST", "/api/v1/session/unlock", PIN, {}, 200, {401, 403, 422, 423}),
     (
         "PUT",
         "/api/v1/session/shift",

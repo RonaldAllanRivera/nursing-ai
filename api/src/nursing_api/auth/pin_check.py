@@ -22,8 +22,8 @@ log = structlog.get_logger("nursing_api.auth.pin_check")
 
 
 class SessionEnded(NotSignedIn):
-    """A demo persona's fifth wrong PIN (or a session already out of tries): the session is
-    gone. The route answers 401 and clears the cookie (`session_ended_response`)."""
+    """A demo persona's fifth wrong PIN: the session is gone. The route answers 401 and clears
+    the cookie (`session_ended_response`)."""
 
 
 def session_ended_response() -> Response:
@@ -57,8 +57,10 @@ async def prove_pin(
         left = await users.claim_pin_try(user.id)
     if left is None:
         if user.persona:
+            # The session is already gone or swapped for a fresh one by a proof that won the race:
+            # a plain 401, which must not clear the fresh cookie that proof just set.
             await sessions.delete(signed_in.token)
-            raise SessionEnded
+            raise NotSignedIn
         # The tries are used up: make sure the lock is real (a request that claimed the fifth
         # try may have died before it locked), and log it only if this call locked it.
         if await users.lock_pin(user.id, clock.now()):
@@ -73,8 +75,8 @@ async def prove_pin(
         else:
             cleared = await users.clear_pin_failures(user.id)
         if not cleared:  # the fifth wrong guess got there first
-            if user.persona:
-                raise SessionEnded
+            if user.persona:  # the session ended or was swapped meanwhile: a plain 401
+                raise NotSignedIn
             raise SessionGated(SessionGate.PIN_LOCKED)
         return
 

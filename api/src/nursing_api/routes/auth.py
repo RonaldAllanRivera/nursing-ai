@@ -8,7 +8,7 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import RedirectResponse
-from nursing_core.domain.errors import IdentityMismatch, NotFound
+from nursing_core.domain.errors import DatabaseWaking, IdentityMismatch, NotFound
 from nursing_core.domain.users import UserStatus
 from nursing_core.storage.repositories import (
     PgFacilityRepository,
@@ -38,6 +38,7 @@ Reason = Literal[
     "no_access",
     "revoked",
     "identity_mismatch",
+    "database_waking",
 ]
 
 
@@ -190,7 +191,12 @@ async def google_callback(
         return _refuse(settings, "expired", "token_invalid", error_class=type(error).__name__)
     if not identity.email_verified:
         return _refuse(settings, "no_access", "email_unverified")
-    return await _sign_in(identity, settings, now, users, sessions, facilities)
+    try:
+        return await _sign_in(identity, settings, now, users, sessions, facilities)
+    except DatabaseWaking:
+        # This is a page navigation, so a raw 503 would be shown as JSON. Google's code is spent;
+        # by her second click the database is awake.
+        return _refuse(settings, "expired", "database_waking")
 
 
 async def _sign_in(

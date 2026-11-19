@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .fake_google import CLIENT_ID, CLIENT_SECRET, SITE_URL, START, FakeGoogle
+from .fake_google import CALLBACK, CLIENT_ID, CLIENT_SECRET, SITE_URL, START, FakeGoogle
 from .helpers import PH_STAFF, MutableClock, client_for, running_app
 
 OPTIONS = "/api/v1/sign-in-options"
@@ -47,6 +47,12 @@ async def test_signed_out_routes_never_touch_the_database(free_port: int, app_en
             options = await client.get(OPTIONS)
             personas = await client.get(PERSONAS)
             started = await client.get(START)
+            # What a crawler or the sign-in page's loader calls: no cookie on either.
+            signed_out = await client.get("/api/v1/session")
+            callback = await client.get(CALLBACK)
+    assert signed_out.status_code == 401
+    assert callback.status_code == 302
+    assert callback.headers["location"] == f"{SITE_URL}/sign-in?error=expired"
     assert options.status_code == 200
     assert options.json()["google"] is True
     assert personas.status_code == (404 if app_env == "prod" else 200)

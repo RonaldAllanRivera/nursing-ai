@@ -235,7 +235,7 @@ async def set_pin(
 @router.post(
     "/session/unlock",
     response_model=SessionOut,
-    responses=problems(401, 403, 409, 422, 423),
+    responses=problems(401, 403, 422, 423),
     dependencies=[*SIGNED_IN, *CSRF],
 )
 async def unlock(

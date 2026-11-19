@@ -568,3 +568,28 @@ async def test_delete_for_user_ends_every_session_of_that_user(engine: AsyncEngi
 
     assert [await repo.get(t.token, NOW) for t in (one, two)] == [None, None]
     assert await repo.get(kept.token, NOW) is not None
+
+
+@pytest.mark.asyncio
+async def test_creating_a_session_deletes_that_users_expired_sessions(
+    engine: AsyncEngine,
+) -> None:
+    world = await build_world(engine)
+    repo = PgSessionRepository(engine)
+    shift = world.case.rough_note.shift
+    old = (await repo.create(world.nurse_id, shift, NOW, 12)).token
+    other = (await repo.create(world.admin_id, None, NOW, 12)).token
+    later = NOW + timedelta(hours=13)  # both are past their end now
+    live_before = (await repo.create(world.nurse_id, shift, later - timedelta(hours=1), 12)).token
+
+    fresh = (await repo.create(world.nurse_id, shift, later, 12)).token
+
+    async with engine.connect() as conn:
+        rows = (await conn.execute(select(tables.session.c.token_hash))).scalars().all()
+    hashed = {hashlib.sha256(t.encode()).hexdigest() for t in (old, other, live_before, fresh)}
+    kept = set(rows)
+    assert kept <= hashed
+    assert hashlib.sha256(old.encode()).hexdigest() not in kept  # hers, expired: gone
+    assert hashlib.sha256(other.encode()).hexdigest() in kept  # another user's: left alone
+    assert hashlib.sha256(live_before.encode()).hexdigest() in kept  # hers, still alive
+    assert hashlib.sha256(fresh.encode()).hexdigest() in kept

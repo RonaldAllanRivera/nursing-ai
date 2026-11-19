@@ -359,6 +359,11 @@ class PgSessionRepository:
         """Starts a session that lasts `max_hours` (its facility's setting; 12 for the admin)."""
         new = NewSession(token=secrets.token_urlsafe(32), csrf_token=secrets.token_urlsafe(32))
         async with self._engine.begin() as conn:
+            # Nothing else removes a session that simply ran out: clear this user's own here, so
+            # a persona's table (one row per sign-in) holds only sessions that are still alive.
+            await conn.execute(
+                delete(_SESSION).where(_SESSION.c.user_id == user_id, _SESSION.c.expires_at <= now)
+            )
             await conn.execute(
                 insert(_SESSION).values(
                     token_hash=_hash(new.token),

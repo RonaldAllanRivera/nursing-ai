@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from joserfc.errors import JoseError
 from nursing_api.auth.google import AuthlibGoogleOidc
 from nursing_api.logging import ALLOWED_KEYS
+from nursing_core.domain.errors import DatabaseWaking
 from nursing_core.domain.users import Role
 from nursing_core.storage import tables
 from sqlalchemy import func, select, update
@@ -268,6 +270,27 @@ async def test_google_saying_no_is_cancelled_and_logs_nothing(
 
     assert_refused(response, "cancelled")
     assert events(capfd.readouterr().out) == []
+
+
+@pytest.mark.asyncio
+async def test_callback_on_a_waking_database_sends_her_back_to_sign_in(
+    gapp: FastAPI,
+    gclient: httpx.AsyncClient,
+    fake: FakeGoogle,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        gapp.state.users, "get_user_by_email", AsyncMock(side_effect=DatabaseWaking("waking"))
+    )
+    capfd.readouterr()
+
+    response = await google_sign_in(gclient, fake, email="pat.nurse@example.com")
+
+    assert_refused(response, "expired")  # a redirect, never the raw 503 page
+    logged = events(capfd.readouterr().out)
+    assert [e["reason"] for e in logged] == ["database_waking"]
+    assert "pat.nurse" not in json.dumps(logged)
 
 
 @pytest.mark.asyncio
