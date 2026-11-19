@@ -7,8 +7,10 @@ alert_email = "you@example.com"
 # Local runs only: the profile to sign in with. CI leaves it unset.
 aws_profile = "nursing-ai"
 
-ai_mode            = "mock"
-ai_monthly_cap_usd = 10
+# Replay (the default) answers from the recorded drafts: no live AI, $0. The cap only matters
+# once ai_mode is live; keep it at 5 or less.
+ai_mode            = "replay"
+ai_monthly_cap_usd = 5
 
 # Optional custom domain: a subdomain of your own domain, with DNS kept elsewhere.
 # Do not write the real name in a file; export TF_VAR_domain_name instead. Two

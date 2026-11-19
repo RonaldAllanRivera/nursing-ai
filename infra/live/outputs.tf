@@ -59,3 +59,9 @@ output "alarm_names" {
   description = "Names of the alarms, keyed api_5xx, dead_jobs and ai_spend."
   value       = module.ops.alarm_names
 }
+
+output "image_uri" {
+  description = "The image the functions run. A pull request's plan reads it so that its plan keeps the live image. Sensitive because the registry host carries the account id."
+  value       = var.image_uri
+  sensitive   = true
+}

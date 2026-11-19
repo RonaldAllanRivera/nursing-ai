@@ -45,9 +45,9 @@ variable "alert_email" {
 }
 
 variable "ai_mode" {
-  description = "How the app produces AI output: mock, replay or live."
+  description = "How the app produces AI output: mock, replay or live. Replay by default: the demo answers from the recorded drafts and never calls the live model until its owner sets live."
   type        = string
-  default     = "mock"
+  default     = "replay"
 
   validation {
     condition     = contains(["mock", "replay", "live"], var.ai_mode)

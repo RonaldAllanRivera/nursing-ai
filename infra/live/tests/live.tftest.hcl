@@ -456,6 +456,28 @@ run "image_uri_is_sensitive" {
   }
 }
 
+run "image_uri_output_is_the_deployed_image" {
+  command = plan
+
+  # A pull request's plan reads it back so that its plan keeps the image that
+  # is live; it carries the account id, and the plan's log is public.
+  assert {
+    condition     = output.image_uri == var.image_uri && issensitive(output.image_uri)
+    error_message = "image_uri must be an output, sensitive, equal to the image applied"
+  }
+}
+
+run "the_demo_answers_from_the_recorded_drafts" {
+  command = plan
+
+  # No live AI on the demo until the owner says so: the default is replay, so
+  # neither a deploy nor a pull request's plan has to remember to set it.
+  assert {
+    condition     = var.ai_mode == "replay"
+    error_message = "ai_mode must default to replay"
+  }
+}
+
 run "environment_must_be_demo_or_prod" {
   command = plan
 

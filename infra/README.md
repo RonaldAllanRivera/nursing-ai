@@ -147,10 +147,30 @@ That is only safe if you set up two things in GitHub by hand:
 - The `production` environment needs a required reviewer.
 - The `production` environment needs a deployment-branch rule that allows `main` only.
 
+Then the values the two workflows read. Every one that holds the account ID or an email is a
+secret, because Actions logs of a public repository are public:
+
+| Where | Name | Value |
+|---|---|---|
+| Repository secret | `STATE_BUCKET` | the `state_bucket_name` output of `bootstrap` |
+| Repository secret | `ALERT_EMAIL` | the address for the alarm emails (`alert_email`) |
+| Repository secret | `AWS_PLAN_ROLE_ARN` | the `plan_role_arn` output of `bootstrap` |
+| `production` environment secret | `AWS_DEPLOY_ROLE_ARN` | the `deploy_role_arn` output of `bootstrap` |
+| Repository variable | `DOMAIN_NAME` | the custom domain, once you use one (`domain_name`) |
+| Repository variable | `DOMAIN_VALIDATED` | `true` once its two DNS records are in place |
+| Repository variable | `DEPLOY_ENABLED` | `true` turns the deploy workflow on |
+| Repository variable | `AWS_PLAN_ENABLED` | `true` turns the pull-request plan on |
+
+Set `DEPLOY_ENABLED` last, after the reviewer and the branch rule, and only once the first deploy
+from your PC has worked. Set `AWS_PLAN_ENABLED` after that deploy too: the plan reads the
+`image_uri` output, which the first deploy writes.
+
 ## How CI applies `live`
 
-- **Pull requests** assume the read-only `plan` role. The workflow must use the `pull_request`
-  trigger, never `pull_request_target`, and run `terraform plan -refresh=false`. A pull request's
+- **Pull requests** assume the read-only `plan` role in `infra.yml`'s `plan` job, after the
+  `check` job passes, for pull requests from this repository only (not forks, not Dependabot). The
+  job uses the `pull_request` trigger, never `pull_request_target`, runs `terraform plan
+  -refresh=false`, and keeps the live image by reading the `image_uri` output. A pull request's
   plan runs that pull request's own code. So the plan role is denied SecureString decryption, S3
   objects outside the state bucket, log events, queue messages, RDS log downloads and Secrets
   Manager values. The AWS provider decrypts every SSM parameter it refreshes, so a refreshing plan
@@ -162,19 +182,26 @@ That is only safe if you set up two things in GitHub by hand:
   deploy is `scripts/deploy.sh` (see "Deploying"). It builds and pushes the image, migrates, applies
   `live`, seeds, smoke-tests, uploads the web app and checks the alarms. Do not run a bare
   `terraform apply` against a real environment: it would skip the migration, the smoke check and
-  the guards, and without an `environment` setting it would apply the demo stack. No workflow runs
-  the script yet. When one does, it runs in the `production` environment after its reviewer
-  approves.
+  the guards, and without an `environment` setting it would apply the demo stack. `deploy.yml`
+  runs the script for `demo` once CI has passed on a push to `main`, in the `production`
+  environment, after its reviewer approves. It deploys the commit CI checked.
 - `image_uri` has no default. Image tags are immutable, so every deploy uses a new tag.
 - **Post-deploy IPv6 check.** The deploy runs the ops function's `smoke` task after each apply (see
   "The ops function and the smoke check").
 
 ## Deploying
 
-`scripts/deploy.sh demo|prod` is the one command that deploys an environment. Run it from the
-owner's PC with `DEPLOY_APPROVED=yes scripts/deploy.sh demo`. It is written so that a CI job in the
-`production` environment can run the same line once its reviewer approves; no workflow calls it yet
-(`make deploy` and the deploy workflow are not written).
+`scripts/deploy.sh demo|prod` is the one command that deploys an environment, and it has two
+callers:
+
+- **`make deploy`, from the owner's PC.** It refuses a tree with uncommitted or untracked files
+  (the image is tagged with the last commit) and any branch but `main`, asks you to type the
+  environment's name, then runs `DEPLOY_APPROVED=yes scripts/deploy.sh <name>` with
+  `AWS_PROFILE=nursing-ai` (or the profile your shell exports) and `AWS_REGION=ap-southeast-2`.
+  Sign in first with `aws login --profile nursing-ai`. `STATE_BUCKET` comes from your shell or
+  the git-ignored `.env`.
+- **`.github/workflows/deploy.yml`, from GitHub,** for `demo`, once `DEPLOY_ENABLED` is on (see
+  "GitHub settings Terraform does not make").
 
 It needs:
 
@@ -201,9 +228,10 @@ In order, it:
    the migration after it. The first apply is slow, because the functions wait for CloudFront.
 4. In `demo` only, runs `seed-demo`.
 5. Runs `smoke`. Any task whose answer is not `ok` stops the deploy.
-6. Builds the web app and uploads it to S3. Every file except `index.html` gets a one-year
-   `immutable` cache header (this includes the unhashed `fonts/` and `mockServiceWorker.js`).
-   `index.html` gets `no-cache`, so a browser asks again before using it. Then it invalidates
+6. Builds the web app and uploads it to S3. Vite's content-hashed `assets/` get a one-year
+   `immutable` cache header; every other file (the fonts and their licence) gets `no-cache`, and
+   `mockServiceWorker.js` (the mock API, for local work only) is never uploaded. `index.html` goes
+   last, with `no-cache`, so a browser asks again before using it. Then it invalidates
    `/index.html` in CloudFront.
 7. Checks the alarms: one in `ALARM`, or one watching the wrong HTTP API or queue, fails the
    deploy. One still in `INSUFFICIENT_DATA` (new alarms start there) prints a warning with its name.
