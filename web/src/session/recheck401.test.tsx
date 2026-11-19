@@ -98,9 +98,9 @@ describe("a 401 is checked once before it signs anyone out", () => {
     );
     await userEvent.click(await screen.findByRole("link", { name: /Demo patient A/ }));
     await screen.findByRole("heading", { name: "Sign in" }, { timeout: 4000 });
-    // One check per 401: each refused request is followed by at most one session read (an aborted one by none).
+    // Two checks per 401, a second apart: each refused request is followed by at most two session reads.
     expect(sessionReads).toBeGreaterThan(0);
-    expect(sessionReads).toBeLessThanOrEqual(patientReads);
+    expect(sessionReads).toBeLessThanOrEqual(2 * patientReads);
     expect(patientReads).toBeGreaterThan(0);
   });
 

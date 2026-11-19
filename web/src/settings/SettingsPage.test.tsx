@@ -504,7 +504,10 @@ describe("saving with your own PIN", () => {
       await screen.findByText(new RegExp(`^Wrong PIN\\. ${String(4 - i)} tr`));
     }
     await userEvent.type(screen.getByLabelText("Your PIN"), "999999{Enter}");
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    // A 401 is checked twice, a second apart, before it signs her out.
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }, { timeout: 4000 }),
+    ).toBeVisible();
   });
 });
 

@@ -3,13 +3,18 @@ import type { Session } from "../session/session";
 import { csrfHeaders } from "./csrf";
 import { SignInRefreshedError } from "./errors";
 import { noteRequest } from "./requestClock";
+import { trackSlowRequest } from "./slowRequests";
 import type { components, paths } from "./schema";
 
 /** A facility's settings: a settings save's body without the PIN that proves who saved. */
 export type FacilitySettings = Omit<components["schemas"]["FacilityUpdateIn"], "pin">;
 
-/** A request that has not answered after this long is aborted. */
-export const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * A request that has not answered after this long is aborted. It outlasts the live API's worst case
+ * (database connect 20 s, the API function 29 s, the HTTP API cuts at 30 s), so an answer the server
+ * is still producing, like a new cookie after a PIN proof, is never thrown away.
+ */
+export const REQUEST_TIMEOUT_MS = 35_000;
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 type Init =
@@ -66,12 +71,27 @@ const carriesPin = (name: Method, url: string, init: Init) =>
 
 type Answer = { response: Response; data?: unknown };
 
+/** How long to wait before the second session re-read after a 401 (see `checkedBefore401Counts`). */
+const SECOND_LOOK_MS = 1_000;
+
+const pause = (ms: number, signal?: AbortSignal | null) =>
+  new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+
 /** The PIN proofs that have not answered yet. A 401 that may be the old cookie waits for these. */
 const pinProofsOut = new Set<Promise<Answer>>();
 
 /** One request, with the timeout and the caller's abort. The CSRF header is read now, so a retry sends the current one. */
 async function once(name: Method, url: string, init: Init): Promise<Answer> {
   noteRequest(name, url);
+  const settled = trackSlowRequest();
   // One controller per request. The timeout always applies; the caller's abort (TanStack
   // Query passes one to every queryFn) is forwarded into it. No AbortSignal.any: Safari 17.4+.
   const controller = new AbortController();
@@ -98,6 +118,7 @@ async function once(name: Method, url: string, init: Init): Promise<Answer> {
     // A timed-out or aborted one may have been handled too. Over-counting only locks later.
     noteRequest(name, url);
     clearTimeout(timer);
+    settled();
     caller?.removeEventListener("abort", forward);
   }
 }
@@ -105,7 +126,9 @@ async function once(name: Method, url: string, init: Init): Promise<Answer> {
 /**
  * A 401 may only mean the request left with the cookie that a PIN proof has just swapped. So a 401
  * is checked once before it counts: wait for any PIN proof in flight, then ask who is signed in.
- * - The re-read is a 401 too: nobody is signed in, the 401 stands and the caller signs her out.
+ * - The re-read is a 401 too: wait one second and read once more (another tab's unlock may have
+ *   swapped the cookie just then). A second 401: nobody is signed in, the 401 stands and the
+ *   caller signs her out.
  * - A request that carries a PIN never goes out twice, whatever the re-read answered: it fails
  *   with `SignInRefreshedError` and the person types the PIN again.
  * - Any other request, when the re-read fails some other way (a 5xx, a waking database, a limit):
@@ -125,9 +148,16 @@ async function checkedBefore401Counts(
 ) {
   await Promise.allSettled([...pinProofsOut]);
   const signal = init?.signal ? { signal: init.signal } : undefined;
-  const reread = await once("GET", SESSION_URL, signal);
+  let reread = await once("GET", SESSION_URL, signal);
   if (name === "GET" && url === SESSION_URL) return reread;
-  if (reread.response.status === 401) return first;
+  if (reread.response.status === 401) {
+    // Two tabs: this re-read may have left with the cookie the other tab's unlock had just
+    // rotated. One more look a second later; only a second 401 means nobody is signed in.
+    await pause(SECOND_LOOK_MS, init?.signal);
+    if (init?.signal?.aborted) return first;
+    reread = await once("GET", SESSION_URL, signal);
+    if (reread.response.status === 401) return first;
+  }
   const carries = carriesPin(name, url, init);
   if (!reread.response.ok) {
     if (carries) throw new SignInRefreshedError();

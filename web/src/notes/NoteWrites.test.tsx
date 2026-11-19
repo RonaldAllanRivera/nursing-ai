@@ -585,7 +585,10 @@ describe("signing with your own PIN", () => {
       await within(dialog).findByText(new RegExp(`^Wrong PIN\\. ${String(4 - i)} tr`));
     }
     await signWithPin(dialog, "999999");
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    // A 401 is checked twice, a second apart, before it signs her out.
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }, { timeout: 4000 }),
+    ).toBeVisible();
     expect(screen.getByText(DEMO_ENDED)).toBeVisible();
   });
 });
