@@ -81,7 +81,7 @@ deploy in a braked month can still run `smoke` and say what is wrong.
 | `live/` | Everything the app runs on. CI applies it. It wires the modules below together. |
 | `modules/network/` | VPC, two private dual-stack subnets, the IPv6 egress-only gateway, security groups. |
 | `modules/aurora/` | The Aurora PostgreSQL cluster and the `database-url` parameter. |
-| `modules/registry/` | The ECR image repository (keeps the newest 3 images). |
+| `modules/registry/` | The ECR image repository (keeps the newest 10 images). |
 | `modules/compute/` | The API, worker and ops Lambda functions, the HTTP API, the job queue and its dead-letter queue. |
 | `modules/web/` | The S3 bucket and CloudFront distribution for the web app. |
 | `modules/ops/` | The four log groups (api, worker, ops and the HTTP API's access log), the three secret parameters, the `bootstrap-admin-email` and `site-url` parameters, the alarm topic and three alarms. |
@@ -170,7 +170,7 @@ from your PC has worked. Set `AWS_PLAN_ENABLED` after that deploy too: the plan 
 - **Pull requests** assume the read-only `plan` role in `infra.yml`'s `plan` job, after the
   `check` job passes, for pull requests from this repository only (not forks, not Dependabot). The
   job uses the `pull_request` trigger, never `pull_request_target`, runs `terraform plan
-  -refresh=false`, and keeps the live image by reading the `image_uri` output. A pull request's
+  -refresh=false -lock=false` (it writes nothing, so it never holds the state lock a deploy needs), and keeps the live image by reading the `image_uri` output. A pull request's
   plan runs that pull request's own code. So the plan role is denied SecureString decryption, S3
   objects outside the state bucket, log events, queue messages, RDS log downloads and Secrets
   Manager values. The AWS provider decrypts every SSM parameter it refreshes, so a refreshing plan
@@ -211,29 +211,43 @@ It needs:
   role the OIDC step assumed.
 - Every Terraform variable but `image_uri`, as `TF_VAR_*` variables (for example
   `TF_VAR_alert_email` and `TF_VAR_domain_name`) or in the git-ignored `infra/live/terraform.tfvars`.
-  The script sets `TF_VAR_environment` itself, and refuses a tfvars file that names another
-  environment. A value in `terraform.tfvars` beats the same `TF_VAR_*` variable, so an uncommented
+  The script sets `TF_VAR_environment` itself, passes `-var environment=<name>` to the apply, and
+  refuses a tfvars file that names another environment. A value in `terraform.tfvars` beats the same `TF_VAR_*` variable, so an uncommented
   `domain_validated` or `aws_profile` in that file wins over what you export.
 - `docker`, `terraform`, `pnpm`, `python3`, `git` and the AWS CLI.
 
+**One source of truth for the settings.** Once CD deploys, every non-default value lives in
+`deploy.yml`'s `env` or in the variable's default (in a reviewed pull request), never only in the
+git-ignored `terraform.tfvars`. CI cannot see that file, so its next deploy would put the value back.
+The dangerous one is `database_password_version`: lowering it rotates the password and leaves warm
+functions with a stale URL. The script refuses to run when the tfvars file sets it. Other values set
+only in tfvars (such as `ai_monthly_cap_usd`) are quietly reverted by the next CI deploy, so move
+them into the default too.
+
 In order, it:
 
-1. Runs `terraform init`, and decides whether this is the first deploy (the state has no ops
+1. Builds the web app, before anything changes, so a broken build stops the deploy early. Every
+   `AWS_*` variable is unset for the build, so build-time code from an npm dependency never sees the
+   sign-in. (`make deploy` does not run `pnpm install`: after a lane merge, reinstall `web/node_modules`
+   first.)
+2. Runs `terraform init`, and decides whether this is the first deploy (the state has no ops
    function and Lambda says it does not exist). A state that belongs to another environment is
-   refused before anything is built.
-2. Builds the image once and pushes it to the registry. The tag is the 12-character git commit plus
+   refused before anything is built. A state that cannot be listed stops the deploy, and so does a
+   live ops function whose state lists nothing (the wrong state bucket).
+3. Builds the image once and pushes it to the registry. The tag is the 12-character git commit plus
    the UTC time, because tags are immutable.
-3. Points the ops function at the new image, runs `migrate`, then runs `terraform apply` with that
-   image. On the **first deploy** the ops function does not exist yet, so the apply comes first and
+4. Points the ops function at the new image, runs `migrate`, then runs `terraform apply` with that
+   image (it waits up to 5 minutes for the state lock). On the **first deploy** the ops function does not exist yet, so the apply comes first and
    the migration after it. The first apply is slow, because the functions wait for CloudFront.
-4. In `demo` only, runs `seed-demo`.
-5. Runs `smoke`. Any task whose answer is not `ok` stops the deploy.
-6. Builds the web app and uploads it to S3. Vite's content-hashed `assets/` get a one-year
-   `immutable` cache header; every other file (the fonts and their licence) gets `no-cache`, and
+5. In `demo` only, runs `seed-demo`.
+6. Runs `smoke`. Any task whose answer is not `ok` stops the deploy.
+7. Uploads the web app to S3. Vite's content-hashed `assets/` get a one-year
+   `immutable` cache header and are never deleted, so a tab still on the old build can load its
+   lazy routes (a few KB of old files stay); every other file (the fonts and their licence) gets `no-cache`, and
    `mockServiceWorker.js` (the mock API, for local work only) is never uploaded. `index.html` goes
    last, with `no-cache`, so a browser asks again before using it. Then it invalidates
    `/index.html` in CloudFront.
-7. Checks the alarms: one in `ALARM`, or one watching the wrong HTTP API or queue, fails the
+8. Checks the alarms: one in `ALARM`, or one watching the wrong HTTP API or queue, fails the
    deploy. One still in `INSUFFICIENT_DATA` (new alarms start there) prints a warning with its name.
 
 If a first deploy's apply fails after it made the ops function but before the database can be
@@ -257,6 +271,19 @@ CI logs of this public repository are public, so:
 - Once a custom domain is set, the apply's plan and outputs show it. That is the public address of
   the site, and CI deploys start only after it is live, so it is not hidden.
 
+### The first deploy's order
+
+Terraform creates the SSM parameters (with placeholders), so there is nothing to fill before the
+first deploy. The order is:
+
+1. **Deploy.** `make deploy`. The first apply creates everything, including the parameters with their
+   placeholder values. The smoke check can pass without real secrets, and Google sign-in and live
+   drafts do not work yet.
+2. **Fill the secrets**, after that deploy, with the prompt command in "Filling the secrets".
+3. **Deploy again.** The functions read their parameters once at cold start, so the second deploy
+   (which restarts them) is what makes them read the real values. Without it a warm function keeps
+   the placeholder.
+
 ### A custom domain
 
 The live site can use a subdomain of the owner's own domain, with its DNS on Cloudflare (see
@@ -277,7 +304,8 @@ In Google's console, the live OAuth client needs the new origin's redirect,
 
 Terraform creates `/nursing-ai/<environment>/anthropic-api-key`, `google-client-id` and
 `google-client-secret` as SecureString parameters with a placeholder value. It never reads them
-back. You overwrite each one by hand. Read the value from a hidden prompt, so it is never typed on
+back. You overwrite each one by hand, after the first deploy and before the second (see "The first
+deploy's order"). Read the value from a hidden prompt, so it is never typed on
 the command line or kept in shell history:
 
 ```sh
@@ -393,6 +421,19 @@ alarms, but open CloudWatch too and check:
   stops at its alarm check. Watch the alarm through one cold wake; if it fires, raise its threshold
   or alarm on 500/502/504 only.
 
+- **Aurora really pauses.** After a few days, open the bill (or Cost Explorer) and read the Aurora
+  ACU-hours. Tens of hours a month is healthy; hundreds mean it never pauses (an open connection, or
+  a poller). Do this before trusting the $5 target. The $15 budget and the brake are the backstop.
+- **The idle poller's SQS requests.** The worker's event source polls the jobs queue even when no
+  one is drafting. After a quiet few days, read the queue's request count (CloudWatch, SQS metrics
+  `NumberOfEmptyReceives` and `NumberOfMessagesReceived`, or the bill's SQS lines) and check it stays
+  well inside the 1 million requests a month the free tier gives.
+- **A dead-letter redrive.** A job whose message ends in the dead-letter queue shows "Drafting"
+  until it is re-sent. To bring it back, open the dead-letter queue in the SQS console and choose
+  "Start DLQ redrive" to the jobs queue (the default destination). The worker takes the message
+  again, and the job finishes or fails as normal. Try it once on a forced failure, and confirm the
+  `dead-jobs` alarm returns to OK after the queue is empty.
+
 Also confirm the alarm-topic email subscription and the budget emails (each must be accepted from
 the link in its first email).
 
@@ -405,7 +446,8 @@ Assumptions:
 
 - Aurora is awake 10 to 30 hours a month at up to 1 ACU ($0.20 per ACU-hour), about 1 GB of data
   ($0.11 per GB-month).
-- 3 images of about 1 GB each in the registry ($0.10 per GB-month).
+- Up to 10 images in the registry ($0.10 per GB-month). They share most layers, so the total stays
+  near 1 to 2 GB.
 - About 50,000 HTTP API requests a month ($1.29 per million).
 - Lambda, SQS, CloudFront, SNS and CloudWatch stay inside their monthly free amounts: Lambda 1
   million requests and 400,000 GB-seconds, SQS 1 million requests, CloudFront 1 TB and 10 million
@@ -418,7 +460,7 @@ Assumptions:
 | `bootstrap` | The state bucket, the budget and the OIDC roles. Budgets and IAM are free. S3 is billed per GB and the state is a few small files. | Close to $0 (S3 price not read) |
 | `network` | VPC, subnets, security groups and the egress-only gateway are not billed. No NAT gateway, no public IPv4 address. | $0 |
 | `aurora` | Capacity 10 to 30 hours at up to $0.20 an hour, plus about 1 GB storage at $0.11. Backup and I/O charges depend on use and were not priced here. | about $2 to $6 |
-| `registry` | 3 images of about 1 GB at $0.10 per GB-month. | about $0.30 |
+| `registry` | Up to 10 images that share layers, 1 to 2 GB at $0.10 per GB-month. | about $0.10 to $0.40 |
 | `compute` | 50,000 HTTP API requests at $1.29 per million. Lambda (the API, worker and ops functions; a deploy invokes the ops function a few times) and SQS are inside the free amounts. | about $0.06 |
 | `web` | CloudFront is inside the free 1 TB and 10 million requests. The S3 bucket holds a web build of a few MB; S3 and CloudFront Function prices were not read. | Close to $0 |
 | `ops` | Three alarms (10 are free), SNS email, four log groups (API, worker, ops and API access log; 5 GB a month free). Standard SSM parameters, including `site-url` and `bootstrap-admin-email`, are free. | $0 |
