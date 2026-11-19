@@ -40,12 +40,55 @@ export function useRestoreFocusAfterGate(
   }, [page]);
 
   // Layout effect: the page is already in the DOM (same commit), so the focus never visibly jumps.
+  const stopWaiting = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
     if (wasUp.current && !gateUp) {
       const was = last.current;
-      const back = was?.id && was.scope === scope ? document.getElementById(was.id) : null;
-      (back && page.current?.contains(back) ? back : page.current)?.focus();
+      const wanted = was?.id && was.scope === scope ? was.id : null;
+      const back = wanted ? document.getElementById(wanted) : null;
+      if (back && page.current?.contains(back)) {
+        back.focus();
+      } else {
+        page.current?.focus();
+        // The page was dropped from memory behind the lock and is loading again: the element comes
+        // back with its data. Give the focus to it then, unless she has put it somewhere herself.
+        if (wanted && page.current) waitFor(wanted, page.current);
+      }
     }
     wasUp.current = gateUp;
+
+    function waitFor(id: string, root: HTMLElement) {
+      stopWaiting.current?.();
+      const stop = () => {
+        observer.disconnect();
+        clearTimeout(timer);
+        document.removeEventListener("focusin", moved);
+        stopWaiting.current = null;
+      };
+      const moved = (event: FocusEvent) => {
+        if (event.target !== root) stop();
+      };
+      const observer = new MutationObserver(() => {
+        const found = document.getElementById(id);
+        if (found && root.contains(found)) {
+          stop();
+          found.focus();
+        }
+      });
+      const timer = setTimeout(stop, WAIT_FOR_PAGE_MS);
+      observer.observe(root, { childList: true, subtree: true });
+      document.addEventListener("focusin", moved);
+      stopWaiting.current = stop;
+    }
   }, [gateUp, page, scope]);
+
+  useEffect(
+    () => () => {
+      stopWaiting.current?.();
+    },
+    [],
+  );
 }
+
+/** How long the page may take to load again after a lock before the focus stops waiting for it. */
+const WAIT_FOR_PAGE_MS = 10_000;

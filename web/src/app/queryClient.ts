@@ -9,6 +9,8 @@ import { gateFromProblem, patchGate } from "../session/gate";
 import { isPastExpiry, sessionHours } from "../session/expiry";
 import {
   clearPersonData,
+  personasQuery,
+  signInOptionsQuery,
   storeSession,
   signInNoticeKey,
   sessionKey,
@@ -25,6 +27,25 @@ export function retryMutation(failureCount: number, error: Error): boolean {
 export function mutationRetryDelay(failureCount: number, error: Error): number {
   if (isWaking(error)) return wakeRetryDelay(failureCount) ?? 5000;
   return failureCount === 0 ? 500 : 1000;
+}
+
+/** What a lock screen still needs: who is signed in, the sign-in screen's data, the typed note, the facility's hours. */
+const KEPT_BEHIND_LOCK = new Set<unknown>([
+  sessionKey[0],
+  personasQuery.queryKey[0],
+  signInOptionsQuery.queryKey[0],
+  signInNoticeKey[0],
+  HELD_NOTE_ROOT,
+  "facility",
+]);
+
+/** Drops every query but those, and the writes that have finished (they hold what was sent). The page asks again after unlock. */
+function dropBehindLock(queryClient: QueryClient) {
+  queryClient.removeQueries({ predicate: (query) => !KEPT_BEHIND_LOCK.has(query.queryKey[0]) });
+  const writes = queryClient.getMutationCache();
+  for (const write of writes.getAll()) {
+    if (write.state.status !== "pending") writes.remove(write);
+  }
 }
 
 /**
@@ -72,6 +93,7 @@ export function createQueryClient() {
   // before React is told, so nothing renders as the new person over the old person's cache.
   let lastUser: string | null | undefined;
   let lastSession: Session | undefined;
+  let lastGate: Session["gate"] | undefined;
   queryClient.getQueryCache().subscribe((event) => {
     if (event.type !== "updated") return;
     const key = event.query.queryKey as readonly unknown[];
@@ -81,8 +103,13 @@ export function createQueryClient() {
     const user = data?.user_id ?? null;
     const changed = lastUser !== undefined && user !== lastUser;
     const before = lastSession;
+    const wasOpen = lastGate === "open";
     lastUser = user;
+    lastGate = data?.gate;
     if (data) lastSession = data;
+    // Open to locked (idle lock, or a 423): nothing of the page may stay readable in memory
+    // behind the lock screen. A different person's arrival is handled just below.
+    if (!changed && data && wasOpen && data.gate !== "open") dropBehindLock(queryClient);
     if (!changed) return;
     // The session was last seen past its hard limit and now there is nobody: it ran out. Read the
     // facility's hours before the data (the facility with it) goes.

@@ -2,6 +2,7 @@ import { onlineManager, QueryObserver } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiError, type Problem } from "../api/errors";
+import { patchGate } from "../session/gate";
 import { sessionKey, sessionQuery, type Session } from "../session/session";
 import { server } from "../test/setup";
 import { retryQuery } from "../api/retry";
@@ -37,7 +38,7 @@ describe("retryQuery", () => {
 });
 
 describe("the server's answers move the app, not its data", () => {
-  it("a 423 sets the cached session's gate and leaves everything else", async () => {
+  it("a 423 sets the cached session's gate and drops the patient data behind it", async () => {
     const client = createQueryClient();
     client.setQueryData(sessionKey, session);
     client.setQueryData(["patients"], [{ id: "p1" }]);
@@ -49,7 +50,7 @@ describe("the server's answers move the app, not its data", () => {
       })
       .catch(() => undefined);
     expect(client.getQueryData(sessionKey)).toEqual({ ...session, gate: "enter_pin" });
-    expect(client.getQueryData(["patients"])).toEqual([{ id: "p1" }]);
+    expect(client.getQueryData(["patients"])).toBeUndefined();
   });
 
   it("a 423 on a write sets the gate too, and never signs her out", async () => {
@@ -98,6 +99,49 @@ describe("the server's answers move the app, not its data", () => {
       .catch(() => undefined);
     await expect.poll(() => calls).toBe(2);
     unsubscribe();
+  });
+});
+
+describe("behind a lock screen", () => {
+  const held = ["held-note", "p1"];
+
+  it("drops patient and note data and finished writes, and keeps what a lock screen needs", async () => {
+    const client = createQueryClient();
+    client.setQueryData(sessionKey, session);
+    client.setQueryData(["patients"], [{ id: "p1" }]);
+    client.setQueryData(["patient", "p1"], { name: "x" });
+    client.setQueryData(["note", "n1"], { text: "draft" });
+    client.setQueryData(["draft-job", "j1"], { status: "running" });
+    client.setQueryData(["facility", "ph-demo"], { profile: {} });
+    client.setQueryData(held, { text: "BP 90/60", owner: null });
+    client.setQueryData(["personas"], [1]);
+    client.setQueryData(["sign-in-options"], { demo: true });
+    await client
+      .getMutationCache()
+      .build(client, { mutationFn: () => Promise.resolve("saved") })
+      .execute({ edited: "line text" });
+    expect(client.getMutationCache().getAll()).toHaveLength(1);
+    patchGate(client, "idle_locked");
+    expect(client.getQueryData(["patients"])).toBeUndefined();
+    expect(client.getQueryData(["patient", "p1"])).toBeUndefined();
+    expect(client.getQueryData(["note", "n1"])).toBeUndefined();
+    expect(client.getQueryData(["draft-job", "j1"])).toBeUndefined();
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
+    expect(client.getQueryData(held)).toEqual({ text: "BP 90/60", owner: null });
+    expect(client.getQueryData(["facility", "ph-demo"])).toEqual({ profile: {} });
+    expect(client.getQueryData(["personas"])).toEqual([1]);
+    expect(client.getQueryData(["sign-in-options"])).toEqual({ demo: true });
+    expect(client.getQueryData<Session>(sessionKey)?.gate).toBe("idle_locked");
+  });
+
+  it("drops nothing when the gate opens again, or moves between locked gates", () => {
+    const client = createQueryClient();
+    client.setQueryData(sessionKey, { ...session, gate: "idle_locked" });
+    client.setQueryData(["patients"], [{ id: "p1" }]);
+    patchGate(client, "enter_pin");
+    patchGate(client, "pin_locked");
+    client.setQueryData(sessionKey, { ...session, gate: "open" });
+    expect(client.getQueryData(["patients"])).toEqual([{ id: "p1" }]);
   });
 });
 

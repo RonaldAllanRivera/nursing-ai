@@ -42,7 +42,10 @@ describe("one person's data never meets another's, whichever answer brings the n
     // This tab's next request is answered 423, so it shows the PIN screen for Sarah.
     await act(() => queryClient.invalidateQueries({ queryKey: ["patient", PATIENT_A] }));
     await screen.findByRole("heading", { name: "Enter your PIN, Sarah Navarro, RN" });
-    expect(queryClient.getQueryData(SENTINEL)).toBe("A's data");
+    // Behind the lock screen the page's data is already gone (C-4); the typed note stays.
+    expect(queryClient.getQueryData(SENTINEL)).toBeUndefined();
+    expect(readHeldNote(queryClient, PATIENT_A)).toBe("A's unsent text");
+    queryClient.setQueryData(SENTINEL, "A's data");
     // She types the demo PIN (personas share it); the answer is Emily's open session.
     server.use(
       http.post("*/api/v1/session/unlock", () =>

@@ -55,8 +55,10 @@ export function Shell() {
   useRestoreFocusAfterGate(gateUp, page, where);
   // The browser's own timers: an unattended screen locks, a session past its hours ends, and a
   // tab seen again asks who the session is now. The facility stays loaded here so the hours a
-  // session lasts are known even while a gate hides the shift picker.
-  useFacility(session?.facility_key ?? null);
+  // session lasts are known even while a gate hides the shift picker. It is not asked for until
+  // the gate is open: the server refuses it with 423 before the PIN, and the query is kept
+  // meanwhile.
+  useFacility(session?.facility_key ?? null, session?.gate === "open");
   useIdleLock(session);
   useSessionExpiry(session?.expires_at);
   useLookAgainWhenSeen(session != null);

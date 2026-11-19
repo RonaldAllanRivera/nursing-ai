@@ -15,9 +15,11 @@ export const facilityQuery = (key: string) =>
   });
 
 /** The facility's profile and shift choices. Locale, clock and timezone come from here, nowhere else. */
-export function useFacility(key: string | null) {
+export function useFacility(key: string | null, gateOpen = true) {
   return useQuery({
     ...facilityQuery(key ?? ""),
-    enabled: key !== null,
+    // Not asked for behind a gate: the server answers 423 until the PIN is proved. The key stays,
+    // so the loaded facility is kept (the session hours) while a lock screen is up.
+    enabled: key !== null && gateOpen,
   });
 }
