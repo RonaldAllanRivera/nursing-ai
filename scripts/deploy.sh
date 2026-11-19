@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Deploys the whole stack for one environment: builds the image once and pushes it to ECR, points
-# the ops function at it, migrates, applies infra/live with that image, seeds the demo (demo only),
-# smoke-tests, uploads the web app and checks the alarms.
+# Deploys the whole stack for one environment: builds the web app (first, without any AWS_*
+# variable), builds the image once and pushes it to ECR, points the ops function at it, migrates,
+# applies infra/live with that image, seeds the demo (demo only), smoke-tests, uploads the web app
+# and checks the alarms.
 #
 #   scripts/deploy.sh demo|prod
 #
@@ -13,7 +14,8 @@
 #   TF_VAR_*             every Terraform variable but `image_uri` (for example TF_VAR_alert_email and
 #                        TF_VAR_domain_name), or the git-ignored infra/live/terraform.tfvars. The
 #                        script sets TF_VAR_environment itself; a tfvars file that sets `environment`
-#                        to another name is refused (DEPLOY_TFVARS names a different tfvars file).
+#                        to another name is refused (DEPLOY_TFVARS names a different tfvars file),
+#                        and so is one that sets database_password_version (CI cannot see it).
 #   docker, terraform, pnpm, python3, git and the AWS CLI on PATH.
 # Optional:
 #   DEPLOY_APPLY_FIRST=yes  apply before migrating even though the ops function exists. For
@@ -116,6 +118,11 @@ check_tfvars_environment() {
   if [[ -n "$named" && "$named" != "$ENVIRONMENT" ]]; then
     die "the tfvars file sets environment to \"${named}\", not \"${ENVIRONMENT}\"; nothing was built"
   fi
+  # CI cannot see this git-ignored file, so its next deploy would lower the value and rotate the
+  # database password. The value belongs in the variable's default (a reviewed pull request).
+  if grep -Eq '^[[:space:]]*database_password_version[[:space:]]*=' "$file"; then
+    die "the tfvars file sets database_password_version; raise its default in infra/live/variables.tf instead; nothing was built"
+  fi
 }
 
 # Decides whether this is the first deploy from two signals that must agree: the state has no ops
@@ -123,7 +130,7 @@ check_tfvars_environment() {
 # of another environment is refused before anything is built.
 check_first_deploy() {
   say "check the state and the ops function"
-  local named="" error_file="$WORK/get-function.err"
+  local named="" error_file="$WORK/get-function.err" listed="" in_state=""
   named="$("${TF[@]}" output -raw ops_function_name 2>/dev/null || true)"
   if [[ -n "$named" ]]; then
     [[ "$named" == "$OPS_FUNCTION" ]] \
@@ -131,7 +138,14 @@ check_first_deploy() {
     FIRST_DEPLOY=""
     return 0
   fi
+  # No output: either a state with nothing applied yet, or one that cannot be read. Listing it
+  # tells them apart, and an unreadable state must not pass for an empty one.
+  listed="$("${TF[@]}" state list 2>"$WORK/state-list.err")" \
+    || die "could not read the Terraform state; nothing was built"
+  [[ -z "$listed" ]] || in_state="yes"
   if aws lambda get-function --function-name "$OPS_FUNCTION" >/dev/null 2>"$error_file"; then
+    [[ -n "$in_state" ]] \
+      || die "${OPS_FUNCTION} exists but the Terraform state lists nothing (the wrong state bucket?); nothing was built"
     FIRST_DEPLOY=""
   elif grep -q 'ResourceNotFoundException' "$error_file"; then
     FIRST_DEPLOY="yes"
@@ -194,7 +208,9 @@ terraform_apply() {
   say "terraform apply"
   # The plan prints resource attributes, some of which are ARNs with the account id: hide those.
   # (A custom domain does show in it; that is the public address of the site.)
-  "${TF[@]}" apply -input=false -auto-approve -var "image_uri=${IMAGE_URI}" 2>&1 | mask_account_ids
+  # The environment is also given here, so no tfvars file or variable can aim the apply elsewhere.
+  "${TF[@]}" apply -input=false -auto-approve -lock-timeout=300s \
+    -var "image_uri=${IMAGE_URI}" -var "environment=${ENVIRONMENT}" 2>&1 | mask_account_ids
 }
 
 tf_output() { "${TF[@]}" output -raw "$1"; }
@@ -204,9 +220,13 @@ check_ops_name() {
     || die "the ops_function_name output is not ${OPS_FUNCTION}"
 }
 
+# First, so a broken build stops the deploy before anything changes. Build-time code from an npm
+# dependency never sees the sign-in: every AWS_* variable is unset for it.
 build_web() {
   say "build the web app"
-  pnpm -C web build
+  local unset_args=() name
+  while IFS= read -r name; do unset_args+=(-u "$name"); done < <(compgen -e | grep '^AWS_' || true)
+  env ${unset_args[@]+"${unset_args[@]}"} pnpm -C web build
 }
 
 upload_web() {
@@ -215,7 +235,9 @@ upload_web() {
   distribution="$(tf_output distribution_id)"
   say "upload the web app"
   # Vite names every file under assets/ by its content, so a year (immutable) is safe there.
-  aws_call s3 sync web/dist/assets "s3://${bucket}/assets" --delete \
+  # No --delete: a tab still on the old build may open a lazily loaded route whose chunk the old
+  # build names. The old files are a few KB each.
+  aws_call s3 sync web/dist/assets "s3://${bucket}/assets" \
     --cache-control "public, max-age=31536000, immutable"
   # The rest keeps its name from build to build (the fonts, their licence), so browsers and
   # CloudFront check it again; the deploy invalidates only /index.html. MSW's worker serves the
@@ -270,6 +292,7 @@ main() {
   WORK="$(mktemp -d)"
   trap cleanup EXIT
   check_tfvars_environment
+  build_web
   terraform_init
   check_first_deploy
   if [[ "${DEPLOY_APPLY_FIRST:-}" == "yes" ]]; then
@@ -292,7 +315,6 @@ main() {
     run_ops_task seed-demo
   fi
   run_ops_task smoke
-  build_web
   upload_web
   check_alarms
   say "done: ${IMAGE_TAG}"

@@ -52,7 +52,8 @@ import json, os, sys
 tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 with open(os.environ["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"tool": tool, "argv": args}) + "\n")
+    aws_env = sorted(k for k in os.environ if k.startswith("AWS_"))
+    log.write(json.dumps({"tool": tool, "argv": args, "aws_env": aws_env}) + "\n")
 
 env = os.environ.get("TF_VAR_environment", "demo")
 outputs = {
@@ -71,13 +72,24 @@ if tool == "terraform" and "apply" in args and os.environ.get("FAKE_APPLY_PRINTS
 if tool == "terraform" and "init" in args and os.environ.get("FAKE_INIT_FAILS"):
     sys.stderr.write(fail_with + "\n")
     sys.exit(1)
+if tool == "pnpm" and os.environ.get("FAKE_PNPM_FAILS"):
+    sys.stderr.write(fail_with + "\n")
+    sys.exit(1)
 if tool == "docker" and os.environ.get("FAKE_DOCKER_FAIL") in args:
     sys.stderr.write(fail_with + "\n")
     sys.exit(1)
 if tool == "aws" and os.environ.get("FAKE_AWS_FAIL") == " ".join(args[:2]):
     sys.stderr.write(fail_with + "\n")
     sys.exit(254)
-if tool == "terraform" and "output" in args:
+if tool == "terraform" and "state" in args:
+    if os.environ.get("FAKE_STATE_LIST_FAILS"):
+        sys.stderr.write("Error: Failed to load state\n")
+        sys.exit(1)
+    nothing_applied = os.environ.get("FAKE_FIRST_DEPLOY") or os.environ.get("FAKE_NO_STATE")
+    empty = nothing_applied and not os.environ.get("FAKE_STATE_RESOURCES")
+    if not empty:
+        print("aws_lambda_function.ops")
+elif tool == "terraform" and "output" in args:
     if "-json" in args:
         print(json.dumps({
             "api_5xx": f"nursing-ai-{env}-api-5xx",
@@ -147,6 +159,7 @@ elif tool == "docker" and "login" in args:
 class Call:
     tool: str
     argv: list[str]
+    aws_env: list[str]
 
 
 @dataclass
@@ -175,16 +188,23 @@ def sandbox(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def deploy_env(sandbox: Path) -> dict[str, str]:
+    """The environment every run starts from. The tfvars file is one inside the sandbox, so the
+    owner's real infra/live/terraform.tfvars (git-ignored, made at G5) never changes a test."""
+    return {
+        "PATH": str(sandbox / "bin"),
+        "HOME": str(sandbox),
+        "FAKE_LOG": str(sandbox / "calls.jsonl"),
+        "STATE_BUCKET": "nursing-ai-state-example",
+        "DEPLOY_TFVARS": str(sandbox / "no-such.tfvars"),
+    }
+
+
 def run_deploy(
     sandbox: Path, *args: str, approved: bool = True, extra: dict[str, str] | None = None
 ) -> Run:
     log = sandbox / "calls.jsonl"
-    env = {
-        "PATH": str(sandbox / "bin"),
-        "HOME": str(sandbox),
-        "FAKE_LOG": str(log),
-        "STATE_BUCKET": "nursing-ai-state-example",
-    }
+    env = deploy_env(sandbox)
     if approved:
         env["DEPLOY_APPROVED"] = "yes"
     env.update(extra or {})
@@ -229,6 +249,7 @@ def steps(run: Run) -> list[str]:
 
 
 NORMAL_DEMO = [
+    "pnpm build",
     "terraform init",
     "docker build",
     "docker push",
@@ -237,7 +258,6 @@ NORMAL_DEMO = [
     "terraform apply",
     "invoke seed-demo",
     "invoke smoke",
-    "pnpm build",
     "s3 sync web/dist/assets",
     "s3 sync web/dist",
     "s3 cp index",
@@ -245,6 +265,7 @@ NORMAL_DEMO = [
     "check alarms",
 ]
 FIRST_DEMO = [
+    "pnpm build",
     "terraform init",
     "first-deploy check",
     "docker build",
@@ -253,7 +274,6 @@ FIRST_DEMO = [
     "invoke migrate",
     "invoke seed-demo",
     "invoke smoke",
-    "pnpm build",
     "s3 sync web/dist/assets",
     "s3 sync web/dist",
     "s3 cp index",
@@ -271,8 +291,11 @@ def test_deploy_runs_the_steps_in_order(sandbox: Path) -> None:
     tag = build[build.index("-t") + 1]
     assert re.fullmatch(rf"{re.escape(REGISTRY)}/nursing-ai:[0-9a-f]{{12}}-\d{{14}}", tag)
     apply_call = next(c.argv for c in run.calls if label(c) == "terraform apply")
-    assert apply_call.count("-var") == 1
-    assert apply_call[apply_call.index("-var") + 1] == f"image_uri={tag}"
+    variables = [apply_call[i + 1] for i, a in enumerate(apply_call) if a == "-var"]
+    # The environment is also given on the command line: a tfvars file or TF_VAR_environment cannot
+    # point the apply at another environment than the one typed.
+    assert variables == [f"image_uri={tag}", "environment=demo"]
+    assert "-lock-timeout=300s" in apply_call
     push = next(c.argv for c in run.calls if label(c) == "docker push")
     assert push[-1] == tag
     update = next(a for a in run.aws if a[:2] == ["lambda", "update-function-code"])
@@ -347,7 +370,10 @@ def test_deploy_caches_only_the_hashed_assets_for_a_year(sandbox: Path) -> None:
     }
     syncs = [a for a in run.aws if a[:2] == ["s3", "sync"]]
     assert syncs, "the web app is never synced"
-    assert all("--delete" in a for a in syncs)
+    # Old hashed files stay: a tab on the old build may still ask for a chunk it names (B-9).
+    by_source = {a[2]: a for a in syncs}
+    assert "--delete" not in by_source["web/dist/assets"]
+    assert "--delete" in by_source["web/dist"]
     invalidation = next(a for a in run.aws if a[:2] == ["cloudfront", "create-invalidation"])
     assert invalidation[invalidation.index("--distribution-id") + 1] == "E123EXAMPLE"
     assert invalidation[invalidation.index("--paths") + 1] == "/index.html"
@@ -392,15 +418,16 @@ def test_the_apply_first_override_still_refuses_another_environments_state(
 ) -> None:
     run = run_deploy(sandbox, "demo", extra={"DEPLOY_APPLY_FIRST": "yes", "FAKE_STATE_ENV": "prod"})
     assert run.result.returncode != 0
-    assert steps(run) == ["terraform init"]
+    assert steps(run) == ["pnpm build", "terraform init"]
 
 
 def test_state_without_the_ops_function_and_a_live_function_is_not_a_first_deploy(
     sandbox: Path,
 ) -> None:
-    run = run_deploy(sandbox, "demo", extra={"FAKE_NO_STATE": "1"})
+    # A first deploy whose apply failed part-way: resources in the state, no outputs yet.
+    run = run_deploy(sandbox, "demo", extra={"FAKE_NO_STATE": "1", "FAKE_STATE_RESOURCES": "1"})
     assert run.result.returncode == 0, run.result.stderr
-    assert steps(run) == ["terraform init", "first-deploy check", *NORMAL_DEMO[1:]]
+    assert steps(run) == ["pnpm build", "terraform init", "first-deploy check", *NORMAL_DEMO[2:]]
 
 
 def test_a_state_that_names_the_ops_function_is_never_a_first_deploy(sandbox: Path) -> None:
@@ -416,7 +443,7 @@ def test_a_get_function_error_other_than_not_found_stops_the_deploy(sandbox: Pat
     run = run_deploy(sandbox, "demo", extra=extra)
     assert run.result.returncode != 0
     assert "TooManyRequestsException" in run.result.stderr
-    assert steps(run) == ["terraform init", "first-deploy check"]
+    assert steps(run) == ["pnpm build", "terraform init", "first-deploy check"]
 
 
 ACCOUNT = "210987654321"
@@ -444,14 +471,14 @@ def test_an_aws_error_shows_its_code_but_never_the_account_id_or_arn(
     everything = run.result.stdout + run.result.stderr
     assert ACCOUNT not in everything
     assert ARN not in everything
-    assert steps(run) == ["terraform init", "first-deploy check"]
+    assert steps(run) == ["pnpm build", "terraform init", "first-deploy check"]
 
 
 def test_state_of_another_environment_stops_before_the_build(sandbox: Path) -> None:
     run = run_deploy(sandbox, "demo", extra={"FAKE_STATE_ENV": "prod"})
     assert run.result.returncode != 0
     assert "nursing-ai-prod-ops" in run.result.stderr
-    assert steps(run) == ["terraform init"]
+    assert steps(run) == ["pnpm build", "terraform init"]
 
 
 def test_a_tfvars_environment_that_differs_stops_before_any_step(sandbox: Path) -> None:
@@ -471,6 +498,72 @@ def test_the_log_shows_the_image_tag_but_not_the_registry_host(sandbox: Path) ->
     assert run.result.returncode == 0, run.result.stderr
     assert re.search(r"deploy: .*[0-9a-f]{12}-\d{14}", run.result.stdout)
     assert REGISTRY not in run.result.stdout + run.result.stderr
+
+
+def test_the_web_app_is_built_first_and_sees_no_aws_variable(sandbox: Path) -> None:
+    # A broken build stops the deploy before anything changes, and build-time code from an npm
+    # dependency never sees the sign-in (B-3).
+    credentials = {
+        "AWS_ACCESS_KEY_ID": "AKIAEXAMPLE",
+        "AWS_SECRET_ACCESS_KEY": "stand-in",
+        "AWS_SESSION_TOKEN": "stand-in",
+        "AWS_PROFILE": "nursing-ai",
+        "AWS_REGION": "ap-southeast-2",
+    }
+    run = run_deploy(sandbox, "demo", extra=credentials)
+    assert run.result.returncode == 0, run.result.stderr
+    assert steps(run)[0] == "pnpm build"
+    build = next(c for c in run.calls if c.tool == "pnpm")
+    assert build.aws_env == []
+    # The other tools still get them.
+    assert "AWS_ACCESS_KEY_ID" in next(c for c in run.calls if c.tool == "aws").aws_env
+
+
+def test_a_failing_web_build_stops_the_deploy_before_anything_else_runs(sandbox: Path) -> None:
+    run = run_deploy(sandbox, "demo", extra={"FAKE_PNPM_FAILS": "1"})
+    assert run.result.returncode != 0
+    assert steps(run) == ["pnpm build"]
+
+
+def test_the_apply_waits_up_to_five_minutes_for_the_state_lock(sandbox: Path) -> None:
+    run = run_deploy(sandbox, "demo")
+    apply_call = next(c.argv for c in run.calls if label(c) == "terraform apply")
+    assert "-lock-timeout=300s" in apply_call
+
+
+def test_the_default_tfvars_is_inside_the_sandbox(sandbox: Path) -> None:
+    assert Path(deploy_env(sandbox)["DEPLOY_TFVARS"]).is_relative_to(sandbox)
+
+
+def test_a_tfvars_that_sets_the_database_password_version_is_refused(sandbox: Path) -> None:
+    # CI cannot see the owner's tfvars, so its next deploy would lower the value and rotate the
+    # password (B-11).
+    tfvars = sandbox / "terraform.tfvars"
+    tfvars.write_text('environment = "demo"\ndatabase_password_version = 2\n')
+    run = run_deploy(sandbox, "demo", extra={"DEPLOY_TFVARS": str(tfvars)})
+    assert run.result.returncode != 0
+    assert "database_password_version" in run.result.stderr
+    assert run.calls == []
+    tfvars.write_text("# database_password_version = 2\nai_monthly_cap_usd = 5\n")
+    ok = run_deploy(sandbox, "demo", extra={"DEPLOY_TFVARS": str(tfvars)})
+    assert ok.result.returncode == 0, ok.result.stderr
+
+
+def test_a_state_that_cannot_be_listed_stops_the_deploy(sandbox: Path) -> None:
+    # An unreadable state must not be taken for an empty one (CL8).
+    extra = {"FAKE_NO_STATE": "1", "FAKE_STATE_LIST_FAILS": "1"}
+    run = run_deploy(sandbox, "demo", extra=extra)
+    assert run.result.returncode != 0
+    assert "state" in run.result.stderr
+    assert steps(run) == ["pnpm build", "terraform init"]
+
+
+def test_an_empty_state_with_a_live_ops_function_is_refused(sandbox: Path) -> None:
+    # Wrong bucket or wiped state: an apply would try to create what already exists.
+    run = run_deploy(sandbox, "demo", extra={"FAKE_NO_STATE": "1"})
+    assert run.result.returncode != 0
+    assert "state" in run.result.stderr
+    assert steps(run) == ["pnpm build", "terraform init", "first-deploy check"]
 
 
 def test_deploy_stops_when_migrate_fails(sandbox: Path) -> None:

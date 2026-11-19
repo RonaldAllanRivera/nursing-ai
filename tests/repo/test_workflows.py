@@ -191,6 +191,12 @@ def test_the_plan_never_refreshes_and_never_applies() -> None:
     # A refresh decrypts every SSM parameter, which the plan role is denied (bootstrap).
     assert re.search(r"terraform -chdir=infra/live plan\b[^\n]*-refresh=false", script)
     assert "apply" not in script
+    # It writes nothing, so it takes no lock: a pull request's plan must never make a deploy's
+    # apply fail on "Error acquiring the state lock" (B-5).
+    plan = re.search(r"terraform -chdir=infra/live plan\b[^\n]*", script)
+    assert plan is not None
+    assert "-lock=false" in plan.group(0)
+    assert "-lock-timeout" not in plan.group(0)
     assert '-backend-config="bucket=$STATE_BUCKET"' in script
     checkout = _step(job, "actions/checkout@")
     assert checkout["with"]["persist-credentials"] is False

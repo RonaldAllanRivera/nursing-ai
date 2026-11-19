@@ -74,7 +74,8 @@ jobs:
           aws-region: ap-southeast-2
           mask-aws-account-id: true
       # -refresh=false: a refresh decrypts every SSM parameter, which the plan role is denied. The
-      # image stays the one live now (the image_uri output), so the plan shows only the change.
+      # image stays the one live now (the image_uri output), so the plan shows only the change. -lock=false: a plan with no refresh writes nothing, and it must
+      # never hold the state lock a deploy's apply is waiting for.
       - name: Plan infra/live
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
@@ -87,4 +88,4 @@ jobs:
           terraform -chdir=infra/live init -input=false -backend-config="bucket=$STATE_BUCKET"
           TF_VAR_image_uri="$(terraform -chdir=infra/live output -raw image_uri)"
           export TF_VAR_image_uri
-          terraform -chdir=infra/live plan -refresh=false -input=false -no-color -lock-timeout=120s
+          terraform -chdir=infra/live plan -refresh=false -input=false -no-color -lock=false
