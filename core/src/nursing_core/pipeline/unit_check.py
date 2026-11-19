@@ -37,13 +37,45 @@ A unit that takes no rate is read as written ("37.8C/HR 110"). A one-letter unit
 letter is clinical shorthand, not a unit ("c/o", "f/u", "u/a"), except when the unit is u, l or g
 and the letter is h, d or m ("u/h", "L/m", "g/d"), which are rates.
 "lpm" is litres per minute.
+An ounce ("oz", "ozs", "ounce", "ounces", or "fl" or "fluid" then one of those past a "." and
+spaces or a line break: "fl oz", "fl. oz", "fluid ounces"; in any case) is a unit of its own, kept
+by spelling like the others: it is never mL, cc or L, a note number written with no unit never
+stands for one, and nothing converts it, so "8 oz" is not "240 mL". It reads a rate like any
+volume unit ("8 oz/hr"). "fl" or "fluid" alone is no unit.
 A time word written right after a number with no unit between ("2 hours", "x 8 hrs", "20mins") is
 read by meaning: hour, minute, day or week, from the same spellings as the denominators but for the
 one-letter "m" and "d".
+A frequency is read by meaning, in any case, each word whole, words separated by spaces, a line
+break or a hyphen ("once-a-day"); the longest reading wins, left to right, so "once daily" is one
+frequency and not "daily" inside it. One list of periods serves every spelling: day, week, month,
+hour, night and shift. "daily", "every day", "everyday", "each day", "once a day", "once per day"
+and "once daily" are one a day, and the same for each other period ("hourly", "nightly", "every
+shift", "each night", "once an hour"). "every other day" (or any period) is its own meaning, not
+"daily". A count is "twice" or "thrice", or a number (digits, read by value so "3" and "3.0" are
+one, or a number word from two to ten) before "times" or "x". It is followed by an adverb
+("daily", "nightly"), by "everyday", by "a", "an", "per", "every", "each" or "every other" and a
+period, or by "/" and a period (spaces around the "/" are fine): "twice a day", "twice daily",
+"2 times every day", "2 times everyday", "2x daily", "2x/day" and "2 times / day" are two a day,
+"2 times every night" is two a night, "twice each shift" is two a shift, "2 times every other day"
+is its own counted meaning, and "3 times a week" is not "3 times a day". "per" and a period is a
+frequency only after "once" or a count, and "/" and a period only after a count, so "once/day" is
+not read; otherwise neither is a frequency ("15 mg per day" and "15 mg/day" are rates). With no
+"once" or count before it, "a" or "an" and a period is a frequency only right after a dose,
+volume or drop unit written with no rate, and then is one per that period: "15 mg a day" is one a
+day, while "fever for a day" has no frequency. That reading takes day, week, month, night and
+shift but not hour ("1000 units an hour" has no frequency, as it is a rate in practice), and
+never a period followed, past spaces or a line break, by the whole word ago, before, prior,
+earlier, early, later or late: "15 mg a day ago" and "1 L a night before" say when, not how
+often. That reading is a draft line's only: a quote is read without it, as a quote may stop
+before the "ago" that follows ("last dose 15 mg a day"), so a note's "15 mg a day" never stands
+for "daily", while a line's is checked as one. The abbreviations (OD, QD, BID, TID, QID, QOD,
+HS, PRN, STAT) each mean only their own spelling: "OD" is also the right eye, so it is never
+"daily". "once" alone is no frequency ("vomited once").
 """
 
 import re
 import unicodedata
+from bisect import bisect_right
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -72,28 +104,70 @@ _MIXED_PARTS = re.compile(
 _WHOLE_NUMBER = re.compile(r"\d+")
 _LETTERS = re.compile(r"[^\W\d_]+")
 _WORD = re.compile(r"[^\W_]+")
+# An ounce spelling after "fl" or "fluid", past a "." and spaces or a line break: "fl. oz",
+# "fluid ounces".
+_FLUID_OUNCE = re.compile(r"\.?\s*(?:ozs?|ounces?)", re.IGNORECASE)
 _NUMBER_WORDS = frozenset(
     {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "half", "twice"}
 )
-# How often a dose is given, which no number in the line says: "daily" is not "weekly", "BID" not
-# "TID". "once" is left out: a line writes "vomited once" for a note's "x1".
-_FREQUENCY_WORDS = frozenset(
-    {
-        "daily",
-        "weekly",
-        "monthly",
-        "hourly",
-        "nightly",
-        "od",
-        "qd",
-        "bid",
-        "tid",
-        "qid",
-        "qod",
-        "hs",
-        "prn",
-        "stat",
-    }
+_ABBREVIATIONS = ("od", "qd", "bid", "tid", "qid", "qod", "hs", "prn", "stat")
+_ADVERBS = {
+    "daily": "day",
+    "weekly": "week",
+    "monthly": "month",
+    "hourly": "hour",
+    "nightly": "night",
+}
+_SMALL_NUMBERS = {
+    word: Decimal(value)
+    for value, word in enumerate(
+        ("two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"), start=2
+    )
+}
+_WHOLE_WORD = r"(?<![^\W_])(?:{})(?![^\W_])"
+_SEP = r"[\s\-]+"
+_COUNT = rf"(?P<count>\d+(?:\.\d+)?|{'|'.join(_SMALL_NUMBERS)})"
+# One period list for every connector, with or without a count in front: "every night", "each
+# shift", "every other night", "twice a night", "2 times per shift", "once a night".
+_PERIODS = "day|week|month|hour|night|shift"
+
+
+def _connected(connectors: str) -> str:
+    return rf"(?:{connectors}){_SEP}(?P<period>{_PERIODS})"
+
+
+_EVERYDAY = r"(?P<everyday>everyday)"
+_EVERY_OTHER = rf"every{_SEP}other{_SEP}(?P<other>{_PERIODS})"
+# Read alone, "every" and "each" take a period; after a count "a", "an" and "per" do too.
+_EVERY = f"{_EVERYDAY}|{_connected('every|each')}|{_EVERY_OTHER}"
+_COUNTED_EACH = (
+    rf"(?:{_SEP}(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per|every|each')}"
+    rf"|{_EVERYDAY}|{_EVERY_OTHER})"
+    # After a count, "/" (spaces around it are fine) and a period too: "2x/day", "twice / week".
+    rf"|[ \t]*/[ \t]*(?P<slashed>{_PERIODS}))"
+)
+# One pattern for each family of spellings; each match is a frequency, read with `_meaning`.
+_FREQUENCY_PATTERNS = tuple(
+    re.compile(_WHOLE_WORD.format(body), re.IGNORECASE)
+    for body in (
+        rf"(?P<abbreviation>{'|'.join(_ABBREVIATIONS)})",
+        rf"(?P<adverb>{'|'.join(_ADVERBS)})",
+        _EVERY,
+        rf"once{_SEP}(?:(?P<adverb>{'|'.join(_ADVERBS)})|{_connected('an|a|per')})",
+        rf"(?P<times>twice|thrice){_COUNTED_EACH}",
+        rf"{_COUNT}(?:{_SEP}times|{_SEP}x|(?<=\d)x){_COUNTED_EACH}",
+    )
+)
+# The periods "a" or "an" takes with no count, right after a dose, volume or drop unit: not hour
+# or minute, as "1000 units an hour" is a rate in practice.
+_DOSE_PERIODS = "day|week|month|night|shift"
+# "a" or "an" and one of those periods, whole words ("a day", "an-night"), read as a frequency
+# only right after such a unit ("15 mg a day").
+_A_PERIOD = re.compile(_WHOLE_WORD.format(rf"an?{_SEP}(?P<period>{_DOSE_PERIODS})"), re.IGNORECASE)
+# A time word after that period, past spaces or a line break, makes it say when, not how often:
+# "15 mg a day ago", "1 L a night before".
+_WHEN_AFTER = re.compile(
+    r"(?>\s+)(?:ago|before|prior|earlier|early|later|late)(?![^\W_])", re.IGNORECASE
 )
 
 # Longest first, so "lbs" is tried before "lb". These short spellings are read in the case shown;
@@ -147,6 +221,7 @@ _COMPARED_UNITS = {
     **dict.fromkeys(("milliliter", "milliliters", "millilitre", "millilitres"), "ml"),
     "gtt": "gtt",
     "gtts": "gtt",
+    **dict.fromkeys(("oz", "ozs", "ounce", "ounces"), "oz"),
 }
 # The unit spellings the code knows, folded. A letter run right after whole digits that is one of
 # them ("HR121bpm") leaves the digits a number, and a note number followed by one has a unit.
@@ -205,7 +280,18 @@ _HEART_RATE_NUMBER = re.compile(
 # "/ HR 88" form passes, and any other reading of that number with a unit flags.
 _AMBIGUOUS = "?"
 type NumberValue = tuple[str | Decimal, ...]
+# How often, by meaning: (a count, what it is per) such as (2, "day"), or ("abbreviation", "bid").
+type FrequencyMeaning = tuple[str | Decimal, str]
 _WINDOW = 64  # typed characters read after a number (a unit, a bare rate) or a unit (a rate)
+
+
+@dataclass(frozen=True, slots=True)
+class WrittenFrequency:
+    """A frequency as typed, with its span in the text and what it means."""
+
+    text: str
+    span: Span
+    meaning: FrequencyMeaning  # "daily" and "every day" mean the same; "BID" only itself
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,21 +316,95 @@ def words_with_numbers(text: str) -> list[tuple[str, Span]]:
     """Words that carry a number that isn't read as one, with their spans in `text`.
 
     These are words with digits inside ("q4h", "D5W", "HR121bpmRR20"), the number words one to
-    ten, "half" and "twice", and the frequency words ("daily", "BID", "PRN", "stat"). They can't
-    be compared by value, only as whole words.
+    ten, "half" and "twice". They can't be compared by value, only as whole words. Frequencies
+    are read by meaning instead (see `frequencies_in`).
     """
     in_words = _scan(text)[1]
     out: list[tuple[str, Span]] = []
     for word in _WORD.finditer(text):
         start, end = word.span()
         folded = word.group().casefold()
-        if (
-            folded in _NUMBER_WORDS
-            or folded in _FREQUENCY_WORDS
-            or any(start <= i < end for i in in_words)
-        ):
+        if folded in _NUMBER_WORDS or any(start <= i < end for i in in_words):
             out.append((word.group(), Span(start=start, end=end)))
     return out
+
+
+def frequencies_in(text: str, *, after_a_unit: bool = True) -> list[WrittenFrequency]:
+    """Every frequency in `text` as typed, left to right, each with its meaning.
+
+    Where two readings start at the same place the longer wins, and a reading that starts inside
+    an earlier one is dropped, so "once daily" is one frequency. "a" or "an" and a period right
+    after a dose, volume or drop unit ("15 mg a day") is read only with `after_a_unit`, as a draft
+    line is; a quote is read without it.
+    """
+    readings = [
+        WrittenFrequency(match.group(), Span(start=match.start(), end=match.end()), _meaning(match))
+        for pattern in _FREQUENCY_PATTERNS
+        for match in pattern.finditer(text)
+    ]
+    if after_a_unit:
+        readings.extend(_after_a_unit(text))
+    readings.sort(key=lambda reading: (reading.span.start, -reading.span.end))
+    out: list[WrittenFrequency] = []
+    for reading in readings:
+        if out and reading.span.start < out[-1].span.end:
+            continue
+        out.append(reading)
+    return out
+
+
+def _after_a_unit(text: str) -> list[WrittenFrequency]:
+    """Each "a" or "an" and a period right after a dose, volume or drop unit written with no rate
+    ("15 mg a day"), as typed from the "a": one per that period. A period a time word follows
+    ("15 mg a day ago") is no frequency.
+
+    A unit has no digit in it, so only the number right before each "a" or "an" is read with its
+    unit, which must end where the spaces, line breaks or hyphens before the "a" start.
+    """
+    found = list(_A_PERIOD.finditer(text))
+    if not found:
+        return []
+    numbers = numbers_in(text)
+    out: list[WrittenFrequency] = []
+    for match in found:
+        if _WHEN_AFTER.match(text, match.end()):
+            continue
+        gap = match.start()
+        while gap > 0 and (text[gap - 1].isspace() or text[gap - 1] == "-"):
+            gap -= 1
+        before = bisect_right(numbers, gap, key=lambda number: number[1].end) - 1
+        if gap == match.start() or before < 0:
+            continue
+        unit = written_unit(text, numbers[before][1])
+        if unit is None or unit.compared is None or unit.rate or unit.end != gap:
+            continue
+        span = Span(start=match.start(), end=match.end())
+        meaning = (Decimal(1), match["period"].casefold())
+        out.append(WrittenFrequency(match.group(), span, meaning))
+    return out
+
+
+def _meaning(match: re.Match[str]) -> FrequencyMeaning:
+    groups = match.groupdict()
+    if groups.get("abbreviation"):
+        return ("abbreviation", match["abbreviation"].casefold())
+    count = Decimal(1)
+    if groups.get("times"):
+        count = Decimal(2 if match["times"].casefold() == "twice" else 3)
+    elif groups.get("count"):
+        written = match["count"].casefold()
+        count = _SMALL_NUMBERS.get(written) or Decimal(written)
+    if groups.get("other"):
+        return (count, f"other {match['other'].casefold()}")
+    if groups.get("adverb"):
+        return (count, _ADVERBS[match["adverb"].casefold()])
+    if groups.get("everyday"):
+        return (count, "day")
+    if groups.get("period"):
+        return (count, match["period"].casefold())
+    if groups.get("slashed"):
+        return (count, match["slashed"].casefold())
+    raise ValueError(f"a frequency pattern matched without a reading: {match.group()!r}")
 
 
 def _scan(text: str) -> tuple[list[tuple[str, Span]], list[int]]:
@@ -390,9 +550,15 @@ def _spelling_after(text: str, number_span: Span) -> tuple[str, int] | None:
     if letters is None or not _word_ends(folded, letters.end()):
         return None
     spelling = letters.group().casefold()
+    stop = letters.end()
+    if spelling in ("fl", "fluid"):  # "fl oz" and "fluid ounces" are the ounce, "fl" is nothing
+        fluid = _FLUID_OUNCE.match(folded, stop)
+        if fluid is None or not _word_ends(folded, fluid.end()):
+            return None
+        spelling, stop = "oz", fluid.end()
     if spelling not in _UNIT_SPELLINGS:
         return None
-    return spelling, origin[letters.end() - 1] + 1
+    return spelling, origin[stop - 1] + 1
 
 
 def _fold_after(text: str, start: int) -> tuple[str, list[int]]:

@@ -1,5 +1,6 @@
 """Deciding each line's status from its quotes, numbers and units."""
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.demo import DEMO_FACILITIES, load_demo_cases
@@ -15,6 +16,7 @@ from nursing_core.domain.notes import (
 from nursing_core.domain.units import Ucum, UnitDefaults
 from nursing_core.pipeline.redact import redact, restore
 from nursing_core.pipeline.text import prepare
+from nursing_core.pipeline.unit_check import written_unit
 from nursing_core.pipeline.verify import check_line, default_unit, recheck_line, restore_line
 
 PH = UnitDefaults(temperature=Ucum.CEL, weight=None, volume=Ucum.ML)
@@ -677,6 +679,41 @@ def test_a_dose_unit_must_agree_with_the_note_and_a_bare_note_number_has_none() 
         assert _kinds(line) == [MismatchKind.UNIT], (note, drafted)
 
 
+def test_ounces_drafted_as_millilitres_are_flagged() -> None:
+    line = _check("PO intake 8 oz", "PO intake 8 mL.", ["PO intake 8 oz"])
+    assert _kinds(line) == [MismatchKind.UNIT]
+    [mismatch] = line.number_mismatches
+    assert (mismatch.draft_text, mismatch.draft_span) == ("8 mL", Span(start=10, end=14))
+    assert (mismatch.note_text, mismatch.note_span) == ("8 oz", Span(start=10, end=14))
+    for drafted in (
+        "PO intake 8 oz.",
+        "PO intake 8 ounces.",
+        "PO intake 8 fl oz.",
+        "PO intake 8 OZ.",
+    ):
+        assert _check("PO intake 8 oz", drafted, ["PO intake 8 oz"]).status is (
+            LineStatus.SOURCE_FOUND
+        ), drafted
+    assert _kinds(_check("PO intake 8", "8 oz", ["PO intake 8"])) == [MismatchKind.UNIT]
+    assert _kinds(_check("8 oz", "240 mL", ["8 oz"])) == [MismatchKind.VALUE]
+
+
+def test_more_ounce_spellings_drafted_as_millilitres_are_flagged() -> None:
+    for written in ("8 fl ounces", "8 ozs", "8 fluid ounces", "8 fl\noz", "8 FLUID OZ"):
+        note = f"PO intake {written}"
+        [mismatch] = _check(note, "PO intake 8 mL.", [note]).number_mismatches
+        assert mismatch.kind is MismatchKind.UNIT, written
+        assert (mismatch.note_text, mismatch.note_span) == (
+            written,
+            Span(start=10, end=10 + len(written)),
+        ), written
+        assert _check(note, "PO intake 8 oz.", [note]).status is LineStatus.SOURCE_FOUND, written
+    [mismatch] = _check("8 fl oz", "8 mL", ["8 fl oz"]).number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.UNIT, "8 mL")
+    assert mismatch.draft_span == Span(start=0, end=4)
+    assert (mismatch.note_text, mismatch.note_span) == ("8 fl oz", Span(start=0, end=7))
+
+
 def test_a_value_must_match_a_number_that_follows_the_same_label() -> None:
     line = _check("HR 112 RR 20", "HR 20, RR 112.", ["HR 112 RR 20"])
     assert _kinds(line) == [MismatchKind.VALUE, MismatchKind.VALUE]
@@ -756,6 +793,36 @@ def test_a_two_word_label_names_its_measure() -> None:
         assert _kinds(line) == [MismatchKind.VALUE], (note, swapped)
 
 
+def test_pulse_rate_label_pairs_with_hr() -> None:
+    faithful = _check("HR 88 RR 20", "Pulse rate 88.", ["HR 88 RR 20"])
+    assert faithful.status is LineStatus.SOURCE_FOUND
+    [mismatch] = _check("HR 88 RR 20", "Pulse rate 20.", ["HR 88 RR 20"]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+    note = "pulse rate 88, RR 20"
+    assert _check(note, "HR 88.", [note]).status is LineStatus.SOURCE_FOUND
+    [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+    assert mismatch.note_span == Span(start=11, end=13)
+
+
+def test_each_respiratory_rate_spelling_pairs_with_rr() -> None:
+    spellings = ("Respirations", "Respiration", "Resps", "Respiration rate")
+    note = "HR 88 RR 20"
+    for spelled in spellings:
+        faithful = f"{spelled} 20."
+        assert _check(note, faithful, [note]).status is LineStatus.SOURCE_FOUND, faithful
+        [mismatch] = _check(note, f"{spelled} 88.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "20"), spelled
+        assert mismatch.note_span == Span(start=9, end=11), spelled
+    for spelled in spellings:
+        note = f"{spelled.lower()} 20, HR 88"
+        assert _check(note, "RR 20.", [note]).status is LineStatus.SOURCE_FOUND, note
+        [mismatch] = _check(note, "RR 88.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "20"), note
+        start = len(spelled) + 1
+        assert mismatch.note_span == Span(start=start, end=start + 2), note
+
+
 def test_a_label_the_note_spells_the_same_way_still_decides_as_before() -> None:
     # A value the note gives under another spelling of the label doesn't excuse one the note
     # gives under the same spelling: "HR 92" stays a mismatch for "HR 88 ... PR 92".
@@ -766,6 +833,56 @@ def test_a_label_the_note_spells_the_same_way_still_decides_as_before() -> None:
     # The value the label names is paired even when the note spells the label another way.
     [mismatch] = _check("T 37.4 HR 88", "Temp 39.", ["T 37.4 HR 88"]).number_mismatches
     assert (mismatch.note_text, mismatch.note_span) == ("37.4", Span(start=2, end=6))
+
+
+def test_a_value_the_note_gives_only_under_other_measures_is_a_swap() -> None:
+    for note, text, drafted in (
+        ("HR 88 RR 20", "Temp 88.", "88"),
+        ("T 37.8->38.2", "HR 38.2.", "38.2"),
+        ("RR 20", "HR 20.", "20"),
+        ("Intake at 1200 mL, output 800 mL", "Intake 800 mL.", "800"),
+        ("Intake at 8 oz, output 6 oz", "Intake 6 oz.", "6"),
+    ):
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, drafted), note
+        assert (mismatch.note_text, mismatch.note_span) == (None, None), note
+    # The same measure under another spelling, a number with no label and a label outside the
+    # table are no swap.
+    for note, text in (
+        ("HR 88 RR 20", "Pulse 88."),
+        ("HR 88, 20 mins later", "RR 20."),
+        ("pulse ox 95%", "Sat 95%."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_value_the_line_may_mean_unlabelled_in_the_note_offers_no_note_number() -> None:
+    # A note number of the line's value with no label of the measures table may be the reading
+    # the line means ("now 110"), so the finding offers no note number: a one-click fix can't
+    # write the older reading.
+    for note, text, drafted in (
+        ("HR was 88, now 110", "HR 110.", "110"),
+        ("T was 39.1, now 37.8", "T 37.8.", "37.8"),
+        ("Pain was 8/10, now 3/10", "Pain 3/10.", "3/10"),
+        ("SpO2 was 88%, now 95%", "SpO2 95%.", "95"),
+        ("HR is 88 at rest, 110 on ambulation", "HR 110 on ambulation.", "110"),
+        ("amox 2 times a day, 500 mg", "Amox 500 mg 2 times a week.", "500"),
+        ("BP 140/90 -> 120/80 UO 200 mL", "BP 120/80.", "120/80"),
+        ("HR 88, later 110", "HR 88 -> 110.", "110"),
+    ):
+        line = _check(note, text, [note])
+        [mismatch] = [m for m in line.number_mismatches if m.draft_text == drafted]
+        assert mismatch.kind is MismatchKind.VALUE, note
+        assert (mismatch.note_text, mismatch.note_span) == (None, None), note
+    # A value the note gives only under labels of the table still offers the right number.
+    for note, text, offered, span in (
+        ("HR 88 RR 20", "HR 20.", "88", Span(start=3, end=5)),
+        ("T 37.4 HR 88", "Temp 88.", "37.4", Span(start=2, end=6)),
+        ("RR 18 calm", "RR 20.", "18", Span(start=3, end=5)),
+    ):
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE, note
+        assert (mismatch.note_text, mismatch.note_span) == (offered, span), note
 
 
 def test_more_spacings_and_an_ampersand_make_a_mixed_number_in_the_note() -> None:
@@ -1401,3 +1518,715 @@ def test_a_time_after_a_number_passes_when_the_note_gives_it_in_any_spelling() -
         ("ambulated 10 m", "Ambulated 10 m."),
     ]:
         assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def _frequency_findings(note: str, text: str) -> list[tuple[str, Span]]:
+    line = _check(note, text, [note])
+    for mismatch in line.number_mismatches:
+        assert mismatch.kind is MismatchKind.VALUE
+        assert (mismatch.note_text, mismatch.note_span) == (None, None)
+    return [(m.draft_text, m.draft_span) for m in line.number_mismatches]
+
+
+def test_weekly_note_drafted_as_daily_is_flagged() -> None:
+    for phrase in ("daily", "every day", "once a day"):
+        text = f"MTX 15 mg {phrase}."
+        line = _check("MTX 15 mg weekly", text, ["MTX 15 mg weekly"])
+        assert line.status is LineStatus.NUMBER_MISMATCH, phrase
+        [mismatch] = line.number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE
+        start = text.index(phrase)
+        assert (mismatch.draft_text, mismatch.draft_span) == (
+            phrase,
+            Span(start=start, end=start + len(phrase)),
+        )
+        assert (mismatch.note_text, mismatch.note_span) == (None, None)
+
+
+def test_daily_synonyms_pass() -> None:
+    spellings = ("daily", "every day", "once a day", "once daily", "each day", "once per day")
+    for a in spellings:
+        for b in spellings:
+            note = f"metformin 500 mg {a}"
+            line = _check(note, f"Metformin 500 mg {b}.", [note])
+            assert line.status is LineStatus.SOURCE_FOUND, (a, b)
+
+
+def test_weekly_synonyms_pass_and_weekly_against_daily_flags() -> None:
+    spellings = ("weekly", "every week", "each week", "once a week", "once per week", "once weekly")
+    for a in spellings:
+        for b in spellings:
+            assert _frequency_findings(f"MTX 15 mg {a}", f"MTX 15 mg {b}.") == [], (a, b)
+    assert _frequency_findings("MTX 15 mg daily", "MTX 15 mg weekly.") == [
+        ("weekly", Span(start=10, end=16))
+    ]
+
+
+def test_counted_frequencies_pass_each_other_when_the_count_is_spelled_alike() -> None:
+    # A count in words ("twice", "three") and a count in digits are checked as numbers, as before:
+    # "2 times a day" for a note's "twice daily" flags the "2".
+    for group in (
+        ("twice daily", "twice a day", "twice per day"),
+        ("2 times a day", "2x daily", "2 x a day", "2.0 times per day", "2 times daily"),
+        ("three times a day", "three times daily"),
+    ):
+        for a in group:
+            for b in group:
+                found = _frequency_findings(f"paracetamol 500 mg {a}", f"Paracetamol 500 mg {b}.")
+                assert found == [], (a, b)
+
+
+def test_a_different_count_or_period_is_flagged_on_the_frequency() -> None:
+    assert _frequency_findings("amox 3 times a day", "Amox 3 times a week.") == [
+        ("3 times a week", Span(start=5, end=19))
+    ]
+    assert _frequency_findings("amox twice daily", "Amox once a day.") == [
+        ("once a day", Span(start=5, end=15))
+    ]
+    assert _frequency_findings("amox once a day", "Amox twice daily.") == [
+        ("twice daily", Span(start=5, end=16))
+    ]
+
+
+def test_every_other_day_is_not_every_day() -> None:
+    assert _frequency_findings("enox 40 mg every day", "Enox 40 mg every other day.") == [
+        ("every other day", Span(start=11, end=26))
+    ]
+    assert _frequency_findings("enox 40 mg every other day", "Enox 40 mg every day.") == [
+        ("every day", Span(start=11, end=20))
+    ]
+    assert _frequency_findings("enox 40 mg every other day", "Enox 40 mg every other day.") == []
+
+
+def test_od_is_not_daily_and_an_abbreviation_is_not_a_phrase() -> None:
+    assert _frequency_findings("enox 40 mg daily", "Enox 40 mg OD.") == [
+        ("OD", Span(start=11, end=13))
+    ]
+    assert _frequency_findings("enox 40 mg OD", "Enox 40 mg daily.") == [
+        ("daily", Span(start=11, end=16))
+    ]
+    assert _frequency_findings("enox 40 mg BID", "Enox 40 mg twice a day.") == [
+        ("twice a day", Span(start=11, end=22))
+    ]
+    assert _frequency_findings("enox 40 mg QOD", "Enox 40 mg every other day.") == [
+        ("every other day", Span(start=11, end=26))
+    ]
+
+
+def test_a_frequency_the_quotes_lack_replaces_the_findings_it_overlaps() -> None:
+    assert _frequency_findings("amox daily", "Amox twice daily.") == [
+        ("twice daily", Span(start=5, end=16))
+    ]
+    assert _frequency_findings("amox 500 mg", "Amox 500 mg 3 times a day.") == [
+        ("3 times a day", Span(start=12, end=25))
+    ]
+    # A one-click "use the numbers from your note" must not keep a wrong period.
+    assert _frequency_findings("amox 2 times a week", "Amox 3 times a day.") == [
+        ("3 times a day", Span(start=5, end=18))
+    ]
+
+
+def test_a_frequency_the_quotes_give_leaves_the_number_findings_standing() -> None:
+    assert [d for d, _ in _frequency_findings("amox 2x daily", "Amox twice daily.")] == ["twice"]
+    assert [d for d, _ in _frequency_findings("amox twice daily", "Amox 2x daily.")] == ["2"]
+
+
+def test_a_dose_unit_finding_beside_a_wrong_frequency_stays() -> None:
+    # The frequency replaces only the findings it overlaps: the dose's unit is still flagged.
+    note = "MTX 15 mg weekly"
+    line = _check(note, "MTX 15 g daily.", [note])
+    assert [(m.kind, m.draft_text, m.note_text) for m in line.number_mismatches] == [
+        (MismatchKind.UNIT, "15 g", "15 mg"),
+        (MismatchKind.VALUE, "daily", None),
+    ]
+    assert [m.draft_span for m in line.number_mismatches] == [
+        Span(start=4, end=8),
+        Span(start=9, end=14),
+    ]
+
+
+def test_a_count_before_every_or_each_is_a_count() -> None:
+    note = "metformin 500 mg daily, 2 tabs"
+    assert _frequency_findings(note, "Metformin 500 mg 2 times every day.") == [
+        ("2 times every day", Span(start=17, end=34))
+    ]
+    assert _frequency_findings(note, "Metformin 500 mg 2x every day.") == [
+        ("2x every day", Span(start=17, end=29))
+    ]
+    note = "metformin 500 mg daily, vomited twice"
+    assert _frequency_findings(note, "Metformin 500 mg twice every day.") == [
+        ("twice every day", Span(start=17, end=32))
+    ]
+    assert _frequency_findings("MTX 15 mg weekly, 3 tabs", "MTX 15 mg 3 times each week.") == [
+        ("3 times each week", Span(start=10, end=27))
+    ]
+    assert _frequency_findings("amox twice a day", "Amox twice every day.") == []
+
+
+def test_a_frequency_is_read_in_any_case_and_with_hyphens() -> None:
+    assert _frequency_findings("amox ONCE-A-DAY", "Amox once a day.") == []
+    assert _frequency_findings("amox once daily", "Amox ONCE-A-DAY.") == []
+    assert _frequency_findings("amox daily", "Amox EVERY\nDAY.") == []
+
+
+def test_only_whole_words_are_frequencies() -> None:
+    assert _frequency_findings("amox daily", "Amox Everyday.") == []
+    for text in ("Dailies done.", "Weekday shift.", "Everything done."):
+        assert _frequency_findings("pt resting", text) == [], text
+
+
+def test_a_count_before_every_night_shift_or_other_is_a_count() -> None:
+    for note, text, phrase in [
+        (
+            "melatonin 3 mg nightly, 2 tabs",
+            "Melatonin 3 mg 2 times every night.",
+            "2 times every night",
+        ),
+        (
+            "melatonin 3 mg nightly, vomited twice",
+            "Melatonin 3 mg twice each night.",
+            "twice each night",
+        ),
+        ("turn pt every shift, 2 staff", "Turn pt 2 times every shift.", "2 times every shift"),
+        ("turn pt every shift, vomited twice", "Turn pt twice each shift.", "twice each shift"),
+        (
+            "enox 40 mg every other day, 2 tabs",
+            "Enox 40 mg 2 times every other day.",
+            "2 times every other day",
+        ),
+        (
+            "enox 40 mg every other day, vomited twice",
+            "Enox 40 mg twice every other day.",
+            "twice every other day",
+        ),
+    ]:
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], text
+    assert (
+        _frequency_findings(
+            "enox 40 mg 2 times every other day", "Enox 40 mg 2 times every other day."
+        )
+        == []
+    )
+
+
+def test_a_count_before_everyday_and_every_other_night_is_a_count() -> None:
+    for note, text, phrase in [
+        (
+            "metformin 500 mg daily, 2 tabs",
+            "Metformin 500 mg 2 times everyday.",
+            "2 times everyday",
+        ),
+        ("metformin 500 mg daily, 2 tabs", "Metformin 500 mg 2x everyday.", "2x everyday"),
+        (
+            "metformin 500 mg every day, vomited twice",
+            "Metformin 500 mg twice everyday.",
+            "twice everyday",
+        ),
+        (
+            "melatonin 3 mg nightly, 2 tabs",
+            "Melatonin 3 mg 2 times per night.",
+            "2 times per night",
+        ),
+        (
+            "melatonin 3 mg nightly, 2 tabs",
+            "Melatonin 3 mg 2 times every other night.",
+            "2 times every other night",
+        ),
+        ("melatonin 3 mg nightly", "Melatonin 3 mg every other night.", "every other night"),
+    ]:
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], text
+    assert _frequency_findings("turn pt every other shift", "Turn pt every other shift.") == []
+    assert (
+        _frequency_findings("melatonin 3 mg twice a night", "Melatonin 3 mg twice a night.") == []
+    )
+
+
+def test_a_dose_then_a_or_an_and_a_period_is_checked_as_a_frequency() -> None:
+    for note in ("MTX 15 mg weekly", "MTX 15 mg once a week"):
+        assert _frequency_findings(note, "MTX 15 mg a day.") == [
+            ("a day", Span(start=10, end=15))
+        ], note
+    for note, text in (
+        ("metformin 500 mg daily", "Metformin 500 mg a day."),
+        ("MTX 15 mg weekly", "MTX 15 mg a week."),
+        ("metformin 500 mg once a day", "Metformin 500 mg a day."),
+    ):
+        assert _frequency_findings(note, text) == [], (note, text)
+    # Only the line reads "a day" after a dose: a note's "15 mg a day" gives no frequency, so it
+    # can't stand for the line's "weekly" or "once a day" (the safe direction, as before "a day"
+    # was read at all).
+    assert _frequency_findings("MTX 15 mg a week", "MTX 15 mg weekly.") == [
+        ("weekly", Span(start=10, end=16))
+    ]
+    assert _frequency_findings("metformin 500 mg a day", "Metformin 500 mg once a day.") == [
+        ("once a day", Span(start=17, end=27))
+    ]
+    # "a day" after no dose is no frequency, so it can't stand for "daily".
+    note = "fever for a day, MTX 15 mg weekly"
+    assert _frequency_findings(note, "MTX 15 mg daily.") == [("daily", Span(start=10, end=15))]
+
+
+def test_a_quote_never_gives_a_frequency_by_a_or_an_and_a_period_after_a_dose() -> None:
+    # A quote may stop before the "ago" ("last dose 15 mg a day"), and a time phrase may have more
+    # words ("a day or two ago"): so a quoted "15 mg a day" can't stand for "daily".
+    note = "MTX 15 mg weekly, last dose 15 mg a day ago"
+    for quotes in (["last dose 15 mg a day"], ["MTX 15 mg weekly", "last dose 15 mg a day"]):
+        [mismatch] = _check(note, "MTX 15 mg daily.", quotes).number_mismatches
+        assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "daily"), quotes
+        assert (mismatch.note_text, mismatch.note_span) == (None, None), quotes
+    note = "started metformin 500 mg a week ago, now 500 mg daily"
+    line = _check(note, "Metformin 500 mg weekly.", ["started metformin 500 mg a week"])
+    [mismatch] = line.number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "weekly")
+    assert (mismatch.note_text, mismatch.note_span) == (None, None)
+    for note, text in (
+        ("MTX 15 mg weekly, last dose 15 mg a day or two ago", "MTX 15 mg daily."),
+        ("metformin 500 mg daily, started 500 mg a week or so ago", "Metformin 500 mg weekly."),
+        ("metformin 500 mg daily, started 500 mg a week back", "Metformin 500 mg weekly."),
+        ("MTX 15 mg weekly, given 15 mg a day after the infusion", "MTX 15 mg daily."),
+        ("metformin 500 mg daily, 500 mg a week and a half ago", "Metformin 500 mg weekly."),
+        ("MTX 15 mg weekly, 15 mg a day since", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day previously", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day (ago)", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day - ago", "MTX 15 mg daily."),
+        ("MTX 15 mg weekly, 15 mg a day... ago", "MTX 15 mg daily."),
+    ):
+        phrase = text.split()[-1].rstrip(".")
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], note
+
+
+def test_a_dose_then_a_or_an_and_a_period_before_a_time_word_is_no_frequency() -> None:
+    # "a day ago" says when, not how often, so it can't stand for "daily".
+    for note, text, phrase in (
+        ("MTX 15 mg weekly, last dose 15 mg a day ago", "MTX 15 mg daily.", "daily"),
+        (
+            "started metformin 500 mg a week ago, now 500 mg daily",
+            "Metformin 500 mg weekly.",
+            "weekly",
+        ),
+        ("MTX 15 mg weekly, given 15 mg a day early", "MTX 15 mg daily.", "daily"),
+        ("IVF 1 L every shift, 1 L a night before", "IVF 1 L nightly.", "nightly"),
+    ):
+        start = text.index(phrase)
+        assert _frequency_findings(note, text) == [
+            (phrase, Span(start=start, end=start + len(phrase)))
+        ], note
+
+
+def test_a_count_then_a_slash_and_a_period_is_checked_as_a_frequency() -> None:
+    # The "2" of "SpO2" can't make "2x/day" pass for a once-daily dose.
+    note = "SpO2 95%, metformin 500 mg daily"
+    assert _frequency_findings(note, "Metformin 500 mg 2x/day.") == [
+        ("2x/day", Span(start=17, end=23))
+    ]
+    note = "metformin 500 mg daily, 2 tabs"
+    assert _frequency_findings(note, "Metformin 500 mg 2 times/day.") == [
+        ("2 times/day", Span(start=17, end=28))
+    ]
+    for note, text in (
+        ("metformin 500 mg 2x daily", "Metformin 500 mg 2x/day."),
+        ("metformin 500 mg 2 times a day", "Metformin 500 mg 2 times / day."),
+        ("metformin 500 mg twice a day", "Metformin 500 mg twice/day."),
+        ("metformin 500 mg 2x/day", "Metformin 500 mg 2 times daily."),
+    ):
+        assert _frequency_findings(note, text) == [], (note, text)
+
+
+def test_label_with_is_at_tilde_or_paren_reads_the_number() -> None:
+    for form in ("HR is 88", "HR was 88", "HR at 88", "HR of 88", "HR ~88", "HR (88)"):
+        note = f"{form}, RR 20"
+        [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+        assert mismatch.kind is MismatchKind.VALUE, form
+        assert mismatch.note_text == "88", form
+        assert _check(note, "HR 88.", [note]).status is LineStatus.SOURCE_FOUND, form
+    [mismatch] = _check("HR 88 RR 20", "Heart rate is 20.", ["HR 88 RR 20"]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+    note = "pulse rate is 88, RR 20"
+    [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "88")
+
+
+def test_a_label_reads_past_every_joiner_in_order() -> None:
+    for form, offered in (
+        ("HR ~ 88", "88"),
+        ("HR: ~88", "88"),
+        ("HR is >100", "100"),
+        ("HR (>100)", "100"),
+        ("HR >= 100", "100"),
+        ("heart rate (88)", "88"),
+    ):
+        note = f"{form}, RR 20"
+        [mismatch] = _check(note, "HR 20.", [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, offered), form
+        start = note.index(offered)
+        assert mismatch.note_span == Span(start=start, end=start + len(offered)), form
+
+
+def test_a_joining_word_with_no_label_before_it_stays_the_label() -> None:
+    note = "at 0800 HR 88"
+    line = _check(note, "HR 88 at 0800.", [note])
+    assert line.status is LineStatus.SOURCE_FOUND
+    # "at" is the label of both times, so a wrong time is paired with the note's time.
+    note = "at 0800, HR 88"
+    [mismatch] = _check(note, "At 0900.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "0900")
+    assert (mismatch.note_text, mismatch.note_span) == ("0800", Span(start=3, end=7))
+
+
+def test_lost_comparator_is_flagged() -> None:
+    note = "HR >100 sustained"
+    [mismatch] = _check(note, "HR 100.", [note]).number_mismatches
+    assert mismatch.kind is MismatchKind.VALUE
+    assert (mismatch.draft_text, mismatch.draft_span) == ("100", Span(start=3, end=6))
+    assert (mismatch.note_text, mismatch.note_span) == (">100", Span(start=3, end=7))
+    for faithful in ("HR >100.", "HR > 100."):
+        assert _check(note, faithful, [note]).status is LineStatus.SOURCE_FOUND, faithful
+    [mismatch] = _check(note, "HR <100.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.draft_text) == (MismatchKind.VALUE, "<100")
+    assert (mismatch.draft_span, mismatch.note_text) == (Span(start=3, end=7), ">100")
+    equal = "HR >=100"
+    assert _check(equal, "HR ≥100.", [equal]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR ≤100", "HR <=100.", ["HR ≤100"]).status is LineStatus.SOURCE_FOUND
+    [mismatch] = _check("HR 100", "HR >100.", ["HR 100"]).number_mismatches
+    assert (mismatch.draft_text, mismatch.draft_span) == (">100", Span(start=3, end=7))
+    assert (mismatch.note_text, mismatch.note_span) == ("100", Span(start=3, end=6))
+    arrow = "HR 88->110"
+    assert _check(arrow, "HR 110.", [arrow]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR 88-->110", "HR 110.", ["HR 88-->110"]).status is LineStatus.SOURCE_FOUND
+    assert _kinds(_check(arrow, "HR 20.", [arrow])) == [MismatchKind.VALUE]
+    assert _check("HR 88=>110", "HR 110.", ["HR 88=>110"]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR ~88", "HR 88.", ["HR ~88"]).status is LineStatus.SOURCE_FOUND
+    assert _check("HR 88", "HR ~88.", ["HR 88"]).status is LineStatus.SOURCE_FOUND
+
+
+def test_a_lost_comparator_ends_that_numbers_checks() -> None:
+    note = "NS >100 mL/hr"
+    [mismatch] = _check(note, "NS 100 L/hr.", [note]).number_mismatches
+    assert mismatch.kind is MismatchKind.VALUE
+    assert (mismatch.draft_text, mismatch.note_text) == ("100", ">100")
+
+
+def test_a_two_word_label_from_the_table_is_the_label_as_a_whole() -> None:
+    cases = [
+        ("resp rate 20, pulse rate 88", "Pulse rate 22.", "88", Span(start=25, end=27)),
+        ("pulse rate 88, resp rate 20", "Resp rate 22.", "20", Span(start=25, end=27)),
+        ("resp rate 20, heart rate 88", "Pulse rate 22.", "88", Span(start=25, end=27)),
+    ]
+    for note, text, expected, span in cases:
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, expected), text
+        assert mismatch.note_span == span, text
+    note = "heart rate 88, RR 20"
+    assert _check(note, "Resp rate 20.", [note]).status is LineStatus.SOURCE_FOUND
+    note = "pulse rate 88, IV rate 100 mL/hr"
+    [mismatch] = _check(note, "IV rate 88 mL/hr.", [note]).number_mismatches
+    assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, "100")
+    assert mismatch.note_span == Span(start=23, end=26)
+
+
+def test_a_joining_word_before_a_time_or_a_setting_stays_the_label() -> None:
+    rows = [
+        ("BP at 0600 90/60", "BP 90/60 at 0600."),
+        ("T at 2200 38.9", "T 38.9 at 2200."),
+        ("HR at 0800 was 110", "HR 110 at 0800."),
+        ("HR at 0800 110, at 1000 96", "HR 96 at 1000."),
+        ("Sat at 2L 95%", "Sat 95%."),
+        ("BP at 10:30 90/60", "BP 90/60 at 10:30."),
+        ("Temp at 2pm 38.9", "Temp 38.9 at 2pm."),
+        ("Temp at 10 am 38.9", "Temp 38.9 at 10 am."),
+    ]
+    for note, text in rows:
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, (note, text)
+
+
+def test_a_joining_word_before_a_vital_is_still_read_past() -> None:
+    for note, text, expected in (
+        ("HR at 88, RR 20", "HR 20.", "88"),
+        ("HR at 110, RR 20", "HR 20.", "110"),
+        ("HR is 88 bpm, RR 20", "HR 20 bpm.", "88"),
+        ("SpO2 at 95%, HR 80", "SpO2 80%.", "95"),
+    ):
+        [mismatch] = _check(note, text, [note]).number_mismatches
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, expected), note
+
+
+def test_a_number_after_an_arrow_takes_the_label_only_when_written_alike() -> None:
+    for note, text in (
+        ("HR 88->110", "HR 110."),
+        ("SpO2 88%->95%", "SpO2 95%."),
+        ("T 38.5 C -> 37.8 C", "T 37.8 C."),
+        ("HR 88->100->110", "HR 110."),
+        ("BP 90/60 => 100/70", "BP 100/70."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+    for note, text in (
+        ("Pain 8/10 -> 2 mg morphine given", "Pain 2."),
+        ("BP 90/60 -> 500 mL NS bolus", "BP 500."),
+        ("HR 88 -> RR 20", "HR 20."),
+        ("HR 88 bpm -> 110", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    note = "Temp 39.2, paracetamol 650 mg given"
+    line = _check(note, "Temp 39.2 -> 650 mg paracetamol given.", [note])
+    assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_a_very_long_note_of_arrows_is_checked_without_error() -> None:
+    note = "HR 1" + "->1" * 1500
+    assert _check(note, "HR 1.", [note]).status is LineStatus.SOURCE_FOUND
+    line = _check("HR 88", "HR 88" + "->88" * 1500 + ".", ["HR 88"])
+    assert line.status is LineStatus.SOURCE_FOUND
+
+
+def test_units_are_read_once_per_number_not_once_per_quote() -> None:
+    note = " ".join(f"HR {80 + i}" for i in range(40))
+    quotes = [f"HR {80 + i}" for i in range(40)]
+    text = "HR 80."
+    calls = 0
+
+    def counting(raw: str, span: Span) -> object:
+        nonlocal calls
+        calls += 1
+        return written_unit(raw, span)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("nursing_core.pipeline.verify.written_unit", counting)
+        line = _check(note, text, quotes)
+    assert line.status is LineStatus.SOURCE_FOUND
+    assert calls <= 40 + 1
+
+
+def test_a_number_after_an_arrow_needs_the_same_words_after_it() -> None:
+    for note, text in (
+        ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
+        ("HR 120 -> 1 tab metoprolol", "HR 1."),
+        ("HR 88 bpm -> 20 cpm", "HR 20."),
+        ("IV 100/hr -> 80", "IV 80."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("HR 88 bpm -> 110 bpm", "HR 110 bpm."),
+        ("SpO2 88%->95%", "SpO2 95%."),
+        ("T 38.5 C -> 37.8 C", "T 37.8 C."),
+        ("HR 88->110", "HR 110."),
+        ("HR 88 -> >110", "HR >110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_only_at_keeps_a_time_or_a_setting_as_the_label() -> None:
+    for note, text in (
+        ("Intake was 1200 mL, output 800 mL", "Intake 800 mL."),
+        ("UO was 30 mL/hr, IVF 80 mL/hr", "UO 80 mL/hr."),
+        ("Intake of 1200, output 800", "Intake 800."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (("HR at 2400 110", "HR 110."),):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_decimal_after_at_is_a_value_not_a_time() -> None:
+    for note, text in (
+        ("K at 3.50, Na 135", "K 135."),
+        ("FiO2 at 0.40, PEEP 5", "FiO2 5."),
+        ("BP at 10.30 90/60", "BP 90/60."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+
+
+def test_a_symbol_unit_after_an_arrow_counts_as_what_is_written_after_it() -> None:
+    for note, text in (
+        ("HR 88 -> 38.5°C", "HR 38.5."),
+        ("HR 88 -> 101°F", "HR 101."),
+        ("Pain 8 -> 37.9°C", "Pain 37.9."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    note = "T 38.5 °C -> 37.8 °C"
+    assert _check(note, "T 37.8 °C.", [note]).status is LineStatus.SOURCE_FOUND
+
+
+def test_the_next_reading_after_an_arrow_does_not_stop_the_label() -> None:
+    for note, text in (
+        ("HR 88->110 RR 20", "HR 110."),
+        ("BP 90/60->100/70 HR 88", "BP 100/70."),
+        ("HR 88->110 resp rate 20", "HR 110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+    for note, text in (
+        ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
+        ("HR 88->110 sustained", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+
+
+def test_each_line_reads_only_the_note_numbers_its_quotes_overlap() -> None:
+    note = " ".join(f"HR {80 + i}" for i in range(300))
+    calls = 0
+
+    def counting(raw: str, span: Span) -> object:
+        nonlocal calls
+        calls += 1
+        return written_unit(raw, span)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("nursing_core.pipeline.verify.written_unit", counting)
+        for i in (3, 150, 290):
+            calls = 0
+            quotes = [f"HR {80 + i}", f"HR {81 + i}"]
+            line = _check(note, f"HR {80 + i}.", quotes)
+            assert line.status is LineStatus.SOURCE_FOUND
+            assert calls <= 2 + 1
+
+
+def test_a_sign_written_after_a_number_after_an_arrow_is_what_is_written_after_it() -> None:
+    for note in (
+        "HR 88 -> 38.5°",
+        "HR 88 -> 38.5 °",
+        "HR 88 -> 38.5°c",
+        "HR 88 -> 38.5°f",
+        "HR 88 -> 38.5*C",
+    ):
+        [mismatch] = _check(note, "HR 38.5.", [note]).number_mismatches
+        # The note's 38.5 takes no label, so the line may mean it: no note number is offered,
+        # as a one-click fix could write the other reading over it.
+        assert (mismatch.kind, mismatch.note_text) == (MismatchKind.VALUE, None), note
+        assert mismatch.note_span is None, note
+    for note, text in (
+        ("IV 100 per hr -> 80 per min", "IV 80."),
+        ("IV 100 / hr -> 80 / min", "IV 80."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("T 38.5 °C -> 37.8 °C", "T 37.8 °C."),
+        ("IV 100 / hr -> 80 / hr", "IV 80 / hr."),
+        ("SpO2 88%->95%", "SpO2 95%."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_measures_word_after_an_arrow_starts_the_next_reading_only_before_a_number() -> None:
+    for note, text in (
+        ("HR 88 -> 37.8 o C", "HR 37.8."),
+        ("HR 88 -> 37 o", "HR 37."),
+        ("HR 120 -> 94 sats", "HR 94."),
+        ("HR 120 -> 37.9 temp", "HR 37.9."),
+        ("CBG 250 -> 4 i.u.", "CBG 4."),
+        ("HR 88 -> 2 in", "HR 2."),
+        ("Intake 500 -> 300 output", "Intake 300."),
+        ("HR 120 -> 94 sat at 0800", "HR 94."),
+        ("HR 120 -> 94 sat at 2L", "HR 94."),
+        ("Pain 8 -> 2\u00a0tabs paracetamol given", "Pain 2."),
+        # A label too far before its number is no label, and a run too long to read is alike
+        # to nothing.
+        ("HR 88->110" + " " * 70 + "RR 20", "HR 110."),
+        ("Pain 8 -> 2" + "x" * 70, "Pain 2."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    # What follows a number is read past the quote's end, whatever the quote.
+    note = "HR 120 -> 94 sat at 2L"
+    assert _kinds(_check(note, "HR 94.", ["HR 120 -> 94 sat"])) == [MismatchKind.VALUE]
+    for note, text in (
+        ("HR 88->110, RR 20", "HR 110."),
+        ("HR 88->110\nRR 20", "HR 110."),
+        ("HR 88->110 RR: 20", "HR 110."),
+        ("HR 88->110 RR is 20", "HR 110."),
+        ("HR 88->110 RR at 20", "HR 110."),
+        ("HR 88->110 pulse rate (90)", "HR 110."),
+        ("HR 88 -> 110.", "HR 110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_measures_word_glued_to_the_next_number_does_not_start_the_next_reading() -> None:
+    for note, text in (
+        ("HR 120 -> 94 O2", "HR 94."),
+        ("HR 120 -> 94 O2 via NC", "HR 94."),
+        ("HR 120 -> 94 o2 on RA", "HR 94."),
+        ("HR 120 -> 94 O2 sat", "HR 94."),
+        ("Temp 39.1 -> 94 o2 RA", "Temp 94."),
+        ("Pain 8 -> 2 O2 started", "Pain 2."),
+        ("RR 30 -> 2 o2 lpm", "RR 2."),
+        ("HR 88 -> 37 t2", "HR 37."),
+        ("Pain 8 -> 2 i2", "Pain 2."),
+        ("HR 88->110 RR20", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note
+    note = "HR 120 -> 94 O2"
+    assert _kinds(_check(note, "HR 94.", ["HR 120 -> 94"])) == [MismatchKind.VALUE]
+    note = "CBG 94 -> >0800 o2"
+    [mismatch] = _check(note, "CBG 0800.", [note]).number_mismatches
+    # The note's 0800 takes no label, so the line may mean it: no note number is offered, as a
+    # one-click fix could write the 94 over it.
+    assert (mismatch.kind, mismatch.note_text, mismatch.note_span) == (
+        MismatchKind.VALUE,
+        None,
+        None,
+    )
+
+
+def test_a_measures_word_before_a_setting_does_not_start_the_next_reading() -> None:
+    for form in ("sat 2L", "sat (2L)", "sat: 2L", "sat is 2L", "sat of 2L", "sat 2 lpm"):
+        note = f"HR 120 -> 94 {form}"
+        assert _kinds(_check(note, "HR 94.", [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("HR 88->110 RR 20", "HR 110."),
+        ("HR 88->110 RR 20 cpm", "HR 110."),
+        ("HR 88->110 T 37.8 C", "HR 110."),
+    ):
+        assert _check(note, text, [note]).status is LineStatus.SOURCE_FOUND, note
+
+
+def test_a_run_of_punctuation_after_a_number_after_an_arrow_is_skipped_for_what_follows() -> None:
+    # Nothing after the punctuation, or a label the next number follows: the label is carried.
+    for after in (
+        "!",
+        "?",
+        " (",
+        " -",
+        "...",
+        "\u2026",
+        " - RR 20",
+        " -- RR 20",
+        " : RR: 20",
+        "! RR 20",
+    ):
+        note = f"HR 88->110{after}"
+        assert _check(note, "HR 110.", [note]).status is LineStatus.SOURCE_FOUND, note
+    # Anything else after it is what is written after the number, so the label is not carried.
+    for after in (
+        " - MD notified",
+        ": improving",
+        " ... improving",
+        " \u2013 MD aware",
+        " \u2014 MD aware",
+        "\u2026 improving",
+        " -- stable",
+        " - 2 tabs given",
+        " -- 2 mg given",
+    ):
+        note = f"HR 88->110{after}"
+        assert _kinds(_check(note, "HR 110.", [note])) == [MismatchKind.VALUE], note
+    for note, text in (
+        ("Pain 8 -> 2 - tabs", "Pain 2."),
+        ("HR 88 -> 37.8 - °C", "HR 37.8."),
+        ("HR 88 -> 38.5: temp", "HR 38.5."),
+        ("HR 120 -> 94 : O2 sat", "HR 94."),
+        ("HR 120 -> 94 ( sats )", "HR 94."),
+        ("HR 120 -> 94 - sats", "HR 94."),
+        ("HR 88 -> 38.5°", "HR 38.5."),
+        ("HR 88 -> 38.5*C", "HR 38.5."),
+        ("Pain 8 -> 2 tabs paracetamol given", "Pain 2."),
+        ("HR 88->110 (after bolus)", "HR 110."),
+        ("HR 88->110.Given", "HR 110."),
+        ("HR 88->110 -x", "HR 110."),
+    ):
+        assert _kinds(_check(note, text, [note])) == [MismatchKind.VALUE], note

@@ -1,5 +1,6 @@
 """Finding numbers in a line and reading the unit written right after one."""
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nursing_core.domain.notes import Span
@@ -7,6 +8,7 @@ from nursing_core.domain.units import Ucum
 from nursing_core.pipeline.unit_check import (
     WrittenUnit,
     bare_rate_end_after,
+    frequencies_in,
     number_value,
     numbers_in,
     time_after,
@@ -305,6 +307,36 @@ def test_rate_denominators_are_read_by_meaning() -> None:
         assert written.rate == rate, text
 
 
+def test_every_ounce_spelling_is_the_compared_unit_oz() -> None:
+    for text in (
+        "8 oz",
+        "8 OZ",
+        "8 ozs",
+        "8 ounce",
+        "8 ounces",
+        "8 fl oz",
+        "8 fl. oz",
+        "8 FL.OZ",
+        "8oz",
+        "8 fl ozs",
+        "8 fl ounce",
+        "8 fl ounces",
+        "8 fluid oz",
+        "8 fluid ounces",
+        "8 FLUID OUNCES",
+        "8 fl\noz",
+        "8 fluid\nounces",
+    ):
+        written = _written(text, "8")
+        assert written is not None, text
+        assert (written.compared, written.rate, written.end) == ("oz", (), len(text)), text
+    rate = _written("8 oz/hr", "8")
+    assert rate is not None
+    assert (rate.compared, rate.rate) == ("oz", ("hour",))
+    for text in ("8 fl", "8 fl ozone", "8 fluid", "8 fluids", "8 fluid intake", "8 fluid ozone"):
+        assert _written(text, "8") is None, text
+
+
 def test_a_slash_then_a_digit_ends_the_unit() -> None:
     written = _written("D5LR 1L/8hrs", "1")
     assert written is not None
@@ -446,7 +478,219 @@ def test_only_a_whole_time_word_right_after_the_number_is_read() -> None:
         assert _time(text, "8") is None, text
 
 
-def test_frequency_words_are_words_with_a_number_in_them() -> None:
-    found = words_with_numbers("MTX 15 mg weekly, then PRN; Status BID.")
-    assert [word for word, _ in found] == ["weekly", "PRN", "BID"]
-    assert found[2][1] == Span(start=35, end=38)
+def test_frequency_words_are_no_longer_words_with_a_number_in_them() -> None:
+    found = words_with_numbers("MTX 15 mg weekly, then PRN; twice BID.")
+    assert [word for word, _ in found] == ["twice"]
+
+
+def _meanings(text: str) -> list[tuple[str, tuple[int, int], object]]:
+    return [(f.text, (f.span.start, f.span.end), f.meaning) for f in frequencies_in(text)]
+
+
+def test_frequencies_are_read_with_their_span_and_meaning() -> None:
+    assert _meanings("MTX 15 mg every day.") == [("every day", (10, 19), (1, "day"))]
+    assert _meanings("Given Once-A-Day") == [("Once-A-Day", (6, 16), (1, "day"))]
+    assert _meanings("x\nweekly") == [("weekly", (2, 8), (1, "week"))]
+    assert _meanings("PRN and BID") == [
+        ("PRN", (0, 3), ("abbreviation", "prn")),
+        ("BID", (8, 11), ("abbreviation", "bid")),
+    ]
+
+
+def test_the_longest_reading_wins_left_to_right() -> None:
+    assert [f.text for f in frequencies_in("once daily")] == ["once daily"]
+    assert [f.text for f in frequencies_in("every other day")] == ["every other day"]
+    assert [f.text for f in frequencies_in("3 times a day, then daily")] == [
+        "3 times a day",
+        "daily",
+    ]
+
+
+def test_synonyms_have_equal_meanings() -> None:
+    def one(text: str) -> object:
+        [found] = frequencies_in(text)
+        return found.meaning
+
+    assert len({one(t) for t in ("daily", "every day", "everyday", "each day", "once a day")}) == 1
+    assert len({one(t) for t in ("twice daily", "twice a day", "twice per day")}) == 1
+    threes = ("3 times a day", "3.0x daily", "3 x a day", "three times daily")
+    assert len({one(t) for t in threes}) == 1
+    assert one("2 times a day") == one("twice daily")
+    assert one("every other day") != one("every day")
+    assert one("OD") != one("daily")
+    assert one("3 times a week") != one("3 times a day")
+
+
+def test_a_frequency_needs_whole_words_and_a_count_or_period() -> None:
+    for text in ("dailies", "weekday", "everything", "vomited once", "15 mg per day", "15 mg/day"):
+        assert frequencies_in(text) == [], text
+
+
+def test_a_count_before_every_or_each_is_read_as_a_count() -> None:
+    assert _meanings("2 times every day") == [("2 times every day", (0, 17), (2, "day"))]
+    assert _meanings("twice each week") == [("twice each week", (0, 15), (2, "week"))]
+    assert _meanings("3x each month") == [("3x each month", (0, 13), (3, "month"))]
+
+
+def test_a_count_before_every_each_or_every_other_takes_the_same_periods_as_without() -> None:
+    assert _meanings("2 times every night") == [("2 times every night", (0, 19), (2, "night"))]
+    assert _meanings("twice each shift") == [("twice each shift", (0, 16), (2, "shift"))]
+    assert _meanings("2 times every other day") == [
+        ("2 times every other day", (0, 23), (2, "other day"))
+    ]
+    assert _meanings("twice every other week") == [
+        ("twice every other week", (0, 22), (2, "other week"))
+    ]
+    assert _meanings("every other day") == [("every other day", (0, 15), (1, "other day"))]
+    [counted] = frequencies_in("2 times every other day")
+    [plain] = frequencies_in("every other day")
+    [every] = frequencies_in("2 times every day")
+    assert len({counted.meaning, plain.meaning, every.meaning}) == 3
+
+
+def test_every_connector_takes_every_period_with_and_without_a_count() -> None:
+    for period in ("day", "week", "month", "hour", "night", "shift"):
+        for connector in ("every", "each"):
+            assert _only_meaning(f"{connector} {period}") == (1, period)
+            assert _only_meaning(f"twice {connector} {period}") == (2, period)
+        for connector in ("a", "an", "per"):
+            assert _only_meaning(f"2 times {connector} {period}") == (2, period)
+            assert _only_meaning(f"once {connector} {period}") == (1, period)
+            assert frequencies_in(f"{connector} {period}") == [], (connector, period)
+        assert _only_meaning(f"every other {period}") == (1, f"other {period}")
+        assert _only_meaning(f"3x every other {period}") == (3, f"other {period}")
+    assert _only_meaning("2 times everyday") == (2, "day")
+    assert _only_meaning("2x everyday") == (2, "day")
+    assert _only_meaning("everyday") == (1, "day")
+    assert _only_meaning("every other night") != _only_meaning("nightly")
+
+
+def _only_meaning(text: str) -> object:
+    [found] = frequencies_in(text)
+    assert found.text == text
+    return found.meaning
+
+
+def test_a_or_an_and_a_period_right_after_a_dose_is_one_per_period() -> None:
+    for period in ("day", "week", "month", "night", "shift"):
+        text = f"MTX 15 mg a {period}"
+        assert _meanings(text) == [(f"a {period}", (10, len(text)), (1, period))], text
+    assert _meanings("IVF 1 L a shift, 2 gtts a day, 8 oz A-DAY") == [
+        ("a shift", (8, 15), (1, "shift")),
+        ("a day", (24, 29), (1, "day")),
+        ("A-DAY", (36, 41), (1, "day")),
+    ]
+    assert _only_meaning("daily") == _meanings("15 mg a day")[0][2]
+    # "once a day" and "twice a day" after a dose are still read whole.
+    assert _meanings("15 mg once a day") == [("once a day", (6, 16), (1, "day"))]
+    assert _meanings("15 mg twice a day") == [("twice a day", (6, 17), (2, "day"))]
+
+
+def test_a_or_an_and_a_period_is_no_frequency_after_anything_but_a_dose_with_no_rate() -> None:
+    for text in (
+        "fever for a day",
+        "HR 88 a day",
+        "15 a day",
+        "2 tabs a day",
+        "1000 units an hour",
+        "1 mg a minute",
+        "15 mg/kg a day",
+        "15 mg a days",
+        "15 mg per day",
+    ):
+        assert frequencies_in(text) == [], text
+    rate = _written("15 mg per day", "15")
+    assert rate is not None
+    assert rate.rate == ("day",)
+
+
+def test_a_or_an_and_a_period_before_a_time_word_says_when_not_how_often() -> None:
+    for text in (
+        "15 mg a day ago",
+        "500 mg a week ago",
+        "15 mg a day early",
+        "1 L a night before",
+        "15 mg a day prior",
+        "15 mg a day earlier",
+        "15 mg a month later",
+        "15 mg a shift late",
+        "15 mg a day\nAGO",
+        "15 mg an day   Before",
+    ):
+        assert frequencies_in(text) == [], text
+    # Only a whole time word right after the period, past spaces or a line break, stops it.
+    for text in (
+        "15 mg a day.",
+        "15 mg a day, then",
+        "15 mg a day for 3 days",
+        "15 mg a day, ago",
+        "15 mg a day lately",
+        "15 mg a day-ago",
+    ):
+        assert [f.meaning for f in frequencies_in(text)] == [(1, "day")], text
+
+
+def test_a_quote_is_read_without_a_or_an_and_a_period_after_a_unit() -> None:
+    text = "15 mg a day, 15 mg daily, 15 mg once a day, 15 mg 2x/day, 15 mg every day, 1 L a shift"
+    assert [f.text for f in frequencies_in(text, after_a_unit=False)] == [
+        "daily",
+        "once a day",
+        "2x/day",
+        "every day",
+    ]
+    assert [f.text for f in frequencies_in(text)] == [
+        "a day",
+        "daily",
+        "once a day",
+        "2x/day",
+        "every day",
+        "a shift",
+    ]
+
+
+def test_a_count_then_a_slash_and_a_period_is_a_counted_frequency() -> None:
+    assert _meanings("2x/day") == [("2x/day", (0, 6), (2, "day"))]
+    assert _meanings("give 2 times / week") == [("2 times / week", (5, 19), (2, "week"))]
+    for period in ("day", "week", "month", "hour", "night", "shift"):
+        assert _only_meaning(f"2x/{period}") == (2, period)
+        assert _only_meaning(f"3 times/{period}") == (3, period)
+        assert _only_meaning(f"twice/{period}") == (2, period)
+    assert _only_meaning("2x/day") == _only_meaning("2 times/day") == _only_meaning("twice a day")
+    # With no count before it, "/" and a period is a rate, not a frequency.
+    assert frequencies_in("15 mg/day") == []
+    rate = _written("15 mg/day", "15")
+    assert rate is not None
+    assert rate.rate == ("day",)
+
+
+def test_each_adverb_is_read_alone_and_after_once_or_twice() -> None:
+    for adverb, period in (
+        ("daily", "day"),
+        ("weekly", "week"),
+        ("monthly", "month"),
+        ("hourly", "hour"),
+        ("nightly", "night"),
+    ):
+        assert _only_meaning(adverb) == (1, period)
+        assert _only_meaning(adverb.upper()) == (1, period)
+        assert _only_meaning(f"once {adverb}") == (1, period)
+        assert _only_meaning(f"twice {adverb}") == (2, period)
+
+
+def test_a_or_an_and_a_period_reads_only_the_unit_of_the_number_right_before_it() -> None:
+    text = ", ".join(f"{i} mg" for i in range(200)) + " a day, 3 tabs a week, 1 L a shift"
+    calls = 0
+
+    def counting(raw: str, span: Span) -> WrittenUnit | None:
+        nonlocal calls
+        calls += 1
+        return written_unit(raw, span)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("nursing_core.pipeline.unit_check.written_unit", counting)
+        found = frequencies_in(text)
+    assert [(f.text, f.meaning) for f in found] == [
+        ("a day", (1, "day")),
+        ("a shift", (1, "shift")),
+    ]
+    assert calls == 3
