@@ -10,6 +10,7 @@ export {
   SARAH,
   card,
   checkScreen,
+  enterDemoPin,
   enterPinInDialog,
   expectNoViolations,
   pageStatus,

@@ -19,6 +19,7 @@ import {
   noSidewaysScroll,
   pageStatus,
   SAVE_PIN_DIALOG,
+  enterDemoPin,
   enterPinInDialog,
   openPatient,
   resolveEveryLine,
@@ -63,6 +64,8 @@ test("PH flow by keyboard alone: Tab, Enter, arrows and Escape", async ({ page }
   await page.goto("/sign-in");
   await tabTo(page, page.getByRole("button", { name: "Staff nurse · Sarah Navarro, RN" }), 10);
   await page.keyboard.press("Enter");
+  // Every sign-in ends at the PIN screen, with the cursor in the field.
+  await enterDemoPin(page);
   await expect(page.getByRole("heading", { name: "Patients on this ward" })).toBeVisible();
   const row = page.getByRole("link", { name: /Demo patient A/ });
   await tabTo(page, row, 12);
@@ -79,13 +82,15 @@ test("PH flow by keyboard alone: Tab, Enter, arrows and Escape", async ({ page }
   await resolveEveryLine(page, "keyboard");
   await editOneLine(page, "keyboard");
 
-  // Sign note opens the dialog on the safe choice; Escape cancels it and the focus goes back.
+  // Sign note opens the dialog in the empty PIN field, so a held Enter on Sign note can't go on
+  // to sign; Escape cancels it and the focus goes back.
   const sign = page.getByRole("button", { name: "Sign note" });
   await tabTo(page, sign);
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: /^Sign this (FDAR|DAR) note$/ });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await expect(dialog.getByLabel("Your PIN")).toBeFocused();
+  await expect(dialog.getByLabel("Your PIN")).toHaveValue("");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(sign).toBeFocused();
