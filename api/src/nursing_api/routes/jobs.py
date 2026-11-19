@@ -2,6 +2,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter
+from nursing_core.domain.errors import NotFound
 from nursing_core.domain.jobs import DraftJob, JobStatus, is_retryable
 
 from nursing_api.deps import NotesDep, NurseDep, PatientsDep, QueueDep, ensure_own_facility
@@ -45,9 +46,13 @@ def job_out(job: DraftJob) -> DraftJobOut:
 async def get_job(
     job_id: UUID, nurse: NurseDep, notes: NotesDep, patients: PatientsDep, queue: QueueDep
 ) -> DraftJobOut:
-    # A job belongs to the facility of its patient: another facility's job is a 404.
+    # A job belongs to the facility of its patient and to its author's side, as its note does
+    # (`find_note`): another facility's job, or the other side's (a demo persona against an invited
+    # person), is a 404, and is never sent again from here.
     job = await notes.get_job(job_id)
     rough = await notes.get_rough_note(job.rough_note_id)
     ensure_own_facility(nurse, await patients.get_patient_by_encounter(rough.encounter_id))
+    if await notes.written_by_persona(job.rough_note_id) is not nurse.user.persona:
+        raise NotFound("no such job")
     await resend_stuck(notes, queue, [job])
     return job_out(job)

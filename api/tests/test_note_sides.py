@@ -1,5 +1,7 @@
 """Personas (public PIN) and invited people never see or act on each other's notes."""
 
+from typing import cast
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -72,3 +74,29 @@ async def test_an_invited_nurse_never_opens_or_changes_a_personas_note(
     assert len(await shift_list(client)) == 1
     assert await shift_list(invited) == []
     assert (await client.get(url(note_id))).json()["status"] == "draft"
+
+
+async def own_job_id(owner: httpx.AsyncClient) -> str:
+    """The id of the draft job behind the owner's one rough note on the shift list."""
+    (entry,) = await shift_list(owner)
+    assert isinstance(entry, dict)
+    job = cast("dict[str, object]", entry)["job"]
+    assert isinstance(job, dict)
+    return str(cast("dict[str, object]", job)["id"])
+
+
+@pytest.mark.asyncio
+async def test_neither_side_polls_the_other_sides_draft_job(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    # The poll shows a job's status and its note's id, and may send the job again: it keeps to the
+    # same side as the note routes.
+    invited = await two_sides(app, client)
+    await make_draft(app, invited)
+    invited_job = await own_job_id(invited)
+    await make_draft(app, client)
+    persona_job = await own_job_id(client)
+    assert (await client.get(f"/api/v1/draft-jobs/{invited_job}")).status_code == 404
+    assert (await invited.get(f"/api/v1/draft-jobs/{persona_job}")).status_code == 404
+    assert (await invited.get(f"/api/v1/draft-jobs/{invited_job}")).status_code == 200
+    assert (await client.get(f"/api/v1/draft-jobs/{persona_job}")).status_code == 200
