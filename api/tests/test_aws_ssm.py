@@ -110,4 +110,6 @@ def test_clients_use_dual_stack_endpoints(service: str) -> None:
     assert host.endswith(".api.aws")
     config: Any = client.meta.config  # botocore's stubs don't declare the Config attributes
     assert config.retries["mode"] == "standard"
-    assert (config.connect_timeout, config.read_timeout) == (5, 10)
+    # a send waits on a nurse's request, so SQS's budget is shorter (test_aws_sqs.py)
+    expected = (5, 10) if service == "ssm" else (3, 5)
+    assert (config.connect_timeout, config.read_timeout) == expected

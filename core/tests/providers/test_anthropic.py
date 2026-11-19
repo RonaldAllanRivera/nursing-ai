@@ -546,3 +546,10 @@ async def test_a_failure_without_an_answer_carries_no_generation() -> None:
     with pytest.raises(ProviderUnavailable) as caught:
         await _provider(server).draft_fdar(_request())
     assert not hasattr(caught.value, "generation")
+
+
+def test_the_call_limit_is_the_callers_and_defaults_to_the_sdks() -> None:
+    limited = AnthropicProvider(SecretStr(KEY), timeout=80)
+    assert limited._client.timeout == 80  # pyright: ignore[reportPrivateUsage]
+    default = AnthropicProvider(SecretStr(KEY))
+    assert default._client.timeout != 80  # pyright: ignore[reportPrivateUsage]

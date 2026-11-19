@@ -25,6 +25,14 @@ CONFIG = Config(
     connect_timeout=5,
     read_timeout=10,
 )
+# A send runs while a nurse waits for her request to answer: two attempts of at most 3 s to connect
+# and 5 s to read, plus a short back-off, stay under 29 s (a lost send is re-sent by the poll).
+SQS_CONFIG = Config(
+    use_dualstack_endpoint=True,
+    retries={"mode": "standard", "total_max_attempts": 2},
+    connect_timeout=3,
+    read_timeout=5,
+)
 
 
 @overload
@@ -42,7 +50,7 @@ def dual_stack_client(
         ssm: SSMClient = boto3.client("ssm", config=CONFIG)
         return ssm
     if service == "sqs":
-        sqs: SQSClient = boto3.client("sqs", config=CONFIG)
+        sqs: SQSClient = boto3.client("sqs", config=SQS_CONFIG)
         return sqs
     lam: LambdaClient = boto3.client("lambda", config=CONFIG)
     return lam

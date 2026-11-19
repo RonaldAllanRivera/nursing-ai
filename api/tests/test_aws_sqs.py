@@ -3,6 +3,7 @@
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -97,3 +98,9 @@ async def test_api_on_sqs_never_fails_running_jobs_at_startup(
     async with running_app(database_url, clock, draft_queue_url=QUEUE_URL) as restarted:
         assert (await restarted.state.notes.get_job(job.id)).status is JobStatus.RUNNING
     stubbed.assert_no_pending_responses()
+
+
+def test_a_hanging_send_gives_up_inside_the_apis_29_seconds() -> None:
+    config: Any = dual_stack_client("sqs").meta.config  # the stubs omit Config's attributes
+    assert (config.connect_timeout, config.read_timeout) == (3, 5)
+    assert config.retries == {"mode": "standard", "total_max_attempts": 2}

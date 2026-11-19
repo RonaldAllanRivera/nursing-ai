@@ -19,6 +19,9 @@ from nursing_api.settings import Settings
 ProviderFor = Callable[[PatientRecord], LlmProvider]
 
 LIVE_MODEL = "claude-opus-5-5"
+# One live call's limit: under the worker Lambda's 120 s, so a slow answer ends as a retryable
+# provider error (its spend hold keeps counting) instead of the Lambda dying mid-call.
+LIVE_TIMEOUT_SECONDS = 80
 LIVE_NEEDS = "AI_MODE=live needs AI_MONTHLY_CAP_USD and ANTHROPIC_API_KEY"
 
 
@@ -111,7 +114,7 @@ def provider_factory(
         key = settings.anthropic_api_key
         if key is None:
             raise ValueError(LIVE_NEEDS)
-        inner = _the_same(AnthropicProvider(key, model=LIVE_MODEL))
+        inner = _the_same(AnthropicProvider(key, model=LIVE_MODEL, timeout=LIVE_TIMEOUT_SECONDS))
     live = settings.ai_mode == "live"
     if live and settings.ai_monthly_cap_usd is None:
         raise ValueError(LIVE_NEEDS)

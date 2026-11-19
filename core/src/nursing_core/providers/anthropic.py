@@ -146,18 +146,25 @@ class AnthropicProvider:
         model: str = "claude-opus-5-5",
         http_client: httpx2.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        timeout: float | None = None,
     ) -> None:
+        """`timeout` is one call's limit in seconds (the SDK's own is 600), so the caller can keep
+        it below the worker's budget; a slow call then ends as a retryable provider error."""
         cost_usd(model, 0, 0)  # an unknown model fails here, not on the first note
         self.model = model
         self._sleep = sleep
         self._schema = output_schema()
+        limits: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
         if http_client is None:
             self._client = anthropic.AsyncAnthropic(
-                api_key=api_key.get_secret_value(), max_retries=0
+                api_key=api_key.get_secret_value(), max_retries=0, **limits
             )
         else:
             self._client = anthropic.AsyncAnthropic(
-                api_key=api_key.get_secret_value(), max_retries=0, http_client=http_client
+                api_key=api_key.get_secret_value(),
+                max_retries=0,
+                http_client=http_client,
+                **limits,
             )
 
     async def draft_fdar(self, request: DraftRequest) -> ProviderResult:
