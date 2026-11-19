@@ -195,7 +195,9 @@ describe("resetting a PIN", () => {
     expect(lito.getByText("PIN locked")).toBeVisible();
     await userEvent.click(lito.getByRole("button", { name: "Reset PIN for Lito Santos" }));
     const dialog = await screen.findByRole("dialog", { name: "Reset Lito Santos's PIN?" });
-    expect(dialog).toHaveTextContent("They will choose a new one at their next sign-in.");
+    expect(dialog).toHaveTextContent(
+      "Ask them to sign in and choose a new PIN now, with you there.",
+    );
     expect(within(dialog).getByLabelText("Your PIN")).toHaveFocus();
     await userEvent.type(within(dialog).getByLabelText("Your PIN"), MOCK_PIN);
     await userEvent.click(within(dialog).getByRole("button", { name: "Reset PIN" }));

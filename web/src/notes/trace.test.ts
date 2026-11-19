@@ -296,7 +296,7 @@ describe("reasonFor", () => {
   it("gives both numbers for a mismatch", () => {
     expect(reasonFor(byId("e1-D2"))).toBe("The draft says 121. Your note says 112.");
   });
-  it("says the note doesn't have it when the draft's number or word has no match", () => {
+  it("says the check couldn't match it when the draft's number or word has no match", () => {
     const l = line({
       status: "number_mismatch",
       number_mismatches: [
@@ -309,7 +309,9 @@ describe("reasonFor", () => {
         },
       ],
     });
-    expect(reasonFor(l)).toBe("The draft says 121. Your note doesn't have this.");
+    expect(reasonFor(l)).toBe(
+      "The draft says 121. The check couldn't match this to your note. Check it against what you wrote.",
+    );
     const frequency = line({
       status: "number_mismatch",
       number_mismatches: [
@@ -322,7 +324,9 @@ describe("reasonFor", () => {
         },
       ],
     });
-    expect(reasonFor(frequency)).toBe("The draft says BID. Your note doesn't have this.");
+    expect(reasonFor(frequency)).toBe(
+      "The draft says BID. The check couldn't match this to your note. Check it against what you wrote.",
+    );
   });
   it("gives every mismatch of a line", () => {
     const l = line({

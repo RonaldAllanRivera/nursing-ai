@@ -249,7 +249,7 @@ describe("a note's writes while the browser is offline", () => {
       expect(dialog.querySelector("#sign-waiting")).toHaveTextContent(/was not saved/i);
     });
     expect(dialog.querySelector("#sign-live")).toHaveTextContent(
-      /Close this and check the note before signing/,
+      "A change to this note was not saved. Close this and check the note before signing.",
     );
     await userEvent.keyboard("{Enter}");
     await userEvent.click(within(dialog).getByRole("button", { name: "Sign note" }));

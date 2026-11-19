@@ -118,7 +118,7 @@ function Panel({
 const CHANGE_SAVING =
   "Your last change to this note is still being saved. Sign note will work in a moment; your PIN stays here.";
 const CHANGE_LOST =
-  "Your last change to this note was not saved. Close this and check the note before signing.";
+  "A change to this note was not saved. Close this and check the note before signing.";
 
 /** "Sign this FDAR note": who is signing, what is missing, her PIN, then Sign note. */
 export function SignDialog({
@@ -162,6 +162,7 @@ export function SignDialog({
   const [lostChange, setLostChange] = useState(false);
   const lostRef = useRef(false);
   const [said, setSaid] = useState("");
+  const saidTimer = useRef<number | undefined>(undefined);
   const entry = usePinEntry(
     sign,
     persona,
@@ -170,7 +171,8 @@ export function SignDialog({
     () => {
       // Said again on every held try: a screen reader hears it even though nothing on screen moved.
       setSaid("");
-      window.setTimeout(() => {
+      window.clearTimeout(saidTimer.current);
+      saidTimer.current = window.setTimeout(() => {
         setSaid(lostRef.current ? CHANGE_LOST : CHANGE_SAVING);
       }, 50);
     },
@@ -193,16 +195,29 @@ export function SignDialog({
       }
     });
   }, [shared.open, shared.noteId, queryClient]);
+  // Each opening starts with nothing said and nothing held, and words are said only while open:
+  // a change that settled while the dialog was closed must not leave "You can sign now." behind,
+  // or the next opening's identical words would not be announced.
+  const [openWas, setOpenWas] = useState(shared.open);
+  if (shared.open !== openWas) {
+    setOpenWas(shared.open);
+    setSaid("");
+  }
   useEffect(() => {
-    if (wasHeld.current && !waitingForWrite) setSaid("You can sign now.");
-    wasHeld.current = waitingForWrite;
-  }, [waitingForWrite]);
+    window.clearTimeout(saidTimer.current);
+    wasHeld.current = false;
+  }, [shared.open]);
+  useEffect(() => {
+    if (shared.open && wasHeld.current && !waitingForWrite) setSaid("You can sign now.");
+    wasHeld.current = shared.open && waitingForWrite;
+  }, [waitingForWrite, shared.open]);
   const describedBy =
     [demoPin ? "sign-demo-pin" : "", waitingForWrite ? "sign-waiting" : ""]
       .filter(Boolean)
       .join(" ") || undefined;
   /** Closes the dialog with nothing of the last try left in it (the typed PIN, the words under it). */
   function done() {
+    window.clearTimeout(saidTimer.current);
     lostRef.current = false;
     setLostChange(false);
     setSaid("");

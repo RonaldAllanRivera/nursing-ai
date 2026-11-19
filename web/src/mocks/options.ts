@@ -23,6 +23,8 @@ export interface MockOptions {
   account?: { user: string; gate?: AccountGate };
   /** The next rough note saved drafts to a failed job with this failure. */
   failDraft?: Schemas["JobFailure"];
+  /** Saving a rough note answers 429 `daily_draft_limit`, as the server does at the day's cap. */
+  dailyLimit?: boolean;
 }
 
 /** The page global Playwright sets with `page.addInitScript`; the browser's mock reads it once. */
@@ -63,5 +65,6 @@ export function readMockOptions(value: unknown): MockOptions {
   if (typeof given["failDraft"] === "string" && FAILURES.includes(given["failDraft"])) {
     options.failDraft = given["failDraft"] as Schemas["JobFailure"];
   }
+  if (typeof given["dailyLimit"] === "boolean") options.dailyLimit = given["dailyLimit"];
   return options;
 }

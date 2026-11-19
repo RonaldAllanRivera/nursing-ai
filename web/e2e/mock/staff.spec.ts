@@ -91,7 +91,7 @@ test("the admin resets a locked PIN by keyboard only", async ({ page }) => {
   await tabTo(page, reset);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog", { name: "Reset Lito Santos's PIN?" })).toContainText(
-    "They will choose a new one at their next sign-in.",
+    "Ask them to sign in and choose a new PIN now, with you there.",
   );
   await checkDialog(page);
   await typePin(page, "Reset Lito Santos's PIN?");

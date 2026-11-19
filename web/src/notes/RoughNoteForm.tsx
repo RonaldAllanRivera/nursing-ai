@@ -1,12 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ApiError } from "../api/errors";
 import { Icon, type IconName } from "../components/Icon";
 import { Button } from "../components/ui/Button";
 import { patientQuery } from "../patients/patients";
 import { DemoNoteButton } from "./DemoNoteButton";
 import { failureMessage } from "./draft";
-import { draftAgainOutcome, isAlreadyDrafted, useDraftAgain } from "./draftAgain";
+import {
+  DAILY_DRAFT_LIMIT,
+  draftAgainOutcome,
+  isAlreadyDrafted,
+  useDraftAgain,
+} from "./draftAgain";
 import { holdNote, readHeldNote } from "./heldNote";
 import { createKeyKeeper } from "./idempotency";
 import { announceStep, draftJobQuery, isRefused, textState, useSaveRoughNote } from "./roughNote";
@@ -165,6 +171,10 @@ export function RoughNoteForm({
   const againWords = again.isError ? draftAgainOutcome(again.error) : null;
 
   const refused = isRefused(save.error);
+  const atDailyLimit =
+    save.error instanceof ApiError &&
+    save.error.status === 429 &&
+    save.error.problem?.code === "daily_draft_limit";
   const step = announceStep(left);
   const showAgainHint = (failed || lost) && sameAsSent && !canDraftAgain;
 
@@ -300,9 +310,11 @@ export function RoughNoteForm({
         ) : null}
         {save.isError ? (
           <Line icon="flag" tone="font-semibold text-stop" role="alert">
-            {refused
-              ? "The note was not accepted. Your note is still here."
-              : "Couldn't reach the server. Your note is still here."}
+            {atDailyLimit
+              ? `${DAILY_DRAFT_LIMIT} ${NOTE_STILL_HERE}`
+              : refused
+                ? "The note was not accepted. Your note is still here."
+                : "Couldn't reach the server. Your note is still here."}
           </Line>
         ) : null}
         {drafting && !job.isError ? (

@@ -46,7 +46,9 @@ describe("the words of the PIN dialogs", () => {
   it("names the action and the person", () => {
     expect(revokeWords(person).title).toBe("Revoke Jordan Diaz's access?");
     expect(resetWords(person).title).toBe("Reset Jordan Diaz's PIN?");
-    expect(resetWords(person).note).toBe("They will choose a new one at their next sign-in.");
+    expect(resetWords(person).note).toBe(
+      "Ask them to sign in and choose a new PIN now, with you there.",
+    );
     expect(inviteWords("jordan.diaz@example.com", "head nurse", "Demo Ward").title).toBe(
       "Invite jordan.diaz@example.com?",
     );

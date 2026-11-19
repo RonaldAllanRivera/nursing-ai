@@ -185,6 +185,7 @@ export function createHandlers(
       }
       const earlier = sent.get(key);
       if (earlier && earlier.text !== body.text) return problem(422, "idempotency_key_reused");
+      if (options.dailyLimit && !earlier) return problem(429, "daily_draft_limit");
       // The frozen demo data has one job per patient, so a second save (new key) replays a job
       // that is already finished. The real API makes a new job each time.
       const jobId = earlier?.jobId ?? data.jobForPatient[params.id];

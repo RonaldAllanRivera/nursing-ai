@@ -25,7 +25,7 @@ export function resetWords(person: Person): DialogWords {
   return {
     title: `Reset ${person.display_name}'s PIN?`,
     question: "Enter your PIN to confirm.",
-    note: "They will choose a new one at their next sign-in.",
+    note: "Ask them to sign in and choose a new PIN now, with you there.",
     confirm: "Reset PIN",
     busy: "Resetting…",
   };

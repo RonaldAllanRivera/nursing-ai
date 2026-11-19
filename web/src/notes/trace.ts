@@ -279,7 +279,7 @@ export function reasonFor(line: DraftLine): string {
       return line.number_mismatches
         .map((m) =>
           m.note_text === null
-            ? `The draft says ${m.draft_text}. Your note doesn't have this.`
+            ? `The draft says ${m.draft_text}. The check couldn't match this to your note. Check it against what you wrote.`
             : `The draft says ${m.draft_text}. Your note says ${m.note_text}.`,
         )
         .join(" ");
