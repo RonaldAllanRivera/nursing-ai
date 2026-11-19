@@ -265,13 +265,16 @@ variable "worker_memory_mb" {
 }
 
 variable "worker_timeout_s" {
-  description = "Timeout for the worker function, in seconds. The queue's visibility timeout is six times this."
+  description = "Timeout for the worker function, in seconds, at most 120. The queue's visibility timeout is six times this."
   type        = number
   default     = 120
 
+  # The job lease is 150 s (core/src/nursing_core/storage/notes.py: JOB_LEASE, the worker's 120 s
+  # plus 30). A longer worker could still be running when a duplicate message claims the same job,
+  # and the job would run twice at once with two billed calls. Raise the lease with this.
   validation {
-    condition     = var.worker_timeout_s >= 1 && var.worker_timeout_s <= 900
-    error_message = "worker_timeout_s must be between 1 and 900."
+    condition     = var.worker_timeout_s >= 1 && var.worker_timeout_s <= 120
+    error_message = "worker_timeout_s must be between 1 and 120: the job lease is 150 s (JOB_LEASE in nursing_core/storage/notes.py), and a longer worker could still be running when a duplicate message claims its job. Raise the lease first."
   }
 }
 

@@ -4,7 +4,7 @@ variables {
   name = "nursing-ai-test"
 }
 
-run "keeps_three_images" {
+run "keeps_ten_images" {
   command = plan
 
   assert {
@@ -16,8 +16,8 @@ run "keeps_three_images" {
     error_message = "the rule must count images"
   }
   assert {
-    condition     = jsondecode(aws_ecr_lifecycle_policy.app.policy).rules[0].selection.countNumber == 3
-    error_message = "the rule must keep the newest 3 images"
+    condition     = jsondecode(aws_ecr_lifecycle_policy.app.policy).rules[0].selection.countNumber == 10
+    error_message = "the rule must keep the newest 10 images"
   }
   assert {
     condition     = jsondecode(aws_ecr_lifecycle_policy.app.policy).rules[0].selection.tagStatus == "any"

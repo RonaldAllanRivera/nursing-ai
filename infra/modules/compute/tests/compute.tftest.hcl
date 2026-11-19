@@ -636,3 +636,23 @@ run "daily_cap_must_be_positive" {
 
   expect_failures = [var.ai_daily_drafts_per_user]
 }
+
+# The job lease is 150 s (the worker's 120 s plus 30). A longer timeout would let a second run claim
+# a job the first is still working on.
+run "worker_timeout_may_not_pass_the_lease" {
+  command = plan
+
+  variables {
+    worker_timeout_s = 121
+  }
+
+  expect_failures = [var.worker_timeout_s]
+}
+
+run "worker_timeout_of_120_is_allowed" {
+  command = plan
+
+  variables {
+    worker_timeout_s = 120
+  }
+}

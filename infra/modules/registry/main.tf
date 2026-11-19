@@ -13,7 +13,9 @@ resource "aws_ecr_repository" "app" {
   }
 }
 
-# Keeps the newest 3 images so storage stays near free.
+# Keeps the newest 10 images. A deploy pushes before it applies, so a few failed deploys in a row
+# must not expire the image the functions still run. Layers are shared between images, so the
+# cost stays well under $1 a month.
 resource "aws_ecr_lifecycle_policy" "app" {
   repository = aws_ecr_repository.app.name
 
@@ -21,11 +23,11 @@ resource "aws_ecr_lifecycle_policy" "app" {
     rules = [
       {
         rulePriority = 1
-        description  = "Keep the newest 3 images"
+        description  = "Keep the newest 10 images"
         selection = {
           tagStatus   = "any"
           countType   = "imageCountMoreThan"
-          countNumber = 3
+          countNumber = 10
         }
         action = {
           type = "expire"
