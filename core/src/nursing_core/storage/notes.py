@@ -449,9 +449,14 @@ class PgNoteRepository:
             )
             return len(rows.all())
 
-    async def shift_rough_notes(self, encounter_id: UUID, shift: ShiftRef) -> list[RoughNote]:
+    async def shift_rough_notes(
+        self, encounter_id: UUID, shift: ShiftRef, *, persona: bool | None = None
+    ) -> list[RoughNote]:
+        """The shift's rough notes, oldest first; with `persona`, only one side's (a demo
+        persona's, or invited people's), as a draft's checklist must read them."""
         async with self._engine.begin() as conn:
-            return [_rough_note(row) for row in await self._shift_rows(conn, encounter_id, shift)]
+            rows = await self._shift_rows(conn, encounter_id, shift, persona)
+            return [_rough_note(row) for row in rows]
 
     async def shift_entries(
         self, encounter_id: UUID, shift: ShiftRef, *, persona: bool | None = None

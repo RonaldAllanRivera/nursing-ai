@@ -829,3 +829,21 @@ async def test_finished_jobs_and_other_ids_are_never_re_sent(engine: AsyncEngine
 
     assert await late.resend_due([done.id, failed.id, uuid4()]) == []
     assert await late.resend_due([]) == []
+
+
+@pytest.mark.asyncio
+async def test_shift_rough_notes_keep_to_one_side_when_asked(engine: AsyncEngine) -> None:
+    # A draft's missing-items checklist reads the shift's other rough notes: a persona's note
+    # must never count for an invited nurse's draft, nor the reverse.
+    world = await build_world(engine)
+    repo = PgNoteRepository(engine, CLOCK)
+    invited = await _invited_user(engine, world)
+    by_persona = rough_note(world)
+    by_invited = rough_note(world, author_id=invited)
+    await repo.add_rough_note(by_persona, "k1", HASH_A)
+    await repo.add_rough_note(by_invited, "k1", HASH_B)
+    shift = world.case.rough_note.shift
+
+    assert await repo.shift_rough_notes(world.encounter_id, shift, persona=True) == [by_persona]
+    assert await repo.shift_rough_notes(world.encounter_id, shift, persona=False) == [by_invited]
+    assert len(await repo.shift_rough_notes(world.encounter_id, shift)) == 2

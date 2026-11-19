@@ -702,3 +702,26 @@ async def test_the_metric_carries_what_the_jobs_calls_cost(
     ) as app:
         await app.state.worker.run(await _worker_job(app, "m-cost"))
     assert [line["AiSpendUsd"] for line in _metric_lines(capsys.readouterr().out)] == [0.32]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persona", [True, False])
+async def test_the_checklist_reads_only_the_shift_notes_of_the_drafts_own_side(
+    app: FastAPI, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, persona: bool
+) -> None:
+    # Personas share the demo facilities with invited staff: a persona's "CBC drawn" must not tick
+    # off an invited nurse's missing CBC, nor the reverse.
+    asked: list[bool | None] = []
+    shift_rough_notes = PgNoteRepository.shift_rough_notes
+
+    async def spy(
+        self: PgNoteRepository, *args: object, persona: bool | None = None
+    ) -> list[RoughNote]:
+        asked.append(persona)
+        return await shift_rough_notes(self, *args, persona=persona)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(PgNoteRepository, "shift_rough_notes", spy)
+    await sign_in(client, PH_STAFF if persona else await add_invited_nurse(app, "ph-demo"))
+    job = await post_and_finish(app, client)
+    assert job["status"] == "succeeded", job
+    assert asked == [persona]

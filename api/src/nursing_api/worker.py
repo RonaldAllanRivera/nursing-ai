@@ -101,7 +101,7 @@ class DraftWorker:
                     self._clock,
                     job_id,
                 )
-                note = await self._draft(rough, patient, recorder)
+                note = await self._draft(rough, patient, recorder, persona=persona)
             except Exception as error:
                 log.warning(
                     "draft job failed", job_id=str(job_id), error_class=type(error).__name__
@@ -127,8 +127,14 @@ class DraftWorker:
                 log.warning("database waking", job_id=str(job_id), attempts=attempt)
         return await self._notes.claim_job(job_id)  # the last attempt: let the error go
 
-    async def _draft(self, rough: RoughNote, patient: PatientRecord, provider: LlmProvider) -> Note:
-        shift_notes = await self._notes.shift_rough_notes(rough.encounter_id, rough.shift)
+    async def _draft(
+        self, rough: RoughNote, patient: PatientRecord, provider: LlmProvider, *, persona: bool
+    ) -> Note:
+        # The checklist reads only the shift notes of the draft's own side: personas share the demo
+        # facilities with invited staff, and neither may tick off the other's missing items.
+        shift_notes = await self._notes.shift_rough_notes(
+            rough.encounter_id, rough.shift, persona=persona
+        )
         result = await run_fdar_pipeline(rough, patient, shift_notes, provider)
         return Note(
             id=uuid4(),
