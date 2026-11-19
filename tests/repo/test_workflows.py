@@ -218,6 +218,24 @@ def test_deploy_runs_only_after_ci_passes_on_a_push_to_main() -> None:
     assert checkout["with"]["persist-credentials"] is False
 
 
+def test_deploy_skips_a_run_that_is_not_the_tip_of_main() -> None:
+    # "Re-run all jobs" on an old commit's CI would otherwise redeploy that old commit (B-8).
+    job = _load(DEPLOY)["jobs"]["deploy"]
+    first, *rest = job["steps"]
+    assert first["id"] == "tip"
+    assert "uses" not in first
+    assert first["env"]["HEAD_SHA"] == "${{ github.event.workflow_run.head_sha }}"
+    # The public repository's own address, read with no credentials.
+    assert first["env"]["REPO_URL"] == "${{ github.server_url }}/${{ github.repository }}"
+    assert "git ls-remote" in first["run"]
+    assert "refs/heads/main" in first["run"]
+    assert "GITHUB_OUTPUT" in first["run"]
+    assert "${{" not in first["run"]
+    assert "token" not in first["run"].lower()
+    for step in rest:
+        assert step["if"] == "steps.tip.outputs.current == 'true'", step
+
+
 def test_deploy_waits_for_the_production_reviewer_and_never_overlaps() -> None:
     workflow = _load(DEPLOY)
     job = workflow["jobs"]["deploy"]
