@@ -35,7 +35,7 @@ LOCAL_DB_ENV = env -u ANTHROPIC_API_KEY $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHL
 RECORD_ENV = env $(if $(AI_MONTHLY_CAP_USD),,-u AI_MONTHLY_CAP_USD) $(LOCAL_DB_VARS)
 
 .DEFAULT_GOAL := help
-.PHONY: help ports up down dev e2e e2e-mock readme-media check-py check-web check actionlint infra-check gen-api openapi spend migrate seed record-replays private-words accept-binary tools public-check public-check-ci hooks setup
+.PHONY: help ports up down dev e2e e2e-mock readme-media check-py check-web check actionlint infra-check gen-api openapi spend migrate seed record-replays private-words accept-binary tools public-check public-check-ci hooks setup deploy
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' Makefile | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -138,6 +138,19 @@ setup: ## Install everything, including the test browser (some PCs need their ow
 
 actionlint: ## Lint the GitHub Actions workflows
 	uv run actionlint
+
+# From this PC with the `aws login` profile, until CD deploys (deploy.yml runs the same script).
+# Only a clean tree on main (the image is tagged with the last commit), and only after the
+# environment's name is typed at the prompt. STATE_BUCKET comes from the shell or .env; the
+# Terraform variables from TF_VAR_* or the git-ignored infra/live/terraform.tfvars.
+deploy: ## Deploy to AWS from this PC after you type the environment's name (applies infra/live; costs money)
+	@test -z "$$(git status --porcelain)" || { echo 'deploy: commit your changes first (the image is tagged with the last commit); nothing was run' >&2; exit 1; }
+	@test "$$(git rev-parse --abbrev-ref HEAD)" = main || { echo 'deploy: deploy from main only; nothing was run' >&2; exit 1; }
+	@printf 'Type the name of the environment to deploy (demo or prod): ' >&2; \
+	read -r name || { name=; echo >&2; }; \
+	case "$$name" in demo|prod) ;; *) echo 'deploy: that is not demo or prod; nothing was run' >&2; exit 1 ;; esac; \
+	env -u ANTHROPIC_API_KEY DEPLOY_APPROVED=yes AWS_PROFILE=$(call quote,$(or $(AWS_PROFILE),nursing-ai)) \
+		AWS_REGION=ap-southeast-2 STATE_BUCKET=$(call quote,$(STATE_BUCKET)) scripts/deploy.sh "$$name"
 
 # Not part of `check`: the first run downloads several hundred MB of Terraform providers. It needs
 # terraform on PATH and `make tools` (tflint, trivy), and never talks to AWS: the tests mock it.

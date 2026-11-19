@@ -277,3 +277,126 @@ def test_every_package_and_the_app_carry_one_version() -> None:
     app = re.search(r'version="([^"]+)"', (ROOT / "api/src/nursing_api/app.py").read_text())
     found["app"] = app.group(1) if app else None
     assert len(set(found.values())) == 1, found
+
+
+# Stands in for scripts/deploy.sh: prints its arguments and what the recipe handed it.
+FAKE_DEPLOY = """#!/bin/sh
+echo "deploy.sh $*"
+echo "DEPLOY_APPROVED=${DEPLOY_APPROVED-unset}"
+echo "AWS_PROFILE=${AWS_PROFILE-unset}"
+echo "AWS_REGION=${AWS_REGION-unset}"
+echo "STATE_BUCKET=${STATE_BUCKET-unset}"
+echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY-unset}"
+"""
+DEPLOY_DROPPED = ("AWS_PROFILE", "AWS_REGION", "STATE_BUCKET", "DEPLOY_APPROVED")
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(  # noqa: S603
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def deploy_repo(fake_repo: Path) -> Path:
+    """A clean git checkout on main with the Makefile and a stand-in deploy script."""
+    script = fake_repo / "scripts" / "deploy.sh"
+    script.parent.mkdir()
+    script.write_text(FAKE_DEPLOY)
+    script.chmod(0o755)
+    (fake_repo / ".gitignore").write_text(".env\n.tools/\n")
+    _git(fake_repo, "init", "-q", "-b", "main")
+    _git(fake_repo, "add", ".")
+    _git(fake_repo, "commit", "-q", "-m", "init")
+    return fake_repo
+
+
+def make_deploy(
+    repo: Path, typed: str, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in (*DEPLOY_DROPPED, "MAKEFLAGS", "MAKELEVEL", "ANTHROPIC_API_KEY")
+    }
+    env.update(extra_env or {})
+    return subprocess.run(
+        ["make", "-s", "deploy"],  # noqa: S607
+        cwd=repo,
+        env=env,
+        input=typed,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("name", ["demo", "prod"])
+def test_deploy_runs_the_script_for_the_typed_environment(deploy_repo: Path, name: str) -> None:
+    result = make_deploy(deploy_repo, f"{name}\n", {"STATE_BUCKET": "state-bucket-x"})
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert f"deploy.sh {name}" in lines
+    assert "DEPLOY_APPROVED=yes" in lines
+    # Allan's `aws login` profile and the stack's region (the global constraints).
+    assert "AWS_PROFILE=nursing-ai" in lines
+    assert "AWS_REGION=ap-southeast-2" in lines
+    assert "STATE_BUCKET=state-bucket-x" in lines
+
+
+def test_deploy_reads_the_state_bucket_from_env_file_and_keeps_a_shell_profile(
+    deploy_repo: Path,
+) -> None:
+    (deploy_repo / ".env").write_text(f"{FAKE_ENV}STATE_BUCKET=from-env-file\n")
+    result = make_deploy(deploy_repo, "demo\n", {"AWS_PROFILE": "other-profile"})
+    lines = result.stdout.splitlines()
+    assert "STATE_BUCKET=from-env-file" in lines
+    assert "AWS_PROFILE=other-profile" in lines
+
+
+@pytest.mark.parametrize("typed", ["", "\n", "Demo\n", "yes\n", "demo prod\n", "staging\n"])
+def test_deploy_runs_nothing_unless_the_name_is_typed_exactly(
+    deploy_repo: Path, typed: str
+) -> None:
+    result = make_deploy(deploy_repo, typed, {"DEPLOY_APPROVED": "yes"})
+    assert result.returncode != 0
+    assert "deploy.sh" not in result.stdout
+    assert "nothing was run" in result.stderr
+
+
+@pytest.mark.parametrize("change", ["modified", "untracked"])
+def test_deploy_refuses_a_dirty_tree(deploy_repo: Path, change: str) -> None:
+    # The image is tagged with HEAD's commit: an uncommitted change would ship under a clean name.
+    if change == "modified":
+        (deploy_repo / "Makefile").write_text((deploy_repo / "Makefile").read_text() + "\n")
+    else:
+        (deploy_repo / "stray.txt").write_text("x\n")
+    result = make_deploy(deploy_repo, "demo\n")
+    assert result.returncode != 0
+    assert "deploy.sh" not in result.stdout
+    assert "commit" in result.stderr
+    assert "nothing was run" in result.stderr
+
+
+def test_deploy_runs_from_main_only(deploy_repo: Path) -> None:
+    _git(deploy_repo, "switch", "-q", "-c", "feature")
+    result = make_deploy(deploy_repo, "demo\n")
+    assert result.returncode != 0
+    assert "deploy.sh" not in result.stdout
+    assert "main" in result.stderr
+
+
+def test_deploy_never_passes_the_api_key(deploy_repo: Path) -> None:
+    result = make_deploy(deploy_repo, "demo\n", {"ANTHROPIC_API_KEY": f"sk-ant-{CANARY}-789"})
+    assert result.returncode == 0, result.stderr
+    assert "ANTHROPIC_API_KEY=unset" in result.stdout.splitlines()
+    assert CANARY not in result.stdout + result.stderr
+
+
+def test_help_says_deploy_costs_money() -> None:
+    lines = run_make("help").stdout.splitlines()
+    deploy = next(line for line in lines if line.startswith("deploy "))
+    assert "costs money" in deploy
